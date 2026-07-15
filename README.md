@@ -1,7 +1,20 @@
 # Truck & Trailer
 
-Multi-tenant fleet & garage management. React (Vite) frontend + Supabase (Auth + Postgres).
-Each company has an isolated environment; real email + password login for everyone.
+Multi-tenant fleet & garage management. React (Vite) frontend + een kleine
+Node/Express-server + Supabase (Auth + Postgres). Elk bedrijf heeft een
+geïsoleerde omgeving; echte e-mail + wachtwoord-login voor iedereen.
+
+De server doet twee dingen: hij serveert de gebouwde frontend én biedt een
+veilige AI-proxy (`POST /api/ai`) zodat de Anthropic-key nooit in de browser
+staat.
+
+## Functies
+
+- **Rollen:** platformbeheerder, bedrijfsbeheerder, werkplaats, chauffeur — elk met een eigen weergave.
+- **Vloot:** voertuigen (zoeken/filteren, APK/tacho/verzekering-compliance), trailers, 360°-inspectie.
+- **Werkplaats:** meldingen-kanban, planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
+- **Kosten:** overzicht per categorie en per voertuig, met jaarfilter.
+- **AI (optioneel):** kenteken-lookup, fotoschade-herkenning, voorspellend onderhoud en een assistent die ook acties uitvoert — allemaal via de server-proxy.
 
 ---
 
@@ -25,10 +38,17 @@ Each company has an isolated environment; real email + password login for everyo
 ## 2. Lokaal draaien (optioneel)
 
 ```bash
-cp .env.example .env      # vul je Supabase URL + anon key in
+cp .env.example .env      # vul je Supabase URL + anon key (+ evt. ANTHROPIC_API_KEY) in
 npm install
-npm run dev               # http://localhost:5173
+
+# Twee processen: de Vite dev-server (frontend) en de AI-proxy (server).
+npm run dev               # http://localhost:5173  (Vite proxy't /api naar poort 8787)
+npm run dev:server        # in een tweede terminal — de AI-proxy op poort 8787
 ```
+
+De frontend werkt zonder de server; alleen de AI-knoppen hebben de proxy nodig.
+Draai je liever één proces zoals in productie? Dan: `npm run build && npm start`
+(server serveert dan de gebouwde `dist/` én `/api` op poort 8787).
 
 ---
 
@@ -50,12 +70,14 @@ git push -u origin main
 1. Ga naar [railway.app](https://railway.app) → **New Project → Deploy from GitHub repo**
    → kies je repo.
 2. Railway leest `railway.json` automatisch (build: `npm ci && npm run build`,
-   start: `npm run preview`).
+   start: `npm start` — de Node-server die `dist/` én de AI-proxy serveert).
 3. Ga naar het project → **Variables** en voeg toe:
    - `VITE_SUPABASE_URL` = je Supabase project URL
    - `VITE_SUPABASE_ANON_KEY` = je anon public key
+   - `ANTHROPIC_API_KEY` = je Anthropic-key **(optioneel — alleen nodig voor de AI-functies)**
 4. **Belangrijk:** variabelen met `VITE_` worden tijdens de **build** ingebakken. Als je ze
-   later wijzigt, klik **Redeploy** zodat de build ze meepakt.
+   later wijzigt, klik **Redeploy** zodat de build ze meepakt. `ANTHROPIC_API_KEY` wordt
+   op de server gelezen en hoeft geen rebuild.
 5. Open **Settings → Networking → Generate Domain** voor een publieke URL.
 
 ---
@@ -83,6 +105,10 @@ queries? Dan kun je `company_state` stap voor stap normaliseren zonder de UI te 
 ## AI-functies
 
 De AI-functies (voorspellend onderhoud, fotoherkenning, kenteken-lookup, assistent)
-roepen de Claude API aan. In deze losse deployment werken die alleen als je een eigen
-API-proxy toevoegt (de browser mag geen Anthropic-key bevatten). Vraag dit als je het
-wil — dan voeg ik een kleine serverless functie toe die de key veilig afhandelt.
+lopen via de ingebouwde server-proxy in [`server/index.js`](./server/index.js). De
+browser praat met `POST /api/ai`; de server roept de Anthropic Messages API aan met
+`ANTHROPIC_API_KEY`. Zo staat de key **nooit** in de browser.
+
+Zet `ANTHROPIC_API_KEY` in je environment (Railway → Variables of lokaal in `.env`) om
+de AI aan te zetten. Zonder key blijft de rest van de app gewoon werken en tonen de
+AI-knoppen een nette melding.

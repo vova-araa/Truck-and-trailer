@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -107,11 +107,15 @@ const seedUsers = {
 
 const ROLE_LABEL = { admin: "Beheerder", garage: "Werkplaats", chauffeur: "Chauffeur" };
 
-const DEMO_TODAY = "2026-07-02";
+// Datum-helpers: lokale datum als "JJJJ-MM-DD" (geen UTC-verschuiving)
+function toLocalKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const TODAY = toLocalKey(new Date());
 
 const seedPlanning = {
   blex: [
-    { id: "pl0", vehicle: "GH-99-VB", datum: DEMO_TODAY, tijd: "14:00", duur: 60, taak: "Bandencontrole", monteur: "M. Smit" },
+    { id: "pl0", vehicle: "GH-99-VB", datum: TODAY, tijd: "14:00", duur: 60, taak: "Bandencontrole", monteur: "M. Smit" },
     { id: "pl1", vehicle: "VX-77-KL", datum: "2026-07-09", tijd: "09:00", duur: 90, taak: "APK keuring", monteur: "M. Smit" },
     { id: "pl2", vehicle: "SD-14-TR", datum: "2026-07-03", tijd: "08:00", duur: 240, taak: "Koppeling vervangen", monteur: "M. Smit" },
     { id: "pl3", vehicle: "84-BSX-2", datum: "2026-07-14", tijd: "13:00", duur: 120, taak: "Grote beurt", monteur: "M. Smit" },
@@ -185,7 +189,7 @@ function checkAvailability(dateStr, timeStr, week, workshopHours) {
 }
 
 // ---- Compliance helpers (APK, tachograaf, verzekering) ----
-function daysUntil(dateStr, today = DEMO_TODAY) {
+function daysUntil(dateStr, today = TODAY) {
   if (!dateStr) return null;
   const d = new Date(dateStr + "T00:00:00");
   const t = new Date(today + "T00:00:00");
@@ -193,7 +197,7 @@ function daysUntil(dateStr, today = DEMO_TODAY) {
 }
 
 // status: 'verlopen' (past) | 'binnenkort' (<=30d) | 'ok' | 'onbekend'
-function complianceStatus(dateStr, today = DEMO_TODAY) {
+function complianceStatus(dateStr, today = TODAY) {
   const d = daysUntil(dateStr, today);
   if (d === null) return "onbekend";
   if (d < 0) return "verlopen";
@@ -209,7 +213,7 @@ const COMPLIANCE_META = {
 };
 
 // Build the compliance items for one vehicle
-function vehicleComplianceItems(v, today = DEMO_TODAY) {
+function vehicleComplianceItems(v, today = TODAY) {
   const items = [
     { key: "apk", label: "APK", datum: v.apkTot },
     { key: "verzekering", label: "Verzekering", datum: v.verzekeringTot },
@@ -219,7 +223,7 @@ function vehicleComplianceItems(v, today = DEMO_TODAY) {
 }
 
 // Worst status across a vehicle's compliance items (for a single badge)
-function vehicleWorstCompliance(v, today = DEMO_TODAY) {
+function vehicleWorstCompliance(v, today = TODAY) {
   const order = { verlopen: 3, binnenkort: 2, ok: 1, onbekend: 0 };
   return vehicleComplianceItems(v, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
@@ -261,24 +265,27 @@ const COMMON_ISSUES = [
    AI HELPER — gedeelde Claude API call (tekst + beeld), robuuste parsing
 --------------------------------------------------------------------- */
 
+// Alle AI-verkeer loopt via onze eigen server (/api/ai) zodat de Anthropic-key
+// nooit in de browser staat. Zie server/index.js.
+async function callAIRaw({ messages, system, maxTokens = 800 }) {
+  const response = await fetch("/api/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, system, max_tokens: maxTokens }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `API ${response.status}`);
+  const out = (data.text || "").trim();
+  if (!out) throw new Error("leeg antwoord");
+  return out;
+}
+
 async function callAI({ text, images = [], maxTokens = 800 }) {
   // images: array of { media_type, data } (base64, no prefix)
   const content = [];
   images.forEach((img) => content.push({ type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } }));
   content.push({ type: "text", text });
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, messages: [{ role: "user", content }] }),
-  });
-  if (!response.ok) {
-    const t = await response.text().catch(() => "");
-    throw new Error(`API ${response.status}${t ? ": " + t.slice(0, 120) : ""}`);
-  }
-  const data = await response.json();
-  const out = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("").trim();
-  if (!out) throw new Error("leeg antwoord");
-  return out;
+  return callAIRaw({ messages: [{ role: "user", content }], maxTokens });
 }
 
 function parseAIJson(text) {
@@ -607,7 +614,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
       const parsed = parseAIJson(out);
       setDamageResult(parsed);
     } catch (err) {
-      setDamageError(`Kon foto niet analyseren (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app, niet in het preview-venster.`);
+      setDamageError(`Kon foto niet analyseren (${err.message || "fout"}).`);
     } finally {
       setDamageLoading(false);
     }
@@ -626,7 +633,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
     onSubmit({
       id: "r" + Date.now(), vehicle, chauffeur: currentUser?.naam || "Onbekend", omschrijving,
       prioriteit: veilig === "Nee" ? "kritiek" : veilig === "Twijfel" ? "gemiddeld" : "laag",
-      status: "nieuw", datum: new Date().toISOString().slice(0, 10),
+      status: "nieuw", datum: toLocalKey(new Date()),
       zone, wanneer, hoelang, veilig, mediaCount: media.length,
     });
     setOmschrijving(""); setZone(""); setWanneer(""); setHoelang(""); setVeilig(""); setMedia([]); setVehicle(""); setStep(0);
@@ -911,8 +918,8 @@ function DashboardView({ vehicles, parts, reports, planning, company, onNavigate
     .filter((x) => x.items.length > 0)
     .sort((a, b) => Math.min(...a.items.map((i) => i.dagen ?? 9999)) - Math.min(...b.items.map((i) => i.dagen ?? 9999)));
   const sortedReports = [...reports].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
-  const todayItems = planning.filter((p) => p.datum === DEMO_TODAY).sort((a, b) => a.tijd.localeCompare(b.tijd));
-  const todayLabel = new Date(DEMO_TODAY).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const todayItems = planning.filter((p) => p.datum === TODAY).sort((a, b) => a.tijd.localeCompare(b.tijd));
+  const todayLabel = new Date(TODAY).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   return (
     <div className="space-y-5">
       <div>
@@ -1042,15 +1049,15 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   const isMobile = useIsMobile();
   const go = (v) => onNavigate && onNavigate(v);
 
-  const today = new Date(DEMO_TODAY);
-  const todayKey = DEMO_TODAY;
+  const today = new Date(TODAY + "T00:00:00");
+  const todayKey = TODAY;
   const todayItems = planning.filter((p) => p.datum === todayKey).sort((a, b) => a.tijd.localeCompare(b.tijd));
 
   // next 7 days planning
   const week = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(today); d.setDate(today.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
+    const key = toLocalKey(d);
     week.push({ key, date: d, items: planning.filter((p) => p.datum === key) });
   }
 
@@ -1063,7 +1070,8 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   const lowStock = parts.filter((p) => p.voorraad < p.min);
 
   // Next upcoming appointment today + total scheduled minutes
-  const nowMinutes = 8 * 60; // demo "current time" 08:00
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const nextAppt = todayItems.find((p) => { const [h, m] = p.tijd.split(":").map(Number); return h * 60 + m >= nowMinutes; }) || todayItems[0];
   const scheduledMin = todayItems.reduce((a, p) => a + (Number(p.duur) || 0), 0);
   const workloadPct = Math.min(100, Math.round((scheduledMin / (8 * 60)) * 100)); // vs 8h day
@@ -1313,35 +1321,50 @@ function VehiclesView({ vehicles, onAdd, onSelect }) {
       const prompt = `Je bent een RDW-voertuigassistent. Geef voor het Nederlandse kenteken "${plate}" je beste inschatting van de voertuiggegevens. Antwoord UITSLUITEND met JSON, geen uitleg, in dit formaat:
 {"merk":"<merk en model>","type":"Truck of Bestelwagen","bouwjaar":<jaartal>}
 Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het kentekenformaat. Geen extra tekst.`;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 300, messages: [{ role: "user", content: prompt }] }),
-      });
-      if (!response.ok) throw new Error(`API ${response.status}`);
-      const data = await response.json();
-      let text = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("").trim();
-      text = text.replace(/```json\s*|```/g, "").trim();
-      const parsed = JSON.parse(text);
+      const out = await callAI({ text: prompt, maxTokens: 300 });
+      const parsed = parseAIJson(out);
       setForm((f) => ({ ...f, merk: parsed.merk || f.merk, type: parsed.type === "Bestelwagen" ? "Bestelwagen" : "Truck", bouwjaar: parsed.bouwjaar ? String(parsed.bouwjaar) : f.bouwjaar }));
       setAiMsg("✓ Gegevens ingevuld door AI — controleer en pas zo nodig aan.");
     } catch (err) {
-      setAiMsg(`Kon gegevens niet ophalen (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app. Vul handmatig in.`);
+      setAiMsg(`Kon gegevens niet ophalen (${err.message || "fout"}). Vul handmatig in.`);
     } finally {
       setAiLoading(false);
     }
   };
+
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const submit = () => {
     if (!form.kenteken || !form.merk) return;
     onAdd({ id: "v" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type, bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), km: Number(form.km) || 0, status: "operational", health: 100, driver: "—", apkTot: "", tachoTot: "", tachoPlicht: form.type === "Truck", verzekeringTot: "" });
     setForm({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "" }); setAiMsg(""); setOpen(false);
   };
+
+  const q = query.trim().toLowerCase();
+  const shown = vehicles.filter((v) => {
+    if (statusFilter !== "all" && v.status !== statusFilter) return false;
+    if (!q) return true;
+    return [v.kenteken, v.merk, v.type, v.driver].filter(Boolean).some((s) => String(s).toLowerCase().includes(q));
+  });
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik op een voertuig voor details.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative" style={{ flex: 1, minWidth: 180 }}>
+          <Search size={15} color="#7B8698" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input className="tg-input" style={{ paddingLeft: 34 }} placeholder="Zoek op kenteken, merk of chauffeur…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {[{ id: "all", label: "Alle" }, { id: "operational", label: "Operationeel" }, { id: "attention", label: "Let op" }, { id: "workshop", label: "Werkplaats" }].map((f) => (
+            <Chip key={f.id} active={statusFilter === f.id} onClick={() => setStatusFilter(f.id)}>{f.label}</Chip>
+          ))}
+        </div>
       </div>
       {open && (
         <Card className="p-5">
@@ -1364,9 +1387,9 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
       )}
-      {vehicles.length === 0 ? <EmptyState icon={Truck} text='Nog geen voertuigen.' /> : isMobile ? (
+      {vehicles.length === 0 ? <EmptyState icon={Truck} text='Nog geen voertuigen.' /> : shown.length === 0 ? <EmptyState icon={Search} text='Geen voertuigen gevonden voor deze zoekopdracht.' /> : isMobile ? (
         <div className="space-y-3">
-          {vehicles.map((v) => (
+          {shown.map((v) => (
             <button key={v.id} onClick={() => onSelect(v.id)} className="text-left" style={{ width: "100%" }}>
               <Card className="p-4" style={{ transition: "border-color .15s" }}>
                 <div className="flex items-center justify-between mb-2">
@@ -1389,7 +1412,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Kenteken", "Merk/model", "Type", "KM-stand", "Compliance", "Status"].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
-              {vehicles.map((v) => (
+              {shown.map((v) => (
                 <tr key={v.id} onClick={() => onSelect(v.id)} style={{ borderBottom: "1px solid #1A2129", cursor: "pointer" }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#1A2129")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                   <td className="px-4 py-3"><Kenteken value={v.kenteken} /></td>
@@ -1412,10 +1435,10 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(vehicle);
-  const [sched, setSched] = useState({ open: false, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
+  const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
-  const [costForm, setCostForm] = useState({ open: false, categorie: "onderhoud", bedrag: "", datum: DEMO_TODAY, omschrijving: "" });
+  const [costForm, setCostForm] = useState({ open: false, categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
   const [predLoading, setPredLoading] = useState(false);
   const [predError, setPredError] = useState("");
   const [prediction, setPrediction] = useState(null); // { items: [{taak, urgentie, reden, binnen}] }
@@ -1428,7 +1451,7 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
         km: vehicle.km, health: vehicle.health,
         meldingen: vReports.map((r) => ({ omschrijving: r.omschrijving, prioriteit: r.prioriteit, datum: r.datum, status: r.status })),
         gepland: vPlanning.map((p) => ({ taak: p.taak, datum: p.datum })),
-        vandaag: DEMO_TODAY,
+        vandaag: TODAY,
       };
       const prompt = `Je bent een ervaren truck-monteur die voorspellend onderhoud inschat. Op basis van onderstaande voertuigdata, geef 3 tot 5 concrete onderhoudspunten die binnenkort aandacht nodig hebben. Denk aan kilometerstand, leeftijd, gezondheidsscore en terugkerende meldingen.
 
@@ -1441,7 +1464,7 @@ ${JSON.stringify(ctx)}`;
       const parsed = parseAIJson(out);
       setPrediction(parsed.items ? parsed : { items: Array.isArray(parsed) ? parsed : [] });
     } catch (err) {
-      setPredError(`Kon voorspelling niet ophalen (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app, niet in het preview-venster.`);
+      setPredError(`Kon voorspelling niet ophalen (${err.message || "fout"}).`);
     } finally {
       setPredLoading(false);
     }
@@ -1462,7 +1485,7 @@ ${JSON.stringify(ctx)}`;
     const taak = fromReport ? fromReport.omschrijving : sched.taak;
     if (!taak) return;
     onAddPlanning({ id: "pl" + Date.now(), vehicle: vehicle.kenteken, datum: sched.datum, tijd: sched.tijd, duur: Number(sched.duur) || 60, taak, monteur: sched.monteur || "—", reportId: fromReport ? fromReport.id : null });
-    setSched({ open: false, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
+    setSched({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
     setToast("Ingepland.");
   };
 
@@ -1605,7 +1628,7 @@ ${JSON.stringify(ctx)}`;
                   <div><FieldLabel>Omschrijving</FieldLabel><input className="tg-input" style={{ width: "100%", minWidth: 0 }} placeholder="Optioneel" value={costForm.omschrijving} onChange={(e) => setCostForm({ ...costForm, omschrijving: e.target.value })} /></div>
                 </div>
                 <div className="flex gap-2">
-                  <Button small onClick={() => { if (!costForm.bedrag) return; onAddCost({ id: "c" + Date.now(), vehicle: vehicle.kenteken, categorie: costForm.categorie, bedrag: Number(costForm.bedrag), datum: costForm.datum, omschrijving: costForm.omschrijving }); setCostForm({ open: false, categorie: "onderhoud", bedrag: "", datum: DEMO_TODAY, omschrijving: "" }); }}>Toevoegen</Button>
+                  <Button small onClick={() => { if (!costForm.bedrag) return; onAddCost({ id: "c" + Date.now(), vehicle: vehicle.kenteken, categorie: costForm.categorie, bedrag: Number(costForm.bedrag), datum: costForm.datum, omschrijving: costForm.omschrijving }); setCostForm({ open: false, categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" }); }}>Toevoegen</Button>
                   <Button small variant="ghost" onClick={() => setCostForm({ ...costForm, open: false })}>Annuleren</Button>
                 </div>
               </div>
@@ -1681,7 +1704,7 @@ ${JSON.stringify(ctx)}`;
                   </div>
                   {it.binnen && <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: col, marginTop: 2 }}>⏱ {it.binnen}</div>}
                   {it.reden && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{it.reden}</div>}
-                  <button onClick={() => { setSched({ open: true, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Inplannen
                   </button>
@@ -1710,7 +1733,7 @@ ${JSON.stringify(ctx)}`;
                   <span className="text-xs px-2 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{PRIO_META[r.prioriteit].label}</span>
                 </div>
                 {r.status !== "klaar" && (
-                  <button onClick={() => { setSched({ open: true, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Deze melding inplannen
                   </button>
@@ -1768,15 +1791,23 @@ ${JSON.stringify(ctx)}`;
   );
 }
 
-function TrailersView({ trailers, onAdd }) {
+const STATUS_CYCLE = ["operational", "attention", "workshop"];
+
+function TrailersView({ trailers, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ kenteken: "", merk: "", type: "" });
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ kenteken: "", merk: "", type: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
   const submit = () => { if (!form.kenteken || !form.merk) return; onAdd({ id: "t" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type || "Trailer", bouwjaar: new Date().getFullYear(), status: "operational" }); setForm({ kenteken: "", merk: "", type: "" }); setOpen(false); };
+  const startEdit = (t) => { setEditId(t.id); setEditForm({ kenteken: t.kenteken, merk: t.merk, type: t.type }); };
+  const saveEdit = (t) => { if (!editForm.kenteken || !editForm.merk) return; onUpdate({ ...t, kenteken: editForm.kenteken.toUpperCase(), merk: editForm.merk, type: editForm.type || "Trailer" }); setEditId(null); };
+  const cycleStatus = (t) => { const i = STATUS_CYCLE.indexOf(t.status); onUpdate({ ...t, status: STATUS_CYCLE[(i + 1) % STATUS_CYCLE.length] }); };
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Trailer toevoegen</Button>
       </div>
       {open && (
@@ -1793,9 +1824,28 @@ function TrailersView({ trailers, onAdd }) {
         <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
           {trailers.map((t) => (
             <Card key={t.id} className="p-4">
-              <div className="flex items-center justify-between mb-3"><Kenteken value={t.kenteken} /><StatusLamp status={t.status} /></div>
-              <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{t.merk}</div>
-              <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13 }}>{t.type} · {t.bouwjaar}</div>
+              {editId === t.id ? (
+                <div className="space-y-2">
+                  <input className="tg-input" value={editForm.kenteken} onChange={(e) => setEditForm({ ...editForm, kenteken: e.target.value })} placeholder="Kenteken" />
+                  <input className="tg-input" value={editForm.merk} onChange={(e) => setEditForm({ ...editForm, merk: e.target.value })} placeholder="Merk" />
+                  <input className="tg-input" value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })} placeholder="Type" />
+                  <div className="flex gap-2"><Button small onClick={() => saveEdit(t)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button></div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-3"><Kenteken value={t.kenteken} /><button onClick={() => cycleStatus(t)} title="Klik om status te wisselen"><StatusLamp status={t.status} /></button></div>
+                  <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{t.merk}</div>
+                  <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13 }}>{t.type} · {t.bouwjaar}</div>
+                  <div className="flex items-center gap-3 mt-3 pt-3" style={{ borderTop: "1px solid #1A2129" }}>
+                    <button onClick={() => startEdit(t)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                    {confirmDel === t.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(t.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(t.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}><Trash2 size={12} /> Verwijderen</button>
+                    )}
+                  </div>
+                </>
+              )}
             </Card>
           ))}
         </div>
@@ -1804,23 +1854,40 @@ function TrailersView({ trailers, onAdd }) {
   );
 }
 
-function PartsView({ parts, onAdd }) {
+function PartsView({ parts, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ naam: "", voorraad: "", min: "", prijs: "" });
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ naam: "", voorraad: "", min: "", prijs: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
   const submit = () => { if (!form.naam) return; onAdd({ id: "p" + Date.now(), naam: form.naam, voorraad: Number(form.voorraad) || 0, min: Number(form.min) || 0, eenheid: "stuks", prijs: Number(form.prijs) || 0 }); setForm({ naam: "", voorraad: "", min: "", prijs: "" }); setOpen(false); };
+  const changeStock = (p, delta) => onUpdate({ ...p, voorraad: Math.max(0, p.voorraad + delta) });
+  const startEdit = (p) => { setEditId(p.id); setEditForm({ naam: p.naam, voorraad: String(p.voorraad), min: String(p.min), prijs: String(p.prijs) }); };
+  const saveEdit = (p) => { if (!editForm.naam) return; onUpdate({ ...p, naam: editForm.naam, voorraad: Number(editForm.voorraad) || 0, min: Number(editForm.min) || 0, prijs: Number(editForm.prijs) || 0 }); setEditId(null); };
+  const totalValue = parts.reduce((a, p) => a + p.voorraad * p.prijs, 0);
+
+  const Stepper = ({ p }) => (
+    <span className="inline-flex items-center gap-1.5">
+      <button onClick={() => changeStock(p, -1)} className="flex items-center justify-center rounded" style={{ width: 24, height: 24, background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontWeight: 700, lineHeight: 1 }}>−</button>
+      <span style={{ color: p.voorraad < p.min ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, minWidth: 22, textAlign: "center" }}>{p.voorraad}</span>
+      <button onClick={() => changeStock(p, 1)} className="flex items-center justify-center rounded" style={{ width: 24, height: 24, background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontWeight: 700, lineHeight: 1 }}>+</button>
+    </span>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Automatisch afgeboekt bij gebruik.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Voorraadwaarde: <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono" }}>€ {totalValue.toLocaleString("nl-NL")}</span></p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Onderdeel toevoegen</Button>
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr 1fr" }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr 1fr 1fr" }}>
             <input placeholder="Naam" value={form.naam} onChange={(e) => setForm({ ...form, naam: e.target.value })} className="tg-input" />
-            <input placeholder="Voorraad" value={form.voorraad} onChange={(e) => setForm({ ...form, voorraad: e.target.value })} className="tg-input" />
-            <input placeholder="Min." value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value })} className="tg-input" />
+            <input placeholder="Voorraad" type="number" value={form.voorraad} onChange={(e) => setForm({ ...form, voorraad: e.target.value })} className="tg-input" />
+            <input placeholder="Min." type="number" value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value })} className="tg-input" />
+            <input placeholder="Prijs €" type="number" value={form.prijs} onChange={(e) => setForm({ ...form, prijs: e.target.value })} className="tg-input" />
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
         </Card>
@@ -1829,30 +1896,76 @@ function PartsView({ parts, onAdd }) {
         <div className="space-y-3">
           {parts.map((p) => { const low = p.voorraad < p.min; return (
             <Card key={p.id} className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{p.naam}</span>
-                {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600, flexShrink: 0 }}>Laag</span>}
-              </div>
-              <div className="flex items-center justify-between" style={{ fontFamily: "Inter", fontSize: 13 }}>
-                <span style={{ color: "#B4BCC9" }}>Voorraad: <span style={{ color: low ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{p.voorraad}</span> / min. {p.min} {p.eenheid}</span>
-                <span style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</span>
-              </div>
+              {editId === p.id ? (
+                <div className="space-y-2">
+                  <input className="tg-input" value={editForm.naam} onChange={(e) => setEditForm({ ...editForm, naam: e.target.value })} placeholder="Naam" />
+                  <div className="grid grid-cols-3 gap-2">
+                    <input className="tg-input" type="number" value={editForm.voorraad} onChange={(e) => setEditForm({ ...editForm, voorraad: e.target.value })} placeholder="Voorraad" />
+                    <input className="tg-input" type="number" value={editForm.min} onChange={(e) => setEditForm({ ...editForm, min: e.target.value })} placeholder="Min." />
+                    <input className="tg-input" type="number" value={editForm.prijs} onChange={(e) => setEditForm({ ...editForm, prijs: e.target.value })} placeholder="Prijs" />
+                  </div>
+                  <div className="flex gap-2"><Button small onClick={() => saveEdit(p)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button></div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{p.naam}</span>
+                    {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600, flexShrink: 0 }}>Laag</span>}
+                  </div>
+                  <div className="flex items-center justify-between" style={{ fontFamily: "Inter", fontSize: 13 }}>
+                    <Stepper p={p} />
+                    <span style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs} · min. {p.min}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 pt-2" style={{ borderTop: "1px solid #1A2129" }}>
+                    <button onClick={() => startEdit(p)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                    {confirmDel === p.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(p.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(p.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}><Trash2 size={12} /> Verwijderen</button>
+                    )}
+                  </div>
+                </>
+              )}
             </Card>
           ); })}
         </div>
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
-            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Onderdeel", "Voorraad", "Min.", "Eenheid", "Prijs", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Onderdeel", "Voorraad", "Min.", "Prijs", "Waarde", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
               {parts.map((p) => { const low = p.voorraad < p.min; return (
                 <tr key={p.id} style={{ borderBottom: "1px solid #1A2129" }}>
-                  <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{p.naam}</td>
-                  <td className="px-4 py-3" style={{ color: low ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{p.voorraad}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.min}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.eenheid}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</td>
-                  <td className="px-4 py-3">{low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600 }}>Lage voorraad</span>}</td>
+                  {editId === p.id ? (
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input className="tg-input" style={{ width: 200 }} value={editForm.naam} onChange={(e) => setEditForm({ ...editForm, naam: e.target.value })} placeholder="Naam" />
+                        <input className="tg-input" style={{ width: 90 }} type="number" value={editForm.voorraad} onChange={(e) => setEditForm({ ...editForm, voorraad: e.target.value })} placeholder="Voorraad" />
+                        <input className="tg-input" style={{ width: 80 }} type="number" value={editForm.min} onChange={(e) => setEditForm({ ...editForm, min: e.target.value })} placeholder="Min." />
+                        <input className="tg-input" style={{ width: 90 }} type="number" value={editForm.prijs} onChange={(e) => setEditForm({ ...editForm, prijs: e.target.value })} placeholder="Prijs" />
+                        <Button small onClick={() => saveEdit(p)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button>
+                      </div>
+                    </td>
+                  ) : (
+                    <>
+                      <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{p.naam}</td>
+                      <td className="px-4 py-3"><Stepper p={p} /></td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.min}</td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {(p.voorraad * p.prijs).toLocaleString("nl-NL")}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600 }}>Laag</span>}
+                          <button onClick={() => startEdit(p)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                          {confirmDel === p.id ? (
+                            <span className="flex items-center gap-2"><button onClick={() => { onDelete(p.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                          ) : (
+                            <button onClick={() => setConfirmDel(p.id)} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}>Verwijderen</button>
+                          )}
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ); })}
             </tbody>
@@ -1863,25 +1976,37 @@ function PartsView({ parts, onAdd }) {
   );
 }
 
-function MaintenanceView({ maintenance, onAdd }) {
+const MAINT_STATUS_CYCLE = ["gepland", "in_uitvoering", "urgent", "klaar"];
+const maintStatusColor = { gepland: "#22D3B0", urgent: "#F0453F", in_uitvoering: "#FF8A00", klaar: "#34D399" };
+const maintStatusLabel = { gepland: "Gepland", urgent: "Urgent", in_uitvoering: "In uitvoering", klaar: "Klaar" };
+
+function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ vehicle: "", taak: "", dueDate: "" });
-  const submit = () => { if (!form.vehicle || !form.taak) return; onAdd({ id: "m" + Date.now(), vehicle: form.vehicle, taak: form.taak, dueKm: null, dueDate: form.dueDate || "—", status: "gepland" }); setForm({ vehicle: "", taak: "", dueDate: "" }); setOpen(false); };
-  const statusColor = { gepland: "#22D3B0", urgent: "#F0453F", in_uitvoering: "#FF8A00" };
-  const statusLabel = { gepland: "Gepland", urgent: "Urgent", in_uitvoering: "In uitvoering" };
+  const [form, setForm] = useState({ vehicle: "", taak: "", dueDate: "", dueKm: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
+  const submit = () => { if (!form.vehicle || !form.taak) return; onAdd({ id: "m" + Date.now(), vehicle: form.vehicle, taak: form.taak, dueKm: Number(form.dueKm) || null, dueDate: form.dueDate || "—", status: "gepland" }); setForm({ vehicle: "", taak: "", dueDate: "", dueKm: "" }); setOpen(false); };
+  const cycleStatus = (m) => { const i = MAINT_STATUS_CYCLE.indexOf(m.status); onUpdate({ ...m, status: MAINT_STATUS_CYCLE[(i + 1) % MAINT_STATUS_CYCLE.length] }); };
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Nieuw schema</Button>
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
-            <input placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} className="tg-input" />
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+            {vehicles.length > 0 ? (
+              <select className="tg-input" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
+                <option value="">Kies voertuig…</option>
+                {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+              </select>
+            ) : (
+              <input placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} className="tg-input" />
+            )}
             <input placeholder="Taak" value={form.taak} onChange={(e) => setForm({ ...form, taak: e.target.value })} className="tg-input" />
             <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="tg-input" />
+            <input placeholder="Bij km (optioneel)" type="number" value={form.dueKm} onChange={(e) => setForm({ ...form, dueKm: e.target.value })} className="tg-input" />
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
         </Card>
@@ -1889,12 +2014,19 @@ function MaintenanceView({ maintenance, onAdd }) {
       {maintenance.length === 0 ? <EmptyState icon={Calendar} text="Nog geen onderhoudsschema's." /> : (
         <div className="space-y-3">
           {maintenance.map((m) => (
-            <Card key={m.id} className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-4">
+            <Card key={m.id} className="p-4 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-4" style={{ minWidth: 0 }}>
                 <Kenteken value={m.vehicle} />
-                <div><div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{m.taak}</div><div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12 }}>Verwacht: {m.dueDate}{m.dueKm ? ` · ${m.dueKm.toLocaleString("nl-NL")} km` : ""}</div></div>
+                <div style={{ minWidth: 0 }}><div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{m.taak}</div><div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12 }}>Verwacht: {m.dueDate}{m.dueKm ? ` · ${m.dueKm.toLocaleString("nl-NL")} km` : ""}</div></div>
               </div>
-              <span className="text-xs px-2 py-1 rounded" style={{ color: statusColor[m.status], border: `1px solid ${statusColor[m.status]}55`, fontWeight: 600, fontFamily: "Inter" }}>{statusLabel[m.status]}</span>
+              <div className="flex items-center gap-3">
+                <button onClick={() => cycleStatus(m)} className="text-xs px-2 py-1 rounded" style={{ color: maintStatusColor[m.status], border: `1px solid ${maintStatusColor[m.status]}55`, fontWeight: 600, fontFamily: "Inter" }}>{maintStatusLabel[m.status]}</button>
+                {confirmDel === m.id ? (
+                  <span className="flex items-center gap-2"><button onClick={() => { onDelete(m.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                ) : (
+                  <button onClick={() => setConfirmDel(m.id)} style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                )}
+              </div>
             </Card>
           ))}
         </div>
@@ -1907,14 +2039,14 @@ function WorkfloorView({ reports, onMove, onSchedule, mechanics = [], availabili
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
-  const [schedForm, setSchedForm] = useState({ datum: DEMO_TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
+  const [schedForm, setSchedForm] = useState({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
   const [toast, setToast] = useState("");
 
   const openSchedule = (r) => {
     setMoveMenu(null);
     setSchedFor(r.id);
     const first = mechanics[0];
-    setSchedForm({ datum: DEMO_TODAY, tijd: "09:00", duur: "60", monteurId: first?.id || "", monteur: first?.naam || "" });
+    setSchedForm({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: first?.id || "", monteur: first?.naam || "" });
   };
 
   const avail = schedForm.monteurId ? checkAvailability(schedForm.datum, schedForm.tijd, availability[schedForm.monteurId], hours) : checkAvailability(schedForm.datum, schedForm.tijd, null, hours);
@@ -2308,10 +2440,10 @@ function AiAssistantView({ reports, vehicles, company, onAddVehicle, onAddPlanni
       if (action.type === "schedule_repair" && action.kenteken) {
         onAddPlanning({
           id: "pl" + Date.now(), vehicle: String(action.kenteken).toUpperCase(),
-          datum: action.datum || DEMO_TODAY, tijd: action.tijd || "09:00",
+          datum: action.datum || TODAY, tijd: action.tijd || "09:00",
           duur: Number(action.duur) || 60, taak: action.taak || "Reparatie", monteur: action.monteur || "—",
         });
-        return `✓ ${action.taak || "Reparatie"} ingepland voor ${String(action.kenteken).toUpperCase()} op ${action.datum || DEMO_TODAY} om ${action.tijd || "09:00"}.`;
+        return `✓ ${action.taak || "Reparatie"} ingepland voor ${String(action.kenteken).toUpperCase()} op ${action.datum || TODAY} om ${action.tijd || "09:00"}.`;
       }
     } catch (e) { return `Kon actie niet uitvoeren: ${e.message}`; }
     return null;
@@ -2331,30 +2463,14 @@ Als de gebruiker om een actie vraagt, antwoord dan met een kort JSON-blok op een
 - Voertuig toevoegen: {"type":"add_vehicle","kenteken":"68-BVG-4","merk":"DAF XF","voertuigtype":"Truck","bouwjaar":2023}
 - Reparatie inplannen: {"type":"schedule_repair","kenteken":"VX-77-KL","taak":"Remmen vervangen","datum":"2026-07-05","tijd":"09:00","duur":90}
 
-Gebruik datum-formaat JJJJ-MM-DD. Vandaag is ${DEMO_TODAY}. Als er geen datum genoemd is, gebruik vandaag. Verzin geen data die je niet hebt; vraag door als iets ontbreekt. Voor gewone vragen antwoord je kort en concreet in het Nederlands zonder <actie>-blok.
+Gebruik datum-formaat JJJJ-MM-DD. Vandaag is ${TODAY}. Als er geen datum genoemd is, gebruik vandaag. Verzin geen data die je niet hebt; vraag door als iets ontbreekt. Voor gewone vragen antwoord je kort en concreet in het Nederlands zonder <actie>-blok.
 
 VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports)}`;
 
-    const apiMessages = [
-      { role: "user", content: instructions + "\n\nBevestig kort dat je klaar staat." },
-      { role: "assistant", content: "Ik sta klaar. Ik kan vragen beantwoorden en voertuigen toevoegen of reparaties inplannen." },
-      ...newMessages.slice(1).map((m) => ({ role: m.role, content: m.content })),
-    ];
+    const apiMessages = newMessages.slice(1).map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: apiMessages }),
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`API ${response.status}${errText ? ": " + errText.slice(0, 120) : ""}`);
-      }
-      const data = await response.json();
-      let text = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("\n").trim();
-      if (!text && typeof data.completion === "string") text = data.completion.trim();
-      if (!text) throw new Error("leeg antwoord");
+      const text = await callAIRaw({ system: instructions, messages: apiMessages, maxTokens: 1000 });
 
       // Parse and execute any <actie> block
       const actieMatch = text.match(/<actie>([\s\S]*?)<\/actie>/i);
@@ -2371,7 +2487,7 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
       const finalText = [cleaned, ...results].filter(Boolean).join("\n\n") || "Gedaan.";
       setMessages((m) => [...m, { role: "assistant", content: finalText }]);
     } catch (err) {
-      setMessages((m) => [...m, { role: "assistant", content: `Kon geen antwoord ophalen (${err.message || "netwerkfout"}). Let op: de AI werkt alleen in de gepubliceerde app, niet in dit preview-venster.` }]);
+      setMessages((m) => [...m, { role: "assistant", content: `Kon geen antwoord ophalen (${err.message || "netwerkfout"}).` }]);
     } finally {
       setLoading(false);
     }
@@ -2512,16 +2628,16 @@ function InspectionView({ vehicles, reports }) {
    PLANNING — werkplaatskalender: wagens inplannen op datum/tijd
 --------------------------------------------------------------------- */
 
-function toDateKey(d) { return d.toISOString().slice(0, 10); }
+function toDateKey(d) { return toLocalKey(d); }
 
 function FieldLabel({ children }) {
   return <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9", fontWeight: 600, marginBottom: 4 }}>{children}</div>;
 }
 
-function PlanningView({ vehicles, planning, reports, onAdd }) {
+function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
   const isMobile = useIsMobile();
-  const [cursor, setCursor] = useState(new Date(2026, 6, 1)); // juli 2026
-  const [selectedDate, setSelectedDate] = useState(toDateKey(new Date(2026, 6, 2)));
+  const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
+  const [selectedDate, setSelectedDate] = useState(TODAY);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ vehicle: "", tijd: "09:00", duur: "60", taak: "", monteur: "", reportId: null });
 
@@ -2586,7 +2702,7 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
               const items = planningByDate[key] || [];
               const count = items.length;
               const selected = key === selectedDate;
-              const isToday = key === DEMO_TODAY;
+              const isToday = key === TODAY;
               const isWeekend = d.getDay() === 0 || d.getDay() === 6;
               return (
                 <button key={i} onClick={() => setSelectedDate(key)} className="rounded-lg flex flex-col items-center justify-start relative"
@@ -2676,10 +2792,11 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
                   return (
                     <div key={p.id} style={{ position: "absolute", top: `${topPct}%`, left: 44, right: 0, minHeight: 44, height: `${height}%` }}>
                       <span style={{ position: "absolute", left: -44, top: 0, fontFamily: "JetBrains Mono", fontSize: 11, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
-                      <div className="rounded-lg h-full" style={{ background: "#3B82F618", borderLeft: "3px solid #3B82F6", padding: "6px 10px", overflow: "hidden" }}>
+                      <div className="rounded-lg h-full" style={{ background: "#3B82F618", borderLeft: "3px solid #3B82F6", padding: "6px 10px", overflow: "hidden", position: "relative" }}>
                         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
                           <Kenteken value={p.vehicle} />
                           {p.reportId && <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#3B82F6", border: "1px solid #3B82F655", flexShrink: 0 }}>melding</span>}
+                          {onDelete && <button onClick={() => onDelete(p.id)} title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0 }}><Trash2 size={13} /></button>}
                         </div>
                         <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", fontWeight: 500, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taak}</div>
                         <div style={{ fontFamily: "Inter", fontSize: 11, color: "#B4BCC9" }}>{p.duur} min · {p.monteur}</div>
@@ -2692,6 +2809,132 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   KOSTEN — overzicht per categorie en per voertuig, met toevoegen/verwijderen
+--------------------------------------------------------------------- */
+
+const COST_CATEGORIES = [
+  { id: "onderhoud", label: "Onderhoud", color: "#22D3B0" },
+  { id: "brandstof", label: "Brandstof", color: "#3B82F6" },
+  { id: "reparatie", label: "Reparatie", color: "#FF8A00" },
+  { id: "verzekering", label: "Verzekering", color: "#A855F7" },
+  { id: "belasting", label: "Belasting", color: "#EC4899" },
+  { id: "overig", label: "Overig", color: "#98A1B0" },
+];
+const costCatMeta = (id) => COST_CATEGORIES.find((c) => c.id === id) || COST_CATEGORIES[5];
+const euro = (n) => "€ " + Math.round(n).toLocaleString("nl-NL");
+
+function CostsView({ costs, vehicles, onAdd, onDelete }) {
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ vehicle: "", categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
+  const [year, setYear] = useState("all");
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const years = Array.from(new Set(costs.map((c) => (c.datum || "").slice(0, 4)).filter(Boolean))).sort().reverse();
+  const filtered = year === "all" ? costs : costs.filter((c) => (c.datum || "").startsWith(year));
+  const total = filtered.reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+
+  const byCat = COST_CATEGORIES.map((cat) => ({ ...cat, bedrag: filtered.filter((c) => c.categorie === cat.id).reduce((a, c) => a + (Number(c.bedrag) || 0), 0) })).filter((c) => c.bedrag > 0);
+  const byVehicle = Object.entries(filtered.reduce((acc, c) => { acc[c.vehicle] = (acc[c.vehicle] || 0) + (Number(c.bedrag) || 0); return acc; }, {})).map(([vehicle, bedrag]) => ({ vehicle, bedrag })).sort((a, b) => b.bedrag - a.bedrag);
+  const maxCat = Math.max(1, ...byCat.map((c) => c.bedrag));
+
+  const submit = () => {
+    if (!form.vehicle || !form.bedrag) return;
+    onAdd({ id: "c" + Date.now(), vehicle: form.vehicle, categorie: form.categorie, bedrag: Number(form.bedrag), datum: form.datum, omschrijving: form.omschrijving });
+    setForm({ vehicle: "", categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
+    setOpen(false);
+  };
+
+  const sorted = [...filtered].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Euro size={22} color="#3B82F6" /> Kosten</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Uitgaven per categorie en per voertuig.</p></div>
+        <div className="flex items-center gap-2">
+          <select className="tg-input" style={{ width: "auto" }} value={year} onChange={(e) => setYear(e.target.value)}>
+            <option value="all">Alle jaren</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <Button icon={Plus} onClick={() => setOpen(true)}>Kostenpost</Button>
+        </div>
+      </div>
+
+      {open && (
+        <Card className="p-5 space-y-3">
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))" }}>
+            <div><FieldLabel>Voertuig</FieldLabel>
+              {vehicles.length > 0 ? (
+                <select className="tg-input" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
+                  <option value="">Kies voertuig…</option>
+                  {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+                </select>
+              ) : <input className="tg-input" placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} />}
+            </div>
+            <div><FieldLabel>Categorie</FieldLabel>
+              <select className="tg-input" value={form.categorie} onChange={(e) => setForm({ ...form, categorie: e.target.value })}>
+                {COST_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div><FieldLabel>Bedrag (€)</FieldLabel><input className="tg-input" type="number" value={form.bedrag} onChange={(e) => setForm({ ...form, bedrag: e.target.value })} placeholder="0" /></div>
+            <div><FieldLabel>Datum</FieldLabel><input className="tg-input" type="date" value={form.datum} onChange={(e) => setForm({ ...form, datum: e.target.value })} /></div>
+          </div>
+          <div><FieldLabel>Omschrijving (optioneel)</FieldLabel><input className="tg-input" value={form.omschrijving} onChange={(e) => setForm({ ...form, omschrijving: e.target.value })} placeholder="Bv. Grote beurt" /></div>
+          <div className="flex gap-2"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
+        </Card>
+      )}
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))" }}>
+        <Card className="p-5"><Eyebrow>Totaal {year !== "all" ? year : ""}</Eyebrow><div style={{ fontFamily: "Oswald", fontSize: 32, fontWeight: 600, color: "#E7ECF3" }}>{euro(total)}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{filtered.length} kostenpost(en)</div></Card>
+        <Card className="p-5"><Eyebrow>Grootste categorie</Eyebrow>{byCat.length ? (() => { const top = [...byCat].sort((a, b) => b.bedrag - a.bedrag)[0]; return <><div style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: top.color }}>{top.label}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{euro(top.bedrag)}</div></>; })() : <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 13 }}>—</div>}</Card>
+        <Card className="p-5"><Eyebrow>Duurste voertuig</Eyebrow>{byVehicle.length ? <><div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3" }}>{byVehicle[0].vehicle}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{euro(byVehicle[0].bedrag)}</div></> : <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 13 }}>—</div>}</Card>
+      </div>
+
+      {byCat.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Per categorie</Eyebrow>
+          <div className="space-y-2.5 mt-2">
+            {byCat.sort((a, b) => b.bedrag - a.bedrag).map((c) => (
+              <div key={c.id} className="flex items-center gap-3">
+                <span style={{ width: 110, fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", flexShrink: 0 }}>{c.label}</span>
+                <div className="flex-1 h-3 rounded-full" style={{ background: "#1A2129", overflow: "hidden" }}><div className="h-full rounded-full" style={{ width: `${(c.bedrag / maxCat) * 100}%`, background: c.color }} /></div>
+                <span style={{ width: 90, textAlign: "right", fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#E7ECF3", flexShrink: 0 }}>{euro(c.bedrag)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : (
+        <Card className="overflow-x-auto">
+          <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {sorted.map((c) => { const meta = costCatMeta(c.categorie); return (
+                <tr key={c.id} style={{ borderBottom: "1px solid #1A2129" }}>
+                  <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>{c.datum}</td>
+                  <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{c.vehicle}</td>
+                  <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600 }}>{meta.label}</span></td>
+                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{c.omschrijving || "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{euro(Number(c.bedrag) || 0)}</td>
+                  <td className="px-4 py-3">
+                    {confirmDel === c.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(c.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(c.id)} style={{ color: "#F0453F" }}><Trash2 size={14} /></button>
+                    )}
+                  </td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        </Card>
+      )}
     </div>
   );
 }
@@ -2711,8 +2954,8 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
       </div>
 
       <nav className="space-y-5 flex-1 overflow-y-auto">
-        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g) => (
-          <div key={g.group}>
+        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g, gi) => (
+          <div key={g.group + gi}>
             <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>{g.group}</div>
             <div className="space-y-1">
               {g.items.map((n) => {
@@ -2778,6 +3021,9 @@ const NAV_GROUPS = [
     { id: "vehicles", label: "Voertuigen", icon: Truck },
     { id: "trailers", label: "Trailers", icon: Container },
     { id: "inspection", label: "360° Inspectie", icon: ScanEye },
+  ]},
+  { group: "Beheer", roles: ["admin"], items: [
+    { id: "costs", label: "Kosten", icon: Euro },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
     { id: "settings", label: "Instellingen", icon: SlidersHorizontal },
@@ -2901,14 +3147,21 @@ export default function TruckGarageApp({ session, onLogout }) {
   const updateVehicle = (v) => setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === v.id ? v : x)) }));
   const deleteVehicle = (id) => setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addTrailer = (t) => setTrailers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), t] }));
+  const updateTrailer = (t) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === t.id ? t : x)) }));
+  const deleteTrailer = (id) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPart = (p) => setParts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
+  const updatePart = (p) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === p.id ? p : x)) }));
+  const deletePart = (id) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addMaintenance = (m) => setMaintenance((s) => ({ ...s, [companyId]: [...(s[companyId] || []), m] }));
+  const updateMaintenance = (m) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === m.id ? m : x)) }));
+  const deleteMaintenance = (id) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addCost = (c) => setCosts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), c] }));
   const deleteCost = (id) => setCosts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...s[companyId]] }));
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
+  const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const resendInvite = () => {};
   const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
 
@@ -3046,16 +3299,17 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} company={company} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
+                {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
                   return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} onGoInspection={() => { setSelectedVehicleId(null); setView("inspection"); }} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} />;
                 })()}
-                {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} />}
-                {view === "parts" && <PartsView parts={cParts} onAdd={addPart} />}
-                {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} onAdd={addMaintenance} />}
+                {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
+                {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
+                {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
                 {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
-                {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} />}
+                {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} />}

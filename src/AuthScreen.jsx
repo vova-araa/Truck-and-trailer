@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Building2, ShieldCheck, LogIn } from "lucide-react";
-import { signIn, signUpCompany, slugify } from "./api.js";
+import { signIn, signUpCompany, slugify, requestPasswordReset } from "./api.js";
 
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -9,9 +9,24 @@ export default function AuthScreen({ onAuthed }) {
   const [mode, setMode] = useState("login");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
 
   const [login, setLogin] = useState({ email: "", wachtwoord: "" });
   const [reg, setReg] = useState({ bedrijfsnaam: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "" });
+
+  const doReset = async () => {
+    setErr(""); setNotice("");
+    if (!validEmail(login.email)) return setErr("Vul eerst je e-mailadres in, dan sturen we een resetlink.");
+    setBusy(true);
+    try {
+      await requestPasswordReset(login.email);
+      setNotice("Als dit e-mailadres bestaat, is er een link gestuurd om je wachtwoord opnieuw in te stellen.");
+    } catch (e) {
+      setErr(mapError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const doLogin = async () => {
     setErr("");
@@ -57,8 +72,8 @@ export default function AuthScreen({ onAuthed }) {
         </div>
 
         <div style={toggleRow}>
-          <button style={tab(mode === "login")} onClick={() => { setMode("login"); setErr(""); }}>Inloggen</button>
-          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); }}>Bedrijf aanmelden</button>
+          <button style={tab(mode === "login")} onClick={() => { setMode("login"); setErr(""); setNotice(""); }}>Inloggen</button>
+          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); }}>Bedrijf aanmelden</button>
         </div>
 
         {mode === "login" ? (
@@ -67,7 +82,9 @@ export default function AuthScreen({ onAuthed }) {
             <input style={input} type="password" placeholder="Wachtwoord" value={login.wachtwoord}
               onChange={(e) => setLogin({ ...login, wachtwoord: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doLogin()} />
             {err && <div style={errStyle}>{err}</div>}
+            {notice && <div style={noticeStyle}>{notice}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doLogin}><LogIn size={16} /> {busy ? "Bezig..." : "Inloggen"}</button>
+            <button style={linkBtn} disabled={busy} onClick={doReset}>Wachtwoord vergeten?</button>
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
@@ -107,3 +124,5 @@ const input = { background: "#161C25", border: "1px solid #2A3340", color: "#E7E
 const primaryBtn = { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 10, border: "none", background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 14, cursor: "pointer" };
 const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 600, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5 };
 const errStyle = { color: "#F0453F", fontFamily: "Inter, sans-serif", fontSize: 12.5 };
+const noticeStyle = { color: "#34D399", fontFamily: "Inter, sans-serif", fontSize: 12.5 };
+const linkBtn = { background: "transparent", border: "none", color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 12.5, cursor: "pointer", padding: 2 };
