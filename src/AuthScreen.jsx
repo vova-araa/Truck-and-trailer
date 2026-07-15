@@ -104,6 +104,12 @@ export default function AuthScreen({ onAuthed }) {
             </div>
           </div>
         )}
+
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #1A2129", textAlign: "center" }}>
+          <a href="/demo.html" style={{ color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 12.5, textDecoration: "none" }}>
+            Liever eerst rondkijken? Bekijk de demo →
+          </a>
+        </div>
       </div>
     </div>
   );

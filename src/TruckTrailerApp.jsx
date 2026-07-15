@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -1386,11 +1386,20 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
     return [v.kenteken, v.merk, v.type, v.driver].filter(Boolean).some((s) => String(s).toLowerCase().includes(q));
   });
 
+  const exportCsv = () => {
+    const label = { operational: "Operationeel", attention: "Let op", workshop: "In werkplaats" };
+    const rows = shown.map((v) => [v.kenteken, v.merk, v.type, v.bouwjaar, v.km, label[v.status] || v.status, v.driver || "", v.apkTot || "", v.verzekeringTot || ""]);
+    downloadCSV("voertuigen.csv", ["Kenteken", "Merk/model", "Type", "Bouwjaar", "KM-stand", "Status", "Chauffeur", "APK tot", "Verzekering tot"], rows);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik op een voertuig voor details.</p></div>
-        <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{vehicles.length} voertuig(en){shown.length !== vehicles.length ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
+          <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -1473,6 +1482,7 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(vehicle);
+  const [note, setNote] = useState(vehicle.notitie || "");
   const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
@@ -1508,7 +1518,10 @@ ${JSON.stringify(ctx)}`;
     }
   };
 
-  useEffect(() => { setForm(vehicle); }, [vehicle.id]);
+  useEffect(() => { setForm(vehicle); setNote(vehicle.notitie || ""); }, [vehicle.id]);
+
+  const saveNote = () => { onUpdate({ ...vehicle, notitie: note }); setToast("Notitie opgeslagen."); };
+  const noteChanged = (note || "") !== (vehicle.notitie || "");
 
   const vReports = reports.filter((r) => r.vehicle === vehicle.kenteken).sort((a, b) => (a.datum < b.datum ? 1 : -1));
   const vPlanning = planning.filter((p) => p.vehicle === vehicle.kenteken).sort((a, b) => (a.datum + a.tijd < b.datum + b.tijd ? 1 : -1));
@@ -1581,6 +1594,18 @@ ${JSON.stringify(ctx)}`;
             <div className="flex gap-2"><Button onClick={saveEdit}>Opslaan</Button><Button variant="ghost" onClick={() => { setForm(vehicle); setEditing(false); }}>Annuleren</Button></div>
           </div>
         )}
+      </Card>
+
+      {/* Notities */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#3B82F618" }}><FileText size={15} color="#3B82F6" /></div>
+            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Notities</span>
+          </div>
+          {noteChanged && <Button small onClick={saveNote}>Opslaan</Button>}
+        </div>
+        <textarea className="tg-input" rows={3} style={{ width: "100%", resize: "vertical" }} placeholder="Bv. bijzonderheden, afspraken met de chauffeur, terugkerende klachten…" value={note} onChange={(e) => setNote(e.target.value)} />
       </Card>
 
       {/* Compliance & keuringen */}
@@ -3340,7 +3365,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </header>
 
-          <main style={{ padding: isMobile ? 20 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
+          <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 92 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
               <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />
@@ -3370,6 +3395,30 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </main>
         </div>
+
+        {/* Mobiele bottom-navigatie — snelle toegang tot de kernschermen */}
+        {isMobile && !isChauffeurOnly && (
+          <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "rgba(12,17,25,0.94)", borderTop: "1px solid #1A2129", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", display: "flex", paddingBottom: "env(safe-area-inset-bottom)" }}>
+            {[
+              { id: "dashboard", label: "Home", icon: LayoutDashboard, onClick: () => setView("dashboard") },
+              { id: "workfloor", label: "Werkvloer", icon: KanbanSquare, onClick: () => setView("workfloor") },
+              { id: "planning", label: "Planning", icon: Calendar, onClick: () => setView("planning") },
+              { id: "vehicles", label: "Voertuigen", icon: Truck, onClick: () => { setSelectedVehicleId(null); setView("vehicles"); } },
+              { id: "__more", label: "Meer", icon: Menu, onClick: () => setMobileMenuOpen(true) },
+            ].map((n) => {
+              const active = view === n.id;
+              return (
+                <button key={n.id} onClick={n.onClick} className="flex-1 flex flex-col items-center justify-center" style={{ gap: 3, padding: "9px 0 11px", background: "transparent", border: "none", color: active ? "#3B82F6" : "#8A93A3", position: "relative", cursor: "pointer" }}>
+                  <n.icon size={20} />
+                  <span style={{ fontFamily: "Inter", fontSize: 10.5, fontWeight: active ? 700 : 500 }}>{n.label}</span>
+                  {n.id === "workfloor" && openCount > 0 && (
+                    <span style={{ position: "absolute", top: 5, left: "calc(50% + 6px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 8, background: "#F0453F", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{openCount}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </div>
     </div>
   );

@@ -11,9 +11,10 @@ staat.
 ## Functies
 
 - **Rollen:** platformbeheerder, bedrijfsbeheerder, werkplaats, chauffeur — elk met een eigen weergave.
-- **Vloot:** voertuigen (zoeken/filteren, APK/tacho/verzekering-compliance), trailers, 360°-inspectie.
-- **Werkplaats:** meldingen-kanban, planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
-- **Kosten:** overzicht per categorie en per voertuig, met jaarfilter.
+- **Vloot:** voertuigen (zoeken/filteren, notities, APK/tacho/verzekering-compliance, CSV-export), trailers, 360°-inspectie.
+- **Werkplaats:** meldingen-kanban (met verwijderen), planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
+- **Kosten:** overzicht per categorie en per voertuig, jaarfilter en CSV-export.
+- **Mobiel:** eigen bottom-navigatie voor snelle toegang onderweg.
 - **AI (optioneel):** kenteken-lookup, fotoschade-herkenning, voorspellend onderhoud en een assistent die ook acties uitvoert — allemaal via de server-proxy.
 
 ---
@@ -49,6 +50,17 @@ npm run dev:server        # in een tweede terminal — de AI-proxy op poort 8787
 De frontend werkt zonder de server; alleen de AI-knoppen hebben de proxy nodig.
 Draai je liever één proces zoals in productie? Dan: `npm run build && npm start`
 (server serveert dan de gebouwde `dist/` én `/api` op poort 8787).
+
+### Demo bekijken (zonder Supabase)
+
+Er is een publieke demo op **seed-data** die geen login of Supabase nodig heeft:
+
+- **In de app:** open `/demo.html` (ook bereikbaar via de "Bekijk de demo →"-link op
+  het inlogscherm). Kies een rol en klik rond; data wordt niet bewaard.
+- **Los, draagbaar bestand:** `npm run build:standalone` maakt
+  `dist-standalone/demo.html` — één self-contained HTML-bestand (alle JS + CSS
+  inline, geen externe requests) dat je lokaal kunt openen, mailen of op elke
+  statische host kunt zetten.
 
 ---
 
