@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -305,6 +305,25 @@ function fileToBase64(file) {
     r.onerror = () => rej(new Error("Kon bestand niet lezen"));
     r.readAsDataURL(file);
   });
+}
+
+// Bouwt een CSV (puntkomma-gescheiden, Excel-NL-vriendelijk) uit rijen en
+// start een download in de browser. Geen server nodig.
+function downloadCSV(filename, headers, rows) {
+  const esc = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.map(esc).join(";"), ...rows.map((r) => r.map(esc).join(";"))];
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function useIsMobile() {
@@ -904,11 +923,13 @@ function ClickableKpi({ label, value, icon: Icon, accent, onClick }) {
   );
 }
 
-function DashboardView({ vehicles, parts, reports, planning, company, onNavigate, onSelectVehicle }) {
+function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle }) {
   const isMobile = useIsMobile();
   const openReports = reports.filter((r) => r.status !== "klaar").length;
   const critical = reports.filter((r) => r.prioriteit === "kritiek" && r.status !== "klaar").length;
   const lowStock = parts.filter((p) => p.voorraad < p.min).length;
+  const thisYear = String(new Date().getFullYear());
+  const costsThisYear = costs.filter((c) => (c.datum || "").startsWith(thisYear)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
   const avgHealth = Math.round(vehicles.reduce((a, v) => a + v.health, 0) / (vehicles.length || 1));
   const inWorkshop = vehicles.filter((v) => v.status === "workshop").length;
   const go = (v) => onNavigate && onNavigate(v);
@@ -932,6 +953,23 @@ function DashboardView({ vehicles, parts, reports, planning, company, onNavigate
         <ClickableKpi label="Kritiek open" value={critical} icon={AlertTriangle} accent="#F0453F" onClick={() => go("workfloor")} />
         <ClickableKpi label="Lage voorraad" value={lowStock} icon={Package} accent="#B4BCC9" onClick={() => go("parts")} />
       </div>
+
+      {isAdmin && (
+        <button onClick={() => go("costs")} className="text-left w-full">
+          <Card hover className="p-5" style={{ cursor: "pointer" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                <div className="flex items-center justify-center rounded-lg" style={{ width: 38, height: 38, background: "#3B82F618", flexShrink: 0 }}><Euro size={19} color="#3B82F6" /></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Kosten {thisYear}</div>
+                  <div style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{"€ " + Math.round(costsThisYear).toLocaleString("nl-NL")}</div>
+                </div>
+              </div>
+              <span style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>Naar kosten →</span>
+            </div>
+          </Card>
+        </button>
+      )}
 
       {/* Compliance-alerts: verlopen of binnenkort verlopende keuringen */}
       {complianceAlerts.length > 0 && (
@@ -2035,12 +2073,13 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
   );
 }
 
-function WorkfloorView({ reports, onMove, onSchedule, mechanics = [], availability = {}, hours }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours }) {
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
   const [schedForm, setSchedForm] = useState({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
   const [toast, setToast] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null);
 
   const openSchedule = (r) => {
     setMoveMenu(null);
@@ -2112,6 +2151,11 @@ function WorkfloorView({ reports, onMove, onSchedule, mechanics = [], availabili
                           <button onClick={() => openSchedule(r)} className="flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}><Calendar size={12} /> Inplannen</button>
                         )}
                         <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter", fontWeight: 600 }}>Verplaatsen <ChevronDown size={12} /></button>
+                        {onDelete && (confirmDel === r.id ? (
+                          <span className="flex items-center gap-2"><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
+                        ) : (
+                          <button onClick={() => setConfirmDel(r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600, marginLeft: "auto" }}><Trash2 size={12} /></button>
+                        ))}
                       </div>
                     )}
 
@@ -2852,15 +2896,21 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
 
   const sorted = [...filtered].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
 
+  const exportCsv = () => {
+    const rows = sorted.map((c) => [c.datum, c.vehicle, costCatMeta(c.categorie).label, c.omschrijving || "", Number(c.bedrag) || 0]);
+    downloadCSV(`kosten-${year === "all" ? "alle" : year}.csv`, ["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag (EUR)"], rows);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Euro size={22} color="#3B82F6" /> Kosten</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Uitgaven per categorie en per voertuig.</p></div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <select className="tg-input" style={{ width: "auto" }} value={year} onChange={(e) => setYear(e.target.value)}>
             <option value="all">Alle jaren</option>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
+          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Kostenpost</Button>
         </div>
       </div>
@@ -3164,6 +3214,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const resendInvite = () => {};
   const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
+  const deleteReport = (id) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((r) => r.id !== id) }));
 
   return (
     <div style={{ minHeight: "100vh", background: "#0A0E14", fontFamily: "Inter", overflowX: "hidden", width: "100%" }}>
@@ -3296,7 +3347,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
-                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} company={company} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
+                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
@@ -3308,7 +3359,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}

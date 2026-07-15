@@ -65,20 +65,60 @@ git push -u origin main
 
 ---
 
-## 4. Deployen op Railway
+## 4. Deployen
 
-1. Ga naar [railway.app](https://railway.app) → **New Project → Deploy from GitHub repo**
-   → kies je repo.
-2. Railway leest `railway.json` automatisch (build: `npm ci && npm run build`,
-   start: `npm start` — de Node-server die `dist/` én de AI-proxy serveert).
-3. Ga naar het project → **Variables** en voeg toe:
-   - `VITE_SUPABASE_URL` = je Supabase project URL
-   - `VITE_SUPABASE_ANON_KEY` = je anon public key
-   - `ANTHROPIC_API_KEY` = je Anthropic-key **(optioneel — alleen nodig voor de AI-functies)**
-4. **Belangrijk:** variabelen met `VITE_` worden tijdens de **build** ingebakken. Als je ze
-   later wijzigt, klik **Redeploy** zodat de build ze meepakt. `ANTHROPIC_API_KEY` wordt
-   op de server gelezen en hoeft geen rebuild.
-5. Open **Settings → Networking → Generate Domain** voor een publieke URL.
+De app is één Node-server (`server/index.js`) die de gebouwde frontend én de
+AI-proxy serveert. Je hebt dus geen speciaal platform nodig — het draait op elke
+host met Node 20+ of met Docker.
+
+### Environment variables (op elke host hetzelfde)
+
+| Variabele | Nodig? | Waar gebruikt |
+|---|---|---|
+| `VITE_SUPABASE_URL` | ja | ingebakken tijdens **build** (frontend) |
+| `VITE_SUPABASE_ANON_KEY` | ja | ingebakken tijdens **build** (frontend) |
+| `ANTHROPIC_API_KEY` | optioneel | gelezen op de **server** (AI-functies) |
+| `ANTHROPIC_MODEL` | optioneel | server, standaard `claude-opus-4-8` |
+| `PORT` | optioneel | server-poort, standaard `8787` |
+
+> De twee `VITE_`-variabelen worden tijdens `npm run build` in de frontend
+> gebakken — wijzig je ze, bouw dan opnieuw. `ANTHROPIC_API_KEY` wordt op runtime
+> door de server gelezen en heeft geen rebuild nodig.
+
+### Optie A — Docker (draait overal identiek)
+
+```bash
+docker build \
+  --build-arg VITE_SUPABASE_URL=https://JOUW-PROJECT.supabase.co \
+  --build-arg VITE_SUPABASE_ANON_KEY=JOUW-ANON-KEY \
+  -t truck-trailer .
+
+docker run -p 8787:8787 -e ANTHROPIC_API_KEY=sk-ant-... truck-trailer
+```
+
+Open daarna `http://localhost:8787`.
+
+### Optie B — Kale Node-host / VPS
+
+```bash
+npm ci
+npm run build            # bouwt dist/ (VITE_-vars moeten dan gezet zijn)
+npm start                # start de server op poort $PORT (standaard 8787)
+```
+
+Zet dit onder een procesmanager zoals **pm2** (`pm2 start npm --name truck -- start`)
+of een **systemd**-service zodat hij automatisch herstart. Draai een reverse proxy
+(nginx/Caddy) ervoor voor TLS + een eigen domein.
+
+### Optie C — Managed platform (Render, Fly.io, Railway, …)
+
+Elk platform dat een Node-app kan draaien werkt. Configureer:
+- **Build:** `npm ci && npm run build`
+- **Start:** `npm start`
+- Zet de environment variables uit de tabel hierboven.
+
+`railway.json` staat in de repo als kant-en-klaar voorbeeld voor Railway, maar is
+niet vereist.
 
 ---
 
