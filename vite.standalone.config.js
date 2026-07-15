@@ -14,6 +14,8 @@ export default defineConfig({
     outDir: "dist-standalone",
     emptyOutDir: true,
     sourcemap: false,
+    // Alles (ook de woff2-fonts) als data-URI inline zodat het echt één bestand is.
+    assetsInlineLimit: 100_000_000,
     rollupOptions: {
       input: resolve(__dirname, "demo.html"),
     },

@@ -25,6 +25,17 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         demo: resolve(__dirname, "demo.html"),
       },
+      output: {
+        // Splits grote, stabiele libraries in eigen chunks zodat de browser ze
+        // apart cachet en de app-code klein blijft.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("@supabase")) return "supabase";
+          if (id.includes("/react") || id.includes("react-dom") || id.includes("scheduler")) return "react";
+          if (id.includes("lucide-react")) return "icons";
+          return "vendor";
+        },
+      },
     },
   },
 });

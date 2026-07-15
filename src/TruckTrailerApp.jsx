@@ -15,7 +15,9 @@ import { saveStateDebounced } from "./api.js";
    plate #FFCC00 (NL kenteken)
 --------------------------------------------------------------------- */
 
-const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');`;
+// Fonts worden zelf-gehost geladen via src/index.css (@font-face). Deze constante
+// blijft leeg zodat de bestaande <style>-templates ongewijzigd kunnen blijven.
+const FONT_IMPORT = ``;
 
 const seedCompanies = [
   { id: "blex", name: "Blex Logistics", slug: "blexlogistics.nl", accent: "#3B82F6" },
