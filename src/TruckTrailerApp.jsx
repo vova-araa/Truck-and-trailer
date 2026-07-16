@@ -339,6 +339,21 @@ function useIsMobile() {
   return isMobile;
 }
 
+// Checkt eenmalig of de AI-proxy een key heeft (server /api/health -> { ai: bool }).
+// Zo kan de UI vooraf tonen of de AI-functies werken.
+function useAiStatus() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setReady(!!d.ai); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return ready;
+}
+
 function StatusLamp({ status }) {
   const meta = STATUS_META[status];
   const pulse = status !== "operational";
@@ -1006,7 +1021,30 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
             <div className="h-2 rounded-full" style={{ width: `${avgHealth}%`, background: avgHealth > 75 ? "#34D399" : avgHealth > 50 ? "#FF8A00" : "#F0453F" }} />
           </div>
         </div>
-        <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>{inWorkshop} voertuig(en) momenteel in de werkplaats</div>
+
+        {/* Vlootstatus — grafische verdeling operationeel / let op / werkplaats */}
+        {vehicles.length > 0 && (() => {
+          const dist = [
+            { key: "operational", n: vehicles.filter((v) => v.status === "operational").length },
+            { key: "attention", n: vehicles.filter((v) => v.status === "attention").length },
+            { key: "workshop", n: vehicles.filter((v) => v.status === "workshop").length },
+          ].filter((d) => d.n > 0);
+          return (
+            <div className="mt-2">
+              <div className="flex w-full rounded-full overflow-hidden" style={{ height: 10, background: "#1A2129" }}>
+                {dist.map((d) => <div key={d.key} title={`${STATUS_META[d.key].label}: ${d.n}`} style={{ width: `${(d.n / vehicles.length) * 100}%`, background: STATUS_META[d.key].color }} />)}
+              </div>
+              <div className="flex items-center gap-4 mt-2 flex-wrap">
+                {["operational", "attention", "workshop"].map((k) => (
+                  <span key={k} className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9" }}>
+                    <span className="rounded-full" style={{ width: 8, height: 8, background: STATUS_META[k].color }} />
+                    {STATUS_META[k].label}: <b style={{ color: "#E7ECF3" }}>{vehicles.filter((v) => v.status === k).length}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </Card>
 
       <Card className="p-5">
@@ -2486,7 +2524,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
    AI ASSISTENT — echte Claude API call over de meldingen van dit bedrijf
 --------------------------------------------------------------------- */
 
-function AiAssistantView({ reports, vehicles, company, onAddVehicle, onAddPlanning, onNavigate }) {
+function AiAssistantView({ reports, vehicles, company, aiReady, onAddVehicle, onAddPlanning, onNavigate }) {
   const isMobile = useIsMobile();
   const [messages, setMessages] = useState([
     { role: "assistant", content: `Hoi, ik ben de AI-assistent voor ${company.name}. Ik kan meedenken én dingen voor je regelen. Bijvoorbeeld:\n• "Welke meldingen gaan over remmen?"\n• "Plan een reparatie voor VX-77-KL morgen om 9:00"\n• "Voeg voertuig 68-BVG-4, DAF XF, bouwjaar 2023 toe"` },
@@ -2570,6 +2608,12 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
         <h1 style={{ fontFamily: "Oswald", fontSize: isMobile ? 22 : 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Sparkles size={isMobile ? 18 : 22} color="#3B82F6" /> AI Assistent</h1>
         {!isMobile && <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Doorzoekt meldingen en denkt mee met de garage.</p>}
       </div>
+      {!aiReady && (
+        <div className="mb-3 flex items-start gap-2 p-3 rounded-lg" style={{ background: "#FF8A0014", border: "1px solid #FF8A0044" }}>
+          <AlertTriangle size={15} color="#FF8A00" style={{ flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00" }}>AI is nog niet geconfigureerd. Zet <code>ANTHROPIC_API_KEY</code> op de server (zie README) om de assistent te activeren.</span>
+        </div>
+      )}
       <Card className="flex-1 p-4 overflow-y-auto space-y-4 mb-3" style={{ minHeight: 0 }}>
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -2594,99 +2638,275 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
 --------------------------------------------------------------------- */
 
 const ANGLES = [
-  { id: "voor", label: "Voorkant", hotspots: [
-    { zone: "voorkant", x: 50, y: 40, label: "Bumper / grille" },
-    { zone: "dak", x: 50, y: 15, label: "Verlichting / cabine top" },
-    { zone: "wielen", x: 22, y: 78, label: "Wiel links" },
-    { zone: "wielen", x: 78, y: 78, label: "Wiel rechts" },
+  { id: "voor", label: "Voor", hotspots: [
+    { zone: "dak", x: 50, y: 15, label: "Cabinedak / verlichting" },
+    { zone: "cabine", x: 50, y: 33, label: "Voorruit / cabine" },
+    { zone: "voorkant", x: 50, y: 52, label: "Grille / bumper" },
+    { zone: "wielen", x: 21, y: 76, label: "Wiel links" },
+    { zone: "wielen", x: 79, y: 76, label: "Wiel rechts" },
   ]},
   { id: "zij", label: "Zijkant", hotspots: [
-    { zone: "cabine", x: 25, y: 35, label: "Cabine" },
-    { zone: "onder", x: 55, y: 70, label: "Chassis / onder" },
-    { zone: "wielen", x: 30, y: 88, label: "Wielen" },
-    { zone: "wielen", x: 75, y: 88, label: "Wielen achter" },
+    { zone: "dak", x: 22, y: 24, label: "Cabinedak" },
+    { zone: "cabine", x: 22, y: 44, label: "Cabine / portier" },
+    { zone: "achterkant", x: 72, y: 40, label: "Laadbak" },
+    { zone: "onder", x: 50, y: 66, label: "Chassis / onder" },
+    { zone: "wielen", x: 30, y: 80, label: "Vooras" },
+    { zone: "wielen", x: 72, y: 80, label: "Achteras" },
   ]},
-  { id: "achter", label: "Achterkant", hotspots: [
-    { zone: "achterkant", x: 50, y: 40, label: "Achterportier / laadklep" },
-    { zone: "dak", x: 50, y: 15, label: "Achterverlichting" },
-    { zone: "wielen", x: 25, y: 78, label: "Wiel links" },
-    { zone: "wielen", x: 75, y: 78, label: "Wiel rechts" },
+  { id: "achter", label: "Achter", hotspots: [
+    { zone: "dak", x: 50, y: 16, label: "Achterlicht boven" },
+    { zone: "achterkant", x: 50, y: 40, label: "Deuren / laadklep" },
+    { zone: "onder", x: 50, y: 63, label: "Bumper / onder" },
+    { zone: "wielen", x: 23, y: 76, label: "Wiel links" },
+    { zone: "wielen", x: 77, y: 76, label: "Wiel rechts" },
+  ]},
+  { id: "boven", label: "Boven", hotspots: [
+    { zone: "voorkant", x: 14, y: 50, label: "Voorkant" },
+    { zone: "cabine", x: 30, y: 50, label: "Cabine" },
+    { zone: "dak", x: 62, y: 50, label: "Dak laadbak" },
+    { zone: "achterkant", x: 88, y: 50, label: "Achterkant" },
   ]},
 ];
 
-function InspectionView({ vehicles, reports }) {
+// Gestileerde SVG-weergave per aanzicht (viewBox 0 0 400 300).
+function VehicleDiagram({ angleId }) {
+  const panel = "#232B38", panel2 = "#2A3340", glass = "#324056", tyre = "#12171F", rim = "#3A4252", line = "#3A4252";
+  const common = { fill: panel, stroke: line, strokeWidth: 2 };
+  return (
+    <svg viewBox="0 0 400 300" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+      {angleId === "voor" && (
+        <g>
+          <rect x="118" y="70" width="164" height="150" rx="16" {...common} />
+          <rect x="132" y="86" width="136" height="52" rx="8" fill={glass} stroke={line} strokeWidth="2" />
+          <rect x="150" y="150" width="100" height="34" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <circle cx="140" cy="167" r="7" fill="#FFD100" opacity="0.85" />
+          <circle cx="260" cy="167" r="7" fill="#FFD100" opacity="0.85" />
+          <rect x="112" y="196" width="176" height="16" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="96" y="214" width="40" height="46" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+          <rect x="264" y="214" width="40" height="46" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+        </g>
+      )}
+      {angleId === "zij" && (
+        <g>
+          <rect x="150" y="96" width="200" height="104" rx="10" {...common} />
+          <path d="M46 200 V150 q0-14 14-16 l70-14 q10-2 16 8 l16 30 v42 z" fill={panel} stroke={line} strokeWidth="2" />
+          <path d="M66 150 l58-11 q7-1 11 5 l12 22 h-91 q-4 0-4-6 z" fill={glass} stroke={line} strokeWidth="2" />
+          <rect x="150" y="200" width="200" height="10" fill={panel2} />
+          <circle cx="96" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="96" cy="214" r="8" fill={rim} />
+          <circle cx="258" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="258" cy="214" r="8" fill={rim} />
+          <circle cx="316" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="316" cy="214" r="8" fill={rim} />
+        </g>
+      )}
+      {angleId === "achter" && (
+        <g>
+          <rect x="120" y="60" width="160" height="164" rx="12" {...common} />
+          <line x1="200" y1="66" x2="200" y2="212" stroke={line} strokeWidth="2" />
+          <rect x="132" y="72" width="136" height="18" rx="4" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="132" y="196" width="60" height="18" rx="4" fill="#F0453F" opacity="0.7" />
+          <rect x="208" y="196" width="60" height="18" rx="4" fill="#F0453F" opacity="0.7" />
+          <rect x="112" y="214" width="176" height="14" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="96" y="220" width="40" height="44" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+          <rect x="264" y="220" width="40" height="44" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+        </g>
+      )}
+      {angleId === "boven" && (
+        <g>
+          <rect x="40" y="96" width="320" height="108" rx="16" {...common} />
+          <rect x="40" y="104" width="70" height="92" rx="12" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="52" y="120" width="46" height="60" rx="6" fill={glass} stroke={line} strokeWidth="2" />
+          <line x1="120" y1="100" x2="120" y2="200" stroke={line} strokeWidth="2" strokeDasharray="4 6" />
+          <rect x="130" y="112" width="220" height="80" rx="8" fill={panel2} stroke={line} strokeWidth="1.5" opacity="0.6" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+const INSPECT_SEV = { kritiek: { rank: 3, color: "#F0453F", label: "Kritiek" }, gemiddeld: { rank: 2, color: "#FF8A00", label: "Aandacht" }, laag: { rank: 1, color: "#84CC16", label: "Licht" }, geen: { rank: 0, color: "#22D3B0", label: "In orde" } };
+const sevFromReport = (r) => (r.prioriteit === "kritiek" ? "kritiek" : r.prioriteit === "gemiddeld" ? "gemiddeld" : "laag");
+
+function InspectionView({ vehicles, reports, onUpdate, aiReady }) {
   const isMobile = useIsMobile();
   const [vehicleId, setVehicleId] = useState(vehicles[0]?.kenteken || "");
   const [angleIdx, setAngleIdx] = useState(0);
   const [activeZone, setActiveZone] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [aiErr, setAiErr] = useState("");
+  const [result, setResult] = useState(null); // { schade, ernst, onderdeel, aanbeveling }
+  const fileRef = useRef(null);
   const angle = ANGLES[angleIdx];
 
-  const zoneReports = (zoneId) => reports.filter((r) => r.vehicle === vehicleId && r.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
-  const activeReports = activeZone ? zoneReports(activeZone) : [];
+  const vehicle = vehicles.find((v) => v.kenteken === vehicleId);
+  const inspecties = (vehicle?.inspecties) || [];
   const zoneLabel = (id) => ZONES.find((z) => z.id === id)?.label || id;
+
+  const zoneReports = (zoneId) => reports.filter((r) => r.vehicle === vehicleId && r.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
+  const zoneFindings = (zoneId) => inspecties.filter((f) => f.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
+  const zoneWorst = (zoneId) => {
+    const sevs = [...zoneReports(zoneId).map(sevFromReport), ...zoneFindings(zoneId).map((f) => f.ernst)];
+    return sevs.reduce((w, s) => (INSPECT_SEV[s]?.rank > INSPECT_SEV[w].rank ? s : w), "geen");
+  };
+  const zoneCount = (zoneId) => zoneReports(zoneId).length + zoneFindings(zoneId).length;
+
+  const allZones = [...new Set(ANGLES.flatMap((a) => a.hotspots.map((h) => h.zone)))];
+  const totalFindings = inspecties.length;
+  const overallWorst = allZones.reduce((w, z) => (INSPECT_SEV[zoneWorst(z)].rank > INSPECT_SEV[w].rank ? zoneWorst(z) : w), "geen");
+
+  const activeReports = activeZone ? zoneReports(activeZone) : [];
+  const activeFindings = activeZone ? zoneFindings(activeZone) : [];
+
+  const analyze = async (file) => {
+    if (!file || !activeZone) return;
+    setBusy(true); setAiErr(""); setResult(null);
+    try {
+      const b64 = await fileToBase64(file);
+      const prompt = `Je bent een truck-schade-expert. Dit is een foto van het onderdeel "${zoneLabel(activeZone)}" van een ${vehicle?.merk || "voertuig"} (${vehicleId}). Bekijk de foto en beoordeel de zichtbare staat/schade. Antwoord UITSLUITEND met JSON, geen extra tekst:
+{"schade":"<korte beschrijving van wat je ziet>","ernst":"laag|gemiddeld|kritiek","onderdeel":"<welk onderdeel>","aanbeveling":"<1 zin advies>"}
+Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag".`;
+      const out = await callAI({ text: prompt, images: [{ media_type: file.type || "image/jpeg", data: b64 }], maxTokens: 500 });
+      setResult(parseAIJson(out));
+    } catch (e) {
+      setAiErr(`Kon foto niet analyseren (${e.message || "fout"}).`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFinding = () => {
+    if (!result || !vehicle) return;
+    const ernst = ["laag", "gemiddeld", "kritiek"].includes(result.ernst) ? result.ernst : "laag";
+    const finding = { id: "insp" + Date.now(), zone: activeZone, ernst, onderdeel: result.onderdeel || zoneLabel(activeZone), schade: result.schade || "", aanbeveling: result.aanbeveling || "", datum: TODAY };
+    onUpdate({ ...vehicle, inspecties: [finding, ...inspecties] });
+    setResult(null);
+  };
+
+  const deleteFinding = (id) => { if (vehicle) onUpdate({ ...vehicle, inspecties: inspecties.filter((f) => f.id !== id) }); };
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> Voertuiginspectie</h1>
-        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Klik op een onderdeel voor status en meldingshistorie. Wissel van aanzicht met de pijlen.</p>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Loop de aanzichten langs, tik een onderdeel aan en laat de AI een foto op schade beoordelen.</p>
       </div>
 
-      <select className="tg-input" value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); }}>
-        {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
-      </select>
+      <div className="flex items-center gap-3 flex-wrap">
+        <select className="tg-input" style={{ maxWidth: 320 }} value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); setResult(null); }}>
+          {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+        </select>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: `${INSPECT_SEV[overallWorst].color}18`, border: `1px solid ${INSPECT_SEV[overallWorst].color}44` }}>
+          <span className="rounded-full" style={{ width: 8, height: 8, background: INSPECT_SEV[overallWorst].color }} />
+          <span style={{ fontFamily: "Inter", fontSize: 12, fontWeight: 600, color: INSPECT_SEV[overallWorst].color }}>{INSPECT_SEV[overallWorst].label}</span>
+        </span>
+        <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>{totalFindings} AI-bevinding(en)</span>
+      </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "1.4fr 1fr" }}>
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setAngleIdx((i) => (i - 1 + ANGLES.length) % ANGLES.length)} className="p-1"><ChevronLeft color="#B4BCC9" /></button>
-            <div className="flex gap-2">
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <button onClick={() => setAngleIdx((i) => (i - 1 + ANGLES.length) % ANGLES.length)} className="p-1" aria-label="Vorig aanzicht"><ChevronLeft color="#B4BCC9" /></button>
+            <div className="flex gap-2 flex-wrap justify-center">
               {ANGLES.map((a, i) => <Chip key={a.id} active={i === angleIdx} onClick={() => setAngleIdx(i)}>{a.label}</Chip>)}
             </div>
-            <button onClick={() => setAngleIdx((i) => (i + 1) % ANGLES.length)} className="p-1"><ChevronRight color="#B4BCC9" /></button>
+            <button onClick={() => setAngleIdx((i) => (i + 1) % ANGLES.length)} className="p-1" aria-label="Volgend aanzicht"><ChevronRight color="#B4BCC9" /></button>
           </div>
 
-          <div className="relative mx-auto" style={{ width: "100%", maxWidth: 420, aspectRatio: "4/3", background: "#1A2129", borderRadius: 12, border: "1px solid #232B38" }}>
-            {/* simplified vehicle silhouette */}
-            <div style={{ position: "absolute", left: "15%", right: "15%", top: "30%", bottom: "35%", background: "#232B38", borderRadius: 10 }} />
-            <div style={{ position: "absolute", left: "18%", width: 10, height: 10, borderRadius: 5, bottom: "18%", background: "#0A0E14", border: "2px solid #3A4252" }} />
-            <div style={{ position: "absolute", right: "18%", width: 10, height: 10, borderRadius: 5, bottom: "18%", background: "#0A0E14", border: "2px solid #3A4252" }} />
-            <Truck size={38} color="#6B7585" style={{ position: "absolute", left: "50%", top: "48%", transform: "translate(-50%,-50%)" }} />
-
+          <div className="relative mx-auto" style={{ width: "100%", maxWidth: 440, aspectRatio: "4/3", background: "radial-gradient(circle at 50% 40%, #171E28, #12171F)", borderRadius: 14, border: "1px solid #232B38", overflow: "hidden" }}>
+            <VehicleDiagram angleId={angle.id} />
             {angle.hotspots.map((h, i) => {
-              const count = zoneReports(h.zone).length;
+              const worst = zoneWorst(h.zone);
+              const meta = INSPECT_SEV[worst];
+              const count = zoneCount(h.zone);
+              const active = activeZone === h.zone;
               return (
-                <button key={i} onClick={() => setActiveZone(h.zone)}
+                <button key={i} onClick={() => { setActiveZone(h.zone); setResult(null); setAiErr(""); }}
                   className="absolute rounded-full flex items-center justify-center"
-                  style={{ left: `${h.x}%`, top: `${h.y}%`, transform: "translate(-50%,-50%)", width: 22, height: 22, background: count > 0 ? "#FF8A00" : "#22D3B0", border: "2px solid #0A0E14", boxShadow: count > 0 ? "0 0 10px #FF8A0088" : "none" }}>
-                  {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "#0A0E14" }}>{count}</span>}
+                  title={h.label}
+                  style={{ left: `${h.x}%`, top: `${h.y}%`, transform: "translate(-50%,-50%)", width: active ? 28 : 24, height: active ? 28 : 24, background: meta.color, border: `2px solid ${active ? "#FFFFFF" : "#0A0E14"}`, boxShadow: worst !== "geen" ? `0 0 0 4px ${meta.color}22, 0 0 12px ${meta.color}88` : "0 0 0 3px #0A0E1466", cursor: "pointer", animation: worst === "kritiek" ? "tg-pulse 1.6s ease-in-out infinite" : "none", transition: "width .15s, height .15s" }}>
+                  {count > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#0A0E14" }}>{count}</span>}
                 </button>
               );
             })}
           </div>
-          <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11 }} className="text-center mt-3">
-            Amber = onderdeel met meldingen · Teal = geen meldingen
+
+          <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
+            {Object.entries(INSPECT_SEV).map(([k, m]) => (
+              <span key={k} className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0" }}>
+                <span className="rounded-full" style={{ width: 9, height: 9, background: m.color }} /> {m.label}
+              </span>
+            ))}
           </div>
         </Card>
 
         <Card className="p-5">
           <Eyebrow>{activeZone ? zoneLabel(activeZone) : "Selecteer een onderdeel"}</Eyebrow>
           {!activeZone ? (
-            <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>Klik op een stip in het diagram om details te zien.</div>
-          ) : activeReports.length === 0 ? (
-            <div style={{ color: "#34D399", fontFamily: "Inter", fontSize: 13 }}>Geen meldingen bekend voor dit onderdeel.</div>
+            <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>Tik op een stip in het diagram om meldingen, AI-bevindingen en foto-analyse te zien.</div>
           ) : (
-            <div className="space-y-3">
-              {activeReports.map((r) => (
-                <div key={r.id} className="pb-3" style={{ borderBottom: "1px solid #1A2129" }}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600 }}>{PRIO_META[r.prioriteit].label}</span>
-                    <span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{r.datum}</span>
+            <div className="space-y-4">
+              {/* AI foto-analyse */}
+              <div>
+                <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
+                <button onClick={() => fileRef.current?.click()} disabled={busy} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg" style={{ background: busy ? "#1A2129" : "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13, boxShadow: "0 2px 10px rgba(59,130,246,0.3)" }}>
+                  <Camera size={15} /> {busy ? "Analyseren…" : "Foto maken & AI-check"}
+                </button>
+                {!aiReady && <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 6, textAlign: "center" }}>AI staat uit — zet ANTHROPIC_API_KEY op de server om schade te laten herkennen.</div>}
+                {aiErr && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#FF8A00", marginTop: 6 }}>{aiErr}</div>}
+                {result && (() => {
+                  const col = INSPECT_SEV[result.ernst]?.color || "#84CC16";
+                  return (
+                    <div className="mt-3 p-3 rounded-lg" style={{ background: "#161C25", border: `1px solid ${col}55`, borderLeft: `3px solid ${col}` }}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: col, letterSpacing: 0.5, textTransform: "uppercase" }}>AI-analyse</span>
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600 }}>{result.ernst}</span>
+                      </div>
+                      {result.onderdeel && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{result.onderdeel}</div>}
+                      <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 500, marginTop: 2 }}>{result.schade}</div>
+                      {result.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>💡 {result.aanbeveling}</div>}
+                      <div className="flex gap-2 mt-2"><Button small onClick={saveFinding}>Bevinding opslaan</Button><Button small variant="ghost" onClick={() => setResult(null)}>Verwerpen</Button></div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Opgeslagen AI-bevindingen */}
+              {activeFindings.length > 0 && (
+                <div>
+                  <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>AI-bevindingen</div>
+                  <div className="space-y-2">
+                    {activeFindings.map((f) => { const col = INSPECT_SEV[f.ernst]?.color || "#84CC16"; return (
+                      <div key={f.id} className="p-2.5 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600 }}>{INSPECT_SEV[f.ernst]?.label || f.ernst}</span>
+                          <div className="flex items-center gap-2"><span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{f.datum}</span><button onClick={() => deleteFinding(f.id)} style={{ color: "#F0453F" }}><Trash2 size={12} /></button></div>
+                        </div>
+                        <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{f.schade}</div>
+                        {f.aanbeveling && <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">💡 {f.aanbeveling}</div>}
+                      </div>
+                    ); })}
                   </div>
-                  <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{r.omschrijving}</div>
-                  <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">{r.chauffeur} · status: {KANBAN_COLS.find((c) => c.id === r.status)?.label}</div>
                 </div>
-              ))}
+              )}
+
+              {/* Chauffeur-meldingen op dit onderdeel */}
+              <div>
+                <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Meldingen</div>
+                {activeReports.length === 0 ? (
+                  <div style={{ color: "#34D399", fontFamily: "Inter", fontSize: 12.5 }}>Geen meldingen voor dit onderdeel.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {activeReports.map((r) => (
+                      <div key={r.id} className="p-2.5 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600 }}>{PRIO_META[r.prioriteit].label}</span>
+                          <span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{r.datum}</span>
+                        </div>
+                        <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{r.omschrijving}</div>
+                        <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">{r.chauffeur} · {KANBAN_COLS.find((c) => c.id === r.status)?.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </Card>
@@ -3035,7 +3255,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
           <div key={g.group + gi}>
             <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>{g.group}</div>
             <div className="space-y-1">
-              {g.items.map((n) => {
+              {g.items.filter((n) => !n.roles || n.roles.includes(role)).map((n) => {
                 const active = view === n.id;
                 return (
                   <button key={n.id} onClick={() => { setView(n.id); onClose && onClose(); }}
@@ -3099,19 +3319,16 @@ const NAV_GROUPS = [
     { id: "trailers", label: "Trailers", icon: Container },
     { id: "inspection", label: "360° Inspectie", icon: ScanEye },
   ]},
-  { group: "Beheer", roles: ["admin"], items: [
-    { id: "costs", label: "Kosten", icon: Euro },
-  ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
+    { id: "costs", label: "Kosten", icon: Euro, roles: ["admin"] },
     { id: "settings", label: "Instellingen", icon: SlidersHorizontal },
-  ]},
-  { group: "Beheer", roles: ["admin"], items: [
-    { id: "users", label: "Gebruikers", icon: Users },
+    { id: "users", label: "Gebruikers", icon: Users, roles: ["admin"] },
   ]},
 ];
 
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
+  const aiReady = useAiStatus();
   const live = !!session;
   const liveCompanyId = live ? session.company.id : "blex";
 
@@ -3388,8 +3605,8 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
                 {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
-                {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} />}
-                {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
+                {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
+                {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} />}
               </>
