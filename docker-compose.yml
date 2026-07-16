@@ -1,0 +1,20 @@
+# Zelf hosten in één commando:
+#   cp .env.example .env   # vul je waarden in
+#   docker compose up -d --build
+# Daarna draait de app op http://localhost:8787
+services:
+  web:
+    build:
+      context: .
+      args:
+        # VITE_-waarden moeten tijdens de build meekomen (worden ingebakken).
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    ports:
+      - "${PORT:-8787}:8787"
+    environment:
+      # Server-side, op runtime gelezen. AI is optioneel.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      AI_RATE_LIMIT: ${AI_RATE_LIMIT:-30}
+    restart: unless-stopped

@@ -94,6 +94,10 @@ git push -u origin main
 
 ## 4. Deployen
 
+> 📘 **Uitgebreide stap-voor-stap gids:** zie [`DEPLOY.md`](./DEPLOY.md) — met
+> een kant-en-klare [`render.yaml`](./render.yaml) (Render, één klik) en
+> [`docker-compose.yml`](./docker-compose.yml) (eigen server). Hieronder de korte versie.
+
 De app is één Node-server (`server/index.js`) die de gebouwde frontend én de
 AI-proxy serveert. Je hebt dus geen speciaal platform nodig — het draait op elke
 host met Node 20+ of met Docker.
