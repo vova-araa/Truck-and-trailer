@@ -114,10 +114,23 @@ export async function loadState(companyId) {
 }
 
 let saveTimer = null;
-export function saveStateDebounced(companyId, dataset) {
+// Slaat de dataset op met een status-callback zodat de UI kan tonen of het echt
+// bewaard is: onStatus("pending" | "saving" | "saved" | "error").
+export function saveStateDebounced(companyId, dataset, onStatus) {
   clearTimeout(saveTimer);
+  onStatus?.("pending");
   saveTimer = setTimeout(async () => {
-    await supabase.from("company_state").upsert({ company_id: companyId, data: dataset });
+    onStatus?.("saving");
+    try {
+      const { error } = await supabase
+        .from("company_state")
+        .upsert({ company_id: companyId, data: dataset, updated_at: new Date().toISOString() });
+      onStatus?.(error ? "error" : "saved");
+      if (error) console.error("Opslaan mislukt:", error.message);
+    } catch (e) {
+      onStatus?.("error");
+      console.error("Opslaan mislukt:", e?.message || e);
+    }
   }, 600);
 }
 

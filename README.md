@@ -14,8 +14,23 @@ staat.
 - **Vloot:** voertuigen (zoeken/filteren, notities, APK/tacho/verzekering-compliance, CSV-export), trailers, 360°-inspectie.
 - **Werkplaats:** meldingen-kanban (met verwijderen), planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
 - **Kosten:** overzicht per categorie en per voertuig, jaarfilter en CSV-export.
-- **Mobiel:** eigen bottom-navigatie voor snelle toegang onderweg.
-- **AI (optioneel):** kenteken-lookup, fotoschade-herkenning, voorspellend onderhoud en een assistent die ook acties uitvoert — allemaal via de server-proxy.
+- **Mobiel:** eigen bottom-navigatie + installeerbaar als app (PWA) op telefoon/tablet.
+- **AI (optioneel):** kenteken-lookup, fotoschade-herkenning, voorspellend onderhoud, een 360°-inspectie die schade op foto's herkent, en een assistent die ook acties uitvoert — allemaal via de server-proxy.
+- **Dataveiligheid:** elke wijziging wordt automatisch opgeslagen in Supabase; de app toont live of het bewaard is ("Opgeslagen" / "Niet opgeslagen").
+
+---
+
+## Klaar voor de eerste pilot — checklist
+
+1. **Supabase** aangemaakt en `schema.sql` gedraaid (stap 1 hieronder). RLS staat aan, dus bedrijven zien elkaars data nooit.
+2. **"Confirm email" UIT** in Supabase (Authentication → Providers → Email) voor de soepelste start — anders moeten gebruikers eerst hun mail bevestigen.
+3. **Deployen** (Docker of een Node-host, stap 4) met de environment variables:
+   - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (build-time)
+   - `ANTHROPIC_API_KEY` (server, optioneel — voor de AI-functies)
+   - eventueel `AI_RATE_LIMIT` (max AI-aanvragen per minuut per gebruiker, standaard 30)
+4. Open de publieke URL → **Bedrijf aanmelden** → voertuigen, monteurs (rol Werkplaats) en chauffeurs toevoegen.
+5. Op de telefoon: **"Zet op beginscherm"** installeert de app met eigen icoon.
+6. Wil je meekijken over alle bedrijven heen? Zet jezelf als platformbeheerder (zie stap 5 onderaan).
 
 ---
 

@@ -25,16 +25,33 @@ const apiKeyConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
 const anthropic = apiKeyConfigured ? new Anthropic() : null;
 
 const app = express();
+app.set("trust proxy", 1); // achter een reverse proxy: gebruik X-Forwarded-For voor req.ip
 app.use(express.json({ limit: "25mb" })); // foto's gaan als base64 mee
+
+// Eenvoudige in-memory rate-limiting op /api/ai zodat een publieke deployment
+// de Anthropic-key (en kosten) niet kan laten misbruiken.
+const RL_WINDOW = 60_000, RL_MAX = Number(process.env.AI_RATE_LIMIT) || 30;
+const rlHits = new Map();
+function rateLimited(ip) {
+  const now = Date.now();
+  const arr = (rlHits.get(ip) || []).filter((t) => now - t < RL_WINDOW);
+  arr.push(now);
+  rlHits.set(ip, arr);
+  if (rlHits.size > 5000) { for (const [k, v] of rlHits) if (!v.some((t) => now - t < RL_WINDOW)) rlHits.delete(k); }
+  return arr.length > RL_MAX;
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, ai: apiKeyConfigured });
 });
 
 app.post("/api/ai", async (req, res) => {
+  if (rateLimited(req.ip || "onbekend")) {
+    return res.status(429).json({ error: `Te veel AI-aanvragen (max ${RL_MAX}/min). Wacht even en probeer opnieuw.` });
+  }
   if (!anthropic) {
     return res.status(503).json({
-      error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving (Railway → Variables).",
+      error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving.",
     });
   }
   const { messages, system, max_tokens: maxTokens } = req.body || {};

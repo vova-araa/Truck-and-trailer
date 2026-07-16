@@ -451,6 +451,22 @@ function Chip({ active, onClick, children }) {
   );
 }
 
+function SaveStatus({ status, compact }) {
+  const map = {
+    pending: { color: "#B4BCC9", label: "Wijziging…" },
+    saving: { color: "#3B82F6", label: "Opslaan…" },
+    saved: { color: "#34D399", label: "Opgeslagen", icon: CheckCircle2 },
+    error: { color: "#F0453F", label: "Niet opgeslagen", icon: AlertTriangle },
+  };
+  const m = map[status] || map.saved;
+  return (
+    <span className="inline-flex items-center gap-1.5" title={m.label} style={{ padding: compact ? 4 : "4px 8px", borderRadius: 8, background: status === "error" ? "#F0453F14" : "transparent" }}>
+      {m.icon ? <m.icon size={14} color={m.color} /> : <span className="rounded-full" style={{ width: 8, height: 8, background: m.color, animation: "tg-pulse 1s ease-in-out infinite" }} />}
+      {!compact && <span style={{ fontFamily: "Inter", fontSize: 12, color: m.color, fontWeight: 600 }}>{m.label}</span>}
+    </span>
+  );
+}
+
 function Toast({ message, onDone }) {
   useEffect(() => { const t = setTimeout(onDone, 3000); return () => clearTimeout(t); }, []);
   return (
@@ -2755,6 +2771,18 @@ function InspectionView({ vehicles, reports, onUpdate, aiReady }) {
   const activeReports = activeZone ? zoneReports(activeZone) : [];
   const activeFindings = activeZone ? zoneFindings(activeZone) : [];
 
+  if (vehicles.length === 0) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Laat de AI schade op foto's beoordelen, per onderdeel.</p>
+        </div>
+        <EmptyState icon={Truck} text="Voeg eerst een voertuig toe onder 'Voertuigen' om te kunnen inspecteren." />
+      </div>
+    );
+  }
+
   const analyze = async (file) => {
     if (!file || !activeZone) return;
     setBusy(true); setAiErr(""); setResult(null);
@@ -3356,9 +3384,13 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [planning, setPlanning] = useState(() => initFrom("planning", seedPlanning));
   const [availability, setAvailability] = useState(() => (live ? { [liveCompanyId]: session.state.availability || {} } : seedAvailability));
   const [workshopHours, setWorkshopHours] = useState(() => (live ? { [liveCompanyId]: session.state.workshopHours || { van: "08:00", tot: "17:00" } } : seedWorkshopHours));
+  const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
+  const firstSave = useRef(true);
 
   useEffect(() => {
     if (!live) return;
+    // Sla niet meteen op bij het laden — pas na een echte wijziging.
+    if (firstSave.current) { firstSave.current = false; return; }
     const dataset = {
       vehicles: vehicles[liveCompanyId] || [],
       trailers: trailers[liveCompanyId] || [],
@@ -3371,7 +3403,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       availability: availability[liveCompanyId] || {},
       workshopHours: workshopHours[liveCompanyId] || { van: "08:00", tot: "17:00" },
     };
-    saveStateDebounced(liveCompanyId, dataset);
+    saveStateDebounced(liveCompanyId, dataset, setSaveStatus);
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, availability, workshopHours, live, liveCompanyId, session]);
 
   const setMechanicWeek = (userId, week) => setAvailability((s) => ({ ...s, [companyId]: { ...(s[companyId] || {}), [userId]: week } }));
@@ -3540,6 +3572,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
 
             <div className="flex items-center gap-3">
+              {live && <SaveStatus status={saveStatus} compact={isMobile} />}
               {!isChauffeurOnly && (
                 <div className="relative">
                   <button onClick={() => setNotifOpen((s) => !s)} className="relative flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 8, background: notifOpen ? "#1A2129" : "transparent" }}>
