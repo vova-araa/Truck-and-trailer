@@ -1,0 +1,22 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Truck &amp; Trailer">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#18202B"/>
+      <stop offset="1" stop-color="#0A0E14"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect x="60" y="118" width="392" height="14" rx="7" fill="#3B82F6" opacity="0.35"/>
+  <!-- trailer body -->
+  <rect x="196" y="196" width="176" height="112" rx="16" fill="#E7ECF3"/>
+  <!-- cab -->
+  <path d="M96 308 V226 q0-16 16-18 l60-8 q13-2 21 9 l34 47 v52 z" fill="#3B82F6"/>
+  <path d="M124 224 l44-6 q8-1 12 6 l22 32 h-84 q-4 0-4-6 z" fill="#BFD8FF"/>
+  <!-- chassis -->
+  <rect x="92" y="306" width="284" height="16" rx="8" fill="#232B38"/>
+  <!-- wheels -->
+  <circle cx="156" cy="330" r="36" fill="#0A0E14" stroke="#3A4252" stroke-width="11"/>
+  <circle cx="316" cy="330" r="36" fill="#0A0E14" stroke="#3A4252" stroke-width="11"/>
+  <circle cx="156" cy="330" r="11" fill="#3A4252"/>
+  <circle cx="316" cy="330" r="11" fill="#3A4252"/>
+</svg>

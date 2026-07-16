@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -15,7 +15,9 @@ import { saveStateDebounced } from "./api.js";
    plate #FFCC00 (NL kenteken)
 --------------------------------------------------------------------- */
 
-const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');`;
+// Fonts worden zelf-gehost geladen via src/index.css (@font-face). Deze constante
+// blijft leeg zodat de bestaande <style>-templates ongewijzigd kunnen blijven.
+const FONT_IMPORT = ``;
 
 const seedCompanies = [
   { id: "blex", name: "Blex Logistics", slug: "blexlogistics.nl", accent: "#3B82F6" },
@@ -107,11 +109,15 @@ const seedUsers = {
 
 const ROLE_LABEL = { admin: "Beheerder", garage: "Werkplaats", chauffeur: "Chauffeur" };
 
-const DEMO_TODAY = "2026-07-02";
+// Datum-helpers: lokale datum als "JJJJ-MM-DD" (geen UTC-verschuiving)
+function toLocalKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const TODAY = toLocalKey(new Date());
 
 const seedPlanning = {
   blex: [
-    { id: "pl0", vehicle: "GH-99-VB", datum: DEMO_TODAY, tijd: "14:00", duur: 60, taak: "Bandencontrole", monteur: "M. Smit" },
+    { id: "pl0", vehicle: "GH-99-VB", datum: TODAY, tijd: "14:00", duur: 60, taak: "Bandencontrole", monteur: "M. Smit" },
     { id: "pl1", vehicle: "VX-77-KL", datum: "2026-07-09", tijd: "09:00", duur: 90, taak: "APK keuring", monteur: "M. Smit" },
     { id: "pl2", vehicle: "SD-14-TR", datum: "2026-07-03", tijd: "08:00", duur: 240, taak: "Koppeling vervangen", monteur: "M. Smit" },
     { id: "pl3", vehicle: "84-BSX-2", datum: "2026-07-14", tijd: "13:00", duur: 120, taak: "Grote beurt", monteur: "M. Smit" },
@@ -185,7 +191,7 @@ function checkAvailability(dateStr, timeStr, week, workshopHours) {
 }
 
 // ---- Compliance helpers (APK, tachograaf, verzekering) ----
-function daysUntil(dateStr, today = DEMO_TODAY) {
+function daysUntil(dateStr, today = TODAY) {
   if (!dateStr) return null;
   const d = new Date(dateStr + "T00:00:00");
   const t = new Date(today + "T00:00:00");
@@ -193,7 +199,7 @@ function daysUntil(dateStr, today = DEMO_TODAY) {
 }
 
 // status: 'verlopen' (past) | 'binnenkort' (<=30d) | 'ok' | 'onbekend'
-function complianceStatus(dateStr, today = DEMO_TODAY) {
+function complianceStatus(dateStr, today = TODAY) {
   const d = daysUntil(dateStr, today);
   if (d === null) return "onbekend";
   if (d < 0) return "verlopen";
@@ -209,7 +215,7 @@ const COMPLIANCE_META = {
 };
 
 // Build the compliance items for one vehicle
-function vehicleComplianceItems(v, today = DEMO_TODAY) {
+function vehicleComplianceItems(v, today = TODAY) {
   const items = [
     { key: "apk", label: "APK", datum: v.apkTot },
     { key: "verzekering", label: "Verzekering", datum: v.verzekeringTot },
@@ -219,7 +225,7 @@ function vehicleComplianceItems(v, today = DEMO_TODAY) {
 }
 
 // Worst status across a vehicle's compliance items (for a single badge)
-function vehicleWorstCompliance(v, today = DEMO_TODAY) {
+function vehicleWorstCompliance(v, today = TODAY) {
   const order = { verlopen: 3, binnenkort: 2, ok: 1, onbekend: 0 };
   return vehicleComplianceItems(v, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
@@ -261,24 +267,27 @@ const COMMON_ISSUES = [
    AI HELPER — gedeelde Claude API call (tekst + beeld), robuuste parsing
 --------------------------------------------------------------------- */
 
+// Alle AI-verkeer loopt via onze eigen server (/api/ai) zodat de Anthropic-key
+// nooit in de browser staat. Zie server/index.js.
+async function callAIRaw({ messages, system, maxTokens = 800 }) {
+  const response = await fetch("/api/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, system, max_tokens: maxTokens }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `API ${response.status}`);
+  const out = (data.text || "").trim();
+  if (!out) throw new Error("leeg antwoord");
+  return out;
+}
+
 async function callAI({ text, images = [], maxTokens = 800 }) {
   // images: array of { media_type, data } (base64, no prefix)
   const content = [];
   images.forEach((img) => content.push({ type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } }));
   content.push({ type: "text", text });
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, messages: [{ role: "user", content }] }),
-  });
-  if (!response.ok) {
-    const t = await response.text().catch(() => "");
-    throw new Error(`API ${response.status}${t ? ": " + t.slice(0, 120) : ""}`);
-  }
-  const data = await response.json();
-  const out = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("").trim();
-  if (!out) throw new Error("leeg antwoord");
-  return out;
+  return callAIRaw({ messages: [{ role: "user", content }], maxTokens });
 }
 
 function parseAIJson(text) {
@@ -300,6 +309,25 @@ function fileToBase64(file) {
   });
 }
 
+// Bouwt een CSV (puntkomma-gescheiden, Excel-NL-vriendelijk) uit rijen en
+// start een download in de browser. Geen server nodig.
+function downloadCSV(filename, headers, rows) {
+  const esc = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.map(esc).join(";"), ...rows.map((r) => r.map(esc).join(";"))];
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false));
   useEffect(() => {
@@ -309,6 +337,21 @@ function useIsMobile() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   return isMobile;
+}
+
+// Checkt eenmalig of de AI-proxy een key heeft (server /api/health -> { ai: bool }).
+// Zo kan de UI vooraf tonen of de AI-functies werken.
+function useAiStatus() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setReady(!!d.ai); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return ready;
 }
 
 function StatusLamp({ status }) {
@@ -405,6 +448,22 @@ function Chip({ active, onClick, children }) {
       onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}>
       {children}
     </button>
+  );
+}
+
+function SaveStatus({ status, compact }) {
+  const map = {
+    pending: { color: "#B4BCC9", label: "Wijziging…" },
+    saving: { color: "#3B82F6", label: "Opslaan…" },
+    saved: { color: "#34D399", label: "Opgeslagen", icon: CheckCircle2 },
+    error: { color: "#F0453F", label: "Niet opgeslagen", icon: AlertTriangle },
+  };
+  const m = map[status] || map.saved;
+  return (
+    <span className="inline-flex items-center gap-1.5" title={m.label} style={{ padding: compact ? 4 : "4px 8px", borderRadius: 8, background: status === "error" ? "#F0453F14" : "transparent" }}>
+      {m.icon ? <m.icon size={14} color={m.color} /> : <span className="rounded-full" style={{ width: 8, height: 8, background: m.color, animation: "tg-pulse 1s ease-in-out infinite" }} />}
+      {!compact && <span style={{ fontFamily: "Inter", fontSize: 12, color: m.color, fontWeight: 600 }}>{m.label}</span>}
+    </span>
   );
 }
 
@@ -607,7 +666,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
       const parsed = parseAIJson(out);
       setDamageResult(parsed);
     } catch (err) {
-      setDamageError(`Kon foto niet analyseren (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app, niet in het preview-venster.`);
+      setDamageError(`Kon foto niet analyseren (${err.message || "fout"}).`);
     } finally {
       setDamageLoading(false);
     }
@@ -626,7 +685,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
     onSubmit({
       id: "r" + Date.now(), vehicle, chauffeur: currentUser?.naam || "Onbekend", omschrijving,
       prioriteit: veilig === "Nee" ? "kritiek" : veilig === "Twijfel" ? "gemiddeld" : "laag",
-      status: "nieuw", datum: new Date().toISOString().slice(0, 10),
+      status: "nieuw", datum: toLocalKey(new Date()),
       zone, wanneer, hoelang, veilig, mediaCount: media.length,
     });
     setOmschrijving(""); setZone(""); setWanneer(""); setHoelang(""); setVeilig(""); setMedia([]); setVehicle(""); setStep(0);
@@ -897,11 +956,13 @@ function ClickableKpi({ label, value, icon: Icon, accent, onClick }) {
   );
 }
 
-function DashboardView({ vehicles, parts, reports, planning, company, onNavigate, onSelectVehicle }) {
+function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle }) {
   const isMobile = useIsMobile();
   const openReports = reports.filter((r) => r.status !== "klaar").length;
   const critical = reports.filter((r) => r.prioriteit === "kritiek" && r.status !== "klaar").length;
   const lowStock = parts.filter((p) => p.voorraad < p.min).length;
+  const thisYear = String(new Date().getFullYear());
+  const costsThisYear = costs.filter((c) => (c.datum || "").startsWith(thisYear)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
   const avgHealth = Math.round(vehicles.reduce((a, v) => a + v.health, 0) / (vehicles.length || 1));
   const inWorkshop = vehicles.filter((v) => v.status === "workshop").length;
   const go = (v) => onNavigate && onNavigate(v);
@@ -911,8 +972,8 @@ function DashboardView({ vehicles, parts, reports, planning, company, onNavigate
     .filter((x) => x.items.length > 0)
     .sort((a, b) => Math.min(...a.items.map((i) => i.dagen ?? 9999)) - Math.min(...b.items.map((i) => i.dagen ?? 9999)));
   const sortedReports = [...reports].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
-  const todayItems = planning.filter((p) => p.datum === DEMO_TODAY).sort((a, b) => a.tijd.localeCompare(b.tijd));
-  const todayLabel = new Date(DEMO_TODAY).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const todayItems = planning.filter((p) => p.datum === TODAY).sort((a, b) => a.tijd.localeCompare(b.tijd));
+  const todayLabel = new Date(TODAY).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   return (
     <div className="space-y-5">
       <div>
@@ -925,6 +986,23 @@ function DashboardView({ vehicles, parts, reports, planning, company, onNavigate
         <ClickableKpi label="Kritiek open" value={critical} icon={AlertTriangle} accent="#F0453F" onClick={() => go("workfloor")} />
         <ClickableKpi label="Lage voorraad" value={lowStock} icon={Package} accent="#B4BCC9" onClick={() => go("parts")} />
       </div>
+
+      {isAdmin && (
+        <button onClick={() => go("costs")} className="text-left w-full">
+          <Card hover className="p-5" style={{ cursor: "pointer" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                <div className="flex items-center justify-center rounded-lg" style={{ width: 38, height: 38, background: "#3B82F618", flexShrink: 0 }}><Euro size={19} color="#3B82F6" /></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Kosten {thisYear}</div>
+                  <div style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{"€ " + Math.round(costsThisYear).toLocaleString("nl-NL")}</div>
+                </div>
+              </div>
+              <span style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>Naar kosten →</span>
+            </div>
+          </Card>
+        </button>
+      )}
 
       {/* Compliance-alerts: verlopen of binnenkort verlopende keuringen */}
       {complianceAlerts.length > 0 && (
@@ -959,7 +1037,30 @@ function DashboardView({ vehicles, parts, reports, planning, company, onNavigate
             <div className="h-2 rounded-full" style={{ width: `${avgHealth}%`, background: avgHealth > 75 ? "#34D399" : avgHealth > 50 ? "#FF8A00" : "#F0453F" }} />
           </div>
         </div>
-        <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>{inWorkshop} voertuig(en) momenteel in de werkplaats</div>
+
+        {/* Vlootstatus — grafische verdeling operationeel / let op / werkplaats */}
+        {vehicles.length > 0 && (() => {
+          const dist = [
+            { key: "operational", n: vehicles.filter((v) => v.status === "operational").length },
+            { key: "attention", n: vehicles.filter((v) => v.status === "attention").length },
+            { key: "workshop", n: vehicles.filter((v) => v.status === "workshop").length },
+          ].filter((d) => d.n > 0);
+          return (
+            <div className="mt-2">
+              <div className="flex w-full rounded-full overflow-hidden" style={{ height: 10, background: "#1A2129" }}>
+                {dist.map((d) => <div key={d.key} title={`${STATUS_META[d.key].label}: ${d.n}`} style={{ width: `${(d.n / vehicles.length) * 100}%`, background: STATUS_META[d.key].color }} />)}
+              </div>
+              <div className="flex items-center gap-4 mt-2 flex-wrap">
+                {["operational", "attention", "workshop"].map((k) => (
+                  <span key={k} className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9" }}>
+                    <span className="rounded-full" style={{ width: 8, height: 8, background: STATUS_META[k].color }} />
+                    {STATUS_META[k].label}: <b style={{ color: "#E7ECF3" }}>{vehicles.filter((v) => v.status === k).length}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </Card>
 
       <Card className="p-5">
@@ -1042,15 +1143,15 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   const isMobile = useIsMobile();
   const go = (v) => onNavigate && onNavigate(v);
 
-  const today = new Date(DEMO_TODAY);
-  const todayKey = DEMO_TODAY;
+  const today = new Date(TODAY + "T00:00:00");
+  const todayKey = TODAY;
   const todayItems = planning.filter((p) => p.datum === todayKey).sort((a, b) => a.tijd.localeCompare(b.tijd));
 
   // next 7 days planning
   const week = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(today); d.setDate(today.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
+    const key = toLocalKey(d);
     week.push({ key, date: d, items: planning.filter((p) => p.datum === key) });
   }
 
@@ -1063,7 +1164,8 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   const lowStock = parts.filter((p) => p.voorraad < p.min);
 
   // Next upcoming appointment today + total scheduled minutes
-  const nowMinutes = 8 * 60; // demo "current time" 08:00
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const nextAppt = todayItems.find((p) => { const [h, m] = p.tijd.split(":").map(Number); return h * 60 + m >= nowMinutes; }) || todayItems[0];
   const scheduledMin = todayItems.reduce((a, p) => a + (Number(p.duur) || 0), 0);
   const workloadPct = Math.min(100, Math.round((scheduledMin / (8 * 60)) * 100)); // vs 8h day
@@ -1313,35 +1415,59 @@ function VehiclesView({ vehicles, onAdd, onSelect }) {
       const prompt = `Je bent een RDW-voertuigassistent. Geef voor het Nederlandse kenteken "${plate}" je beste inschatting van de voertuiggegevens. Antwoord UITSLUITEND met JSON, geen uitleg, in dit formaat:
 {"merk":"<merk en model>","type":"Truck of Bestelwagen","bouwjaar":<jaartal>}
 Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het kentekenformaat. Geen extra tekst.`;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 300, messages: [{ role: "user", content: prompt }] }),
-      });
-      if (!response.ok) throw new Error(`API ${response.status}`);
-      const data = await response.json();
-      let text = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("").trim();
-      text = text.replace(/```json\s*|```/g, "").trim();
-      const parsed = JSON.parse(text);
+      const out = await callAI({ text: prompt, maxTokens: 300 });
+      const parsed = parseAIJson(out);
       setForm((f) => ({ ...f, merk: parsed.merk || f.merk, type: parsed.type === "Bestelwagen" ? "Bestelwagen" : "Truck", bouwjaar: parsed.bouwjaar ? String(parsed.bouwjaar) : f.bouwjaar }));
       setAiMsg("✓ Gegevens ingevuld door AI — controleer en pas zo nodig aan.");
     } catch (err) {
-      setAiMsg(`Kon gegevens niet ophalen (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app. Vul handmatig in.`);
+      setAiMsg(`Kon gegevens niet ophalen (${err.message || "fout"}). Vul handmatig in.`);
     } finally {
       setAiLoading(false);
     }
   };
+
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const submit = () => {
     if (!form.kenteken || !form.merk) return;
     onAdd({ id: "v" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type, bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), km: Number(form.km) || 0, status: "operational", health: 100, driver: "—", apkTot: "", tachoTot: "", tachoPlicht: form.type === "Truck", verzekeringTot: "" });
     setForm({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "" }); setAiMsg(""); setOpen(false);
   };
+
+  const q = query.trim().toLowerCase();
+  const shown = vehicles.filter((v) => {
+    if (statusFilter !== "all" && v.status !== statusFilter) return false;
+    if (!q) return true;
+    return [v.kenteken, v.merk, v.type, v.driver].filter(Boolean).some((s) => String(s).toLowerCase().includes(q));
+  });
+
+  const exportCsv = () => {
+    const label = { operational: "Operationeel", attention: "Let op", workshop: "In werkplaats" };
+    const rows = shown.map((v) => [v.kenteken, v.merk, v.type, v.bouwjaar, v.km, label[v.status] || v.status, v.driver || "", v.apkTot || "", v.verzekeringTot || ""]);
+    downloadCSV("voertuigen.csv", ["Kenteken", "Merk/model", "Type", "Bouwjaar", "KM-stand", "Status", "Chauffeur", "APK tot", "Verzekering tot"], rows);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik op een voertuig voor details.</p></div>
-        <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{vehicles.length} voertuig(en){shown.length !== vehicles.length ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
+          <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative" style={{ flex: 1, minWidth: 180 }}>
+          <Search size={15} color="#7B8698" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input className="tg-input" style={{ paddingLeft: 34 }} placeholder="Zoek op kenteken, merk of chauffeur…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {[{ id: "all", label: "Alle" }, { id: "operational", label: "Operationeel" }, { id: "attention", label: "Let op" }, { id: "workshop", label: "Werkplaats" }].map((f) => (
+            <Chip key={f.id} active={statusFilter === f.id} onClick={() => setStatusFilter(f.id)}>{f.label}</Chip>
+          ))}
+        </div>
       </div>
       {open && (
         <Card className="p-5">
@@ -1364,9 +1490,9 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
       )}
-      {vehicles.length === 0 ? <EmptyState icon={Truck} text='Nog geen voertuigen.' /> : isMobile ? (
+      {vehicles.length === 0 ? <EmptyState icon={Truck} text='Nog geen voertuigen.' /> : shown.length === 0 ? <EmptyState icon={Search} text='Geen voertuigen gevonden voor deze zoekopdracht.' /> : isMobile ? (
         <div className="space-y-3">
-          {vehicles.map((v) => (
+          {shown.map((v) => (
             <button key={v.id} onClick={() => onSelect(v.id)} className="text-left" style={{ width: "100%" }}>
               <Card className="p-4" style={{ transition: "border-color .15s" }}>
                 <div className="flex items-center justify-between mb-2">
@@ -1389,7 +1515,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Kenteken", "Merk/model", "Type", "KM-stand", "Compliance", "Status"].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
-              {vehicles.map((v) => (
+              {shown.map((v) => (
                 <tr key={v.id} onClick={() => onSelect(v.id)} style={{ borderBottom: "1px solid #1A2129", cursor: "pointer" }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#1A2129")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                   <td className="px-4 py-3"><Kenteken value={v.kenteken} /></td>
@@ -1412,10 +1538,11 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(vehicle);
-  const [sched, setSched] = useState({ open: false, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
+  const [note, setNote] = useState(vehicle.notitie || "");
+  const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
-  const [costForm, setCostForm] = useState({ open: false, categorie: "onderhoud", bedrag: "", datum: DEMO_TODAY, omschrijving: "" });
+  const [costForm, setCostForm] = useState({ open: false, categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
   const [predLoading, setPredLoading] = useState(false);
   const [predError, setPredError] = useState("");
   const [prediction, setPrediction] = useState(null); // { items: [{taak, urgentie, reden, binnen}] }
@@ -1428,7 +1555,7 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
         km: vehicle.km, health: vehicle.health,
         meldingen: vReports.map((r) => ({ omschrijving: r.omschrijving, prioriteit: r.prioriteit, datum: r.datum, status: r.status })),
         gepland: vPlanning.map((p) => ({ taak: p.taak, datum: p.datum })),
-        vandaag: DEMO_TODAY,
+        vandaag: TODAY,
       };
       const prompt = `Je bent een ervaren truck-monteur die voorspellend onderhoud inschat. Op basis van onderstaande voertuigdata, geef 3 tot 5 concrete onderhoudspunten die binnenkort aandacht nodig hebben. Denk aan kilometerstand, leeftijd, gezondheidsscore en terugkerende meldingen.
 
@@ -1441,13 +1568,16 @@ ${JSON.stringify(ctx)}`;
       const parsed = parseAIJson(out);
       setPrediction(parsed.items ? parsed : { items: Array.isArray(parsed) ? parsed : [] });
     } catch (err) {
-      setPredError(`Kon voorspelling niet ophalen (${err.message || "fout"}). AI werkt alleen in de gepubliceerde app, niet in het preview-venster.`);
+      setPredError(`Kon voorspelling niet ophalen (${err.message || "fout"}).`);
     } finally {
       setPredLoading(false);
     }
   };
 
-  useEffect(() => { setForm(vehicle); }, [vehicle.id]);
+  useEffect(() => { setForm(vehicle); setNote(vehicle.notitie || ""); }, [vehicle.id]);
+
+  const saveNote = () => { onUpdate({ ...vehicle, notitie: note }); setToast("Notitie opgeslagen."); };
+  const noteChanged = (note || "") !== (vehicle.notitie || "");
 
   const vReports = reports.filter((r) => r.vehicle === vehicle.kenteken).sort((a, b) => (a.datum < b.datum ? 1 : -1));
   const vPlanning = planning.filter((p) => p.vehicle === vehicle.kenteken).sort((a, b) => (a.datum + a.tijd < b.datum + b.tijd ? 1 : -1));
@@ -1462,7 +1592,7 @@ ${JSON.stringify(ctx)}`;
     const taak = fromReport ? fromReport.omschrijving : sched.taak;
     if (!taak) return;
     onAddPlanning({ id: "pl" + Date.now(), vehicle: vehicle.kenteken, datum: sched.datum, tijd: sched.tijd, duur: Number(sched.duur) || 60, taak, monteur: sched.monteur || "—", reportId: fromReport ? fromReport.id : null });
-    setSched({ open: false, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
+    setSched({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
     setToast("Ingepland.");
   };
 
@@ -1520,6 +1650,18 @@ ${JSON.stringify(ctx)}`;
             <div className="flex gap-2"><Button onClick={saveEdit}>Opslaan</Button><Button variant="ghost" onClick={() => { setForm(vehicle); setEditing(false); }}>Annuleren</Button></div>
           </div>
         )}
+      </Card>
+
+      {/* Notities */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#3B82F618" }}><FileText size={15} color="#3B82F6" /></div>
+            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Notities</span>
+          </div>
+          {noteChanged && <Button small onClick={saveNote}>Opslaan</Button>}
+        </div>
+        <textarea className="tg-input" rows={3} style={{ width: "100%", resize: "vertical" }} placeholder="Bv. bijzonderheden, afspraken met de chauffeur, terugkerende klachten…" value={note} onChange={(e) => setNote(e.target.value)} />
       </Card>
 
       {/* Compliance & keuringen */}
@@ -1605,7 +1747,7 @@ ${JSON.stringify(ctx)}`;
                   <div><FieldLabel>Omschrijving</FieldLabel><input className="tg-input" style={{ width: "100%", minWidth: 0 }} placeholder="Optioneel" value={costForm.omschrijving} onChange={(e) => setCostForm({ ...costForm, omschrijving: e.target.value })} /></div>
                 </div>
                 <div className="flex gap-2">
-                  <Button small onClick={() => { if (!costForm.bedrag) return; onAddCost({ id: "c" + Date.now(), vehicle: vehicle.kenteken, categorie: costForm.categorie, bedrag: Number(costForm.bedrag), datum: costForm.datum, omschrijving: costForm.omschrijving }); setCostForm({ open: false, categorie: "onderhoud", bedrag: "", datum: DEMO_TODAY, omschrijving: "" }); }}>Toevoegen</Button>
+                  <Button small onClick={() => { if (!costForm.bedrag) return; onAddCost({ id: "c" + Date.now(), vehicle: vehicle.kenteken, categorie: costForm.categorie, bedrag: Number(costForm.bedrag), datum: costForm.datum, omschrijving: costForm.omschrijving }); setCostForm({ open: false, categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" }); }}>Toevoegen</Button>
                   <Button small variant="ghost" onClick={() => setCostForm({ ...costForm, open: false })}>Annuleren</Button>
                 </div>
               </div>
@@ -1681,7 +1823,7 @@ ${JSON.stringify(ctx)}`;
                   </div>
                   {it.binnen && <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: col, marginTop: 2 }}>⏱ {it.binnen}</div>}
                   {it.reden && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{it.reden}</div>}
-                  <button onClick={() => { setSched({ open: true, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Inplannen
                   </button>
@@ -1710,7 +1852,7 @@ ${JSON.stringify(ctx)}`;
                   <span className="text-xs px-2 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{PRIO_META[r.prioriteit].label}</span>
                 </div>
                 {r.status !== "klaar" && (
-                  <button onClick={() => { setSched({ open: true, datum: DEMO_TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Deze melding inplannen
                   </button>
@@ -1768,15 +1910,23 @@ ${JSON.stringify(ctx)}`;
   );
 }
 
-function TrailersView({ trailers, onAdd }) {
+const STATUS_CYCLE = ["operational", "attention", "workshop"];
+
+function TrailersView({ trailers, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ kenteken: "", merk: "", type: "" });
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ kenteken: "", merk: "", type: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
   const submit = () => { if (!form.kenteken || !form.merk) return; onAdd({ id: "t" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type || "Trailer", bouwjaar: new Date().getFullYear(), status: "operational" }); setForm({ kenteken: "", merk: "", type: "" }); setOpen(false); };
+  const startEdit = (t) => { setEditId(t.id); setEditForm({ kenteken: t.kenteken, merk: t.merk, type: t.type }); };
+  const saveEdit = (t) => { if (!editForm.kenteken || !editForm.merk) return; onUpdate({ ...t, kenteken: editForm.kenteken.toUpperCase(), merk: editForm.merk, type: editForm.type || "Trailer" }); setEditId(null); };
+  const cycleStatus = (t) => { const i = STATUS_CYCLE.indexOf(t.status); onUpdate({ ...t, status: STATUS_CYCLE[(i + 1) % STATUS_CYCLE.length] }); };
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Trailer toevoegen</Button>
       </div>
       {open && (
@@ -1793,9 +1943,28 @@ function TrailersView({ trailers, onAdd }) {
         <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
           {trailers.map((t) => (
             <Card key={t.id} className="p-4">
-              <div className="flex items-center justify-between mb-3"><Kenteken value={t.kenteken} /><StatusLamp status={t.status} /></div>
-              <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{t.merk}</div>
-              <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13 }}>{t.type} · {t.bouwjaar}</div>
+              {editId === t.id ? (
+                <div className="space-y-2">
+                  <input className="tg-input" value={editForm.kenteken} onChange={(e) => setEditForm({ ...editForm, kenteken: e.target.value })} placeholder="Kenteken" />
+                  <input className="tg-input" value={editForm.merk} onChange={(e) => setEditForm({ ...editForm, merk: e.target.value })} placeholder="Merk" />
+                  <input className="tg-input" value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })} placeholder="Type" />
+                  <div className="flex gap-2"><Button small onClick={() => saveEdit(t)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button></div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-3"><Kenteken value={t.kenteken} /><button onClick={() => cycleStatus(t)} title="Klik om status te wisselen"><StatusLamp status={t.status} /></button></div>
+                  <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{t.merk}</div>
+                  <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13 }}>{t.type} · {t.bouwjaar}</div>
+                  <div className="flex items-center gap-3 mt-3 pt-3" style={{ borderTop: "1px solid #1A2129" }}>
+                    <button onClick={() => startEdit(t)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                    {confirmDel === t.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(t.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(t.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}><Trash2 size={12} /> Verwijderen</button>
+                    )}
+                  </div>
+                </>
+              )}
             </Card>
           ))}
         </div>
@@ -1804,23 +1973,40 @@ function TrailersView({ trailers, onAdd }) {
   );
 }
 
-function PartsView({ parts, onAdd }) {
+function PartsView({ parts, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ naam: "", voorraad: "", min: "", prijs: "" });
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ naam: "", voorraad: "", min: "", prijs: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
   const submit = () => { if (!form.naam) return; onAdd({ id: "p" + Date.now(), naam: form.naam, voorraad: Number(form.voorraad) || 0, min: Number(form.min) || 0, eenheid: "stuks", prijs: Number(form.prijs) || 0 }); setForm({ naam: "", voorraad: "", min: "", prijs: "" }); setOpen(false); };
+  const changeStock = (p, delta) => onUpdate({ ...p, voorraad: Math.max(0, p.voorraad + delta) });
+  const startEdit = (p) => { setEditId(p.id); setEditForm({ naam: p.naam, voorraad: String(p.voorraad), min: String(p.min), prijs: String(p.prijs) }); };
+  const saveEdit = (p) => { if (!editForm.naam) return; onUpdate({ ...p, naam: editForm.naam, voorraad: Number(editForm.voorraad) || 0, min: Number(editForm.min) || 0, prijs: Number(editForm.prijs) || 0 }); setEditId(null); };
+  const totalValue = parts.reduce((a, p) => a + p.voorraad * p.prijs, 0);
+
+  const Stepper = ({ p }) => (
+    <span className="inline-flex items-center gap-1.5">
+      <button onClick={() => changeStock(p, -1)} className="flex items-center justify-center rounded" style={{ width: 24, height: 24, background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontWeight: 700, lineHeight: 1 }}>−</button>
+      <span style={{ color: p.voorraad < p.min ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, minWidth: 22, textAlign: "center" }}>{p.voorraad}</span>
+      <button onClick={() => changeStock(p, 1)} className="flex items-center justify-center rounded" style={{ width: 24, height: 24, background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontWeight: 700, lineHeight: 1 }}>+</button>
+    </span>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Automatisch afgeboekt bij gebruik.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Voorraadwaarde: <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono" }}>€ {totalValue.toLocaleString("nl-NL")}</span></p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Onderdeel toevoegen</Button>
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr 1fr" }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr 1fr 1fr" }}>
             <input placeholder="Naam" value={form.naam} onChange={(e) => setForm({ ...form, naam: e.target.value })} className="tg-input" />
-            <input placeholder="Voorraad" value={form.voorraad} onChange={(e) => setForm({ ...form, voorraad: e.target.value })} className="tg-input" />
-            <input placeholder="Min." value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value })} className="tg-input" />
+            <input placeholder="Voorraad" type="number" value={form.voorraad} onChange={(e) => setForm({ ...form, voorraad: e.target.value })} className="tg-input" />
+            <input placeholder="Min." type="number" value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value })} className="tg-input" />
+            <input placeholder="Prijs €" type="number" value={form.prijs} onChange={(e) => setForm({ ...form, prijs: e.target.value })} className="tg-input" />
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
         </Card>
@@ -1829,30 +2015,76 @@ function PartsView({ parts, onAdd }) {
         <div className="space-y-3">
           {parts.map((p) => { const low = p.voorraad < p.min; return (
             <Card key={p.id} className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{p.naam}</span>
-                {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600, flexShrink: 0 }}>Laag</span>}
-              </div>
-              <div className="flex items-center justify-between" style={{ fontFamily: "Inter", fontSize: 13 }}>
-                <span style={{ color: "#B4BCC9" }}>Voorraad: <span style={{ color: low ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{p.voorraad}</span> / min. {p.min} {p.eenheid}</span>
-                <span style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</span>
-              </div>
+              {editId === p.id ? (
+                <div className="space-y-2">
+                  <input className="tg-input" value={editForm.naam} onChange={(e) => setEditForm({ ...editForm, naam: e.target.value })} placeholder="Naam" />
+                  <div className="grid grid-cols-3 gap-2">
+                    <input className="tg-input" type="number" value={editForm.voorraad} onChange={(e) => setEditForm({ ...editForm, voorraad: e.target.value })} placeholder="Voorraad" />
+                    <input className="tg-input" type="number" value={editForm.min} onChange={(e) => setEditForm({ ...editForm, min: e.target.value })} placeholder="Min." />
+                    <input className="tg-input" type="number" value={editForm.prijs} onChange={(e) => setEditForm({ ...editForm, prijs: e.target.value })} placeholder="Prijs" />
+                  </div>
+                  <div className="flex gap-2"><Button small onClick={() => saveEdit(p)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button></div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{p.naam}</span>
+                    {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600, flexShrink: 0 }}>Laag</span>}
+                  </div>
+                  <div className="flex items-center justify-between" style={{ fontFamily: "Inter", fontSize: 13 }}>
+                    <Stepper p={p} />
+                    <span style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs} · min. {p.min}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 pt-2" style={{ borderTop: "1px solid #1A2129" }}>
+                    <button onClick={() => startEdit(p)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                    {confirmDel === p.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(p.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(p.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}><Trash2 size={12} /> Verwijderen</button>
+                    )}
+                  </div>
+                </>
+              )}
             </Card>
           ); })}
         </div>
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
-            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Onderdeel", "Voorraad", "Min.", "Eenheid", "Prijs", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Onderdeel", "Voorraad", "Min.", "Prijs", "Waarde", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
               {parts.map((p) => { const low = p.voorraad < p.min; return (
                 <tr key={p.id} style={{ borderBottom: "1px solid #1A2129" }}>
-                  <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{p.naam}</td>
-                  <td className="px-4 py-3" style={{ color: low ? "#F0453F" : "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{p.voorraad}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.min}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.eenheid}</td>
-                  <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</td>
-                  <td className="px-4 py-3">{low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600 }}>Lage voorraad</span>}</td>
+                  {editId === p.id ? (
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input className="tg-input" style={{ width: 200 }} value={editForm.naam} onChange={(e) => setEditForm({ ...editForm, naam: e.target.value })} placeholder="Naam" />
+                        <input className="tg-input" style={{ width: 90 }} type="number" value={editForm.voorraad} onChange={(e) => setEditForm({ ...editForm, voorraad: e.target.value })} placeholder="Voorraad" />
+                        <input className="tg-input" style={{ width: 80 }} type="number" value={editForm.min} onChange={(e) => setEditForm({ ...editForm, min: e.target.value })} placeholder="Min." />
+                        <input className="tg-input" style={{ width: 90 }} type="number" value={editForm.prijs} onChange={(e) => setEditForm({ ...editForm, prijs: e.target.value })} placeholder="Prijs" />
+                        <Button small onClick={() => saveEdit(p)}>Opslaan</Button><Button small variant="ghost" onClick={() => setEditId(null)}>Annuleren</Button>
+                      </div>
+                    </td>
+                  ) : (
+                    <>
+                      <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{p.naam}</td>
+                      <td className="px-4 py-3"><Stepper p={p} /></td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{p.min}</td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {p.prijs}</td>
+                      <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>€ {(p.voorraad * p.prijs).toLocaleString("nl-NL")}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          {low && <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#F0453F", border: "1px solid #F0453F55", fontWeight: 600 }}>Laag</span>}
+                          <button onClick={() => startEdit(p)} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                          {confirmDel === p.id ? (
+                            <span className="flex items-center gap-2"><button onClick={() => { onDelete(p.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                          ) : (
+                            <button onClick={() => setConfirmDel(p.id)} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}>Verwijderen</button>
+                          )}
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ); })}
             </tbody>
@@ -1863,25 +2095,37 @@ function PartsView({ parts, onAdd }) {
   );
 }
 
-function MaintenanceView({ maintenance, onAdd }) {
+const MAINT_STATUS_CYCLE = ["gepland", "in_uitvoering", "urgent", "klaar"];
+const maintStatusColor = { gepland: "#22D3B0", urgent: "#F0453F", in_uitvoering: "#FF8A00", klaar: "#34D399" };
+const maintStatusLabel = { gepland: "Gepland", urgent: "Urgent", in_uitvoering: "In uitvoering", klaar: "Klaar" };
+
+function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ vehicle: "", taak: "", dueDate: "" });
-  const submit = () => { if (!form.vehicle || !form.taak) return; onAdd({ id: "m" + Date.now(), vehicle: form.vehicle, taak: form.taak, dueKm: null, dueDate: form.dueDate || "—", status: "gepland" }); setForm({ vehicle: "", taak: "", dueDate: "" }); setOpen(false); };
-  const statusColor = { gepland: "#22D3B0", urgent: "#F0453F", in_uitvoering: "#FF8A00" };
-  const statusLabel = { gepland: "Gepland", urgent: "Urgent", in_uitvoering: "In uitvoering" };
+  const [form, setForm] = useState({ vehicle: "", taak: "", dueDate: "", dueKm: "" });
+  const [confirmDel, setConfirmDel] = useState(null);
+  const submit = () => { if (!form.vehicle || !form.taak) return; onAdd({ id: "m" + Date.now(), vehicle: form.vehicle, taak: form.taak, dueKm: Number(form.dueKm) || null, dueDate: form.dueDate || "—", status: "gepland" }); setForm({ vehicle: "", taak: "", dueDate: "", dueKm: "" }); setOpen(false); };
+  const cycleStatus = (m) => { const i = MAINT_STATUS_CYCLE.indexOf(m.status); onUpdate({ ...m, status: MAINT_STATUS_CYCLE[(i + 1) % MAINT_STATUS_CYCLE.length] }); };
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Nieuw schema</Button>
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
-            <input placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} className="tg-input" />
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+            {vehicles.length > 0 ? (
+              <select className="tg-input" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
+                <option value="">Kies voertuig…</option>
+                {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+              </select>
+            ) : (
+              <input placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} className="tg-input" />
+            )}
             <input placeholder="Taak" value={form.taak} onChange={(e) => setForm({ ...form, taak: e.target.value })} className="tg-input" />
             <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="tg-input" />
+            <input placeholder="Bij km (optioneel)" type="number" value={form.dueKm} onChange={(e) => setForm({ ...form, dueKm: e.target.value })} className="tg-input" />
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
         </Card>
@@ -1889,12 +2133,19 @@ function MaintenanceView({ maintenance, onAdd }) {
       {maintenance.length === 0 ? <EmptyState icon={Calendar} text="Nog geen onderhoudsschema's." /> : (
         <div className="space-y-3">
           {maintenance.map((m) => (
-            <Card key={m.id} className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-4">
+            <Card key={m.id} className="p-4 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-4" style={{ minWidth: 0 }}>
                 <Kenteken value={m.vehicle} />
-                <div><div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{m.taak}</div><div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12 }}>Verwacht: {m.dueDate}{m.dueKm ? ` · ${m.dueKm.toLocaleString("nl-NL")} km` : ""}</div></div>
+                <div style={{ minWidth: 0 }}><div style={{ fontFamily: "Inter", color: "#E7ECF3", fontWeight: 600, fontSize: 14 }}>{m.taak}</div><div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12 }}>Verwacht: {m.dueDate}{m.dueKm ? ` · ${m.dueKm.toLocaleString("nl-NL")} km` : ""}</div></div>
               </div>
-              <span className="text-xs px-2 py-1 rounded" style={{ color: statusColor[m.status], border: `1px solid ${statusColor[m.status]}55`, fontWeight: 600, fontFamily: "Inter" }}>{statusLabel[m.status]}</span>
+              <div className="flex items-center gap-3">
+                <button onClick={() => cycleStatus(m)} className="text-xs px-2 py-1 rounded" style={{ color: maintStatusColor[m.status], border: `1px solid ${maintStatusColor[m.status]}55`, fontWeight: 600, fontFamily: "Inter" }}>{maintStatusLabel[m.status]}</button>
+                {confirmDel === m.id ? (
+                  <span className="flex items-center gap-2"><button onClick={() => { onDelete(m.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                ) : (
+                  <button onClick={() => setConfirmDel(m.id)} style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                )}
+              </div>
             </Card>
           ))}
         </div>
@@ -1903,18 +2154,19 @@ function MaintenanceView({ maintenance, onAdd }) {
   );
 }
 
-function WorkfloorView({ reports, onMove, onSchedule, mechanics = [], availability = {}, hours }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours }) {
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
-  const [schedForm, setSchedForm] = useState({ datum: DEMO_TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
+  const [schedForm, setSchedForm] = useState({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
   const [toast, setToast] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null);
 
   const openSchedule = (r) => {
     setMoveMenu(null);
     setSchedFor(r.id);
     const first = mechanics[0];
-    setSchedForm({ datum: DEMO_TODAY, tijd: "09:00", duur: "60", monteurId: first?.id || "", monteur: first?.naam || "" });
+    setSchedForm({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: first?.id || "", monteur: first?.naam || "" });
   };
 
   const avail = schedForm.monteurId ? checkAvailability(schedForm.datum, schedForm.tijd, availability[schedForm.monteurId], hours) : checkAvailability(schedForm.datum, schedForm.tijd, null, hours);
@@ -1980,6 +2232,11 @@ function WorkfloorView({ reports, onMove, onSchedule, mechanics = [], availabili
                           <button onClick={() => openSchedule(r)} className="flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}><Calendar size={12} /> Inplannen</button>
                         )}
                         <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter", fontWeight: 600 }}>Verplaatsen <ChevronDown size={12} /></button>
+                        {onDelete && (confirmDel === r.id ? (
+                          <span className="flex items-center gap-2"><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
+                        ) : (
+                          <button onClick={() => setConfirmDel(r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600, marginLeft: "auto" }}><Trash2 size={12} /></button>
+                        ))}
                       </div>
                     )}
 
@@ -2283,7 +2540,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
    AI ASSISTENT — echte Claude API call over de meldingen van dit bedrijf
 --------------------------------------------------------------------- */
 
-function AiAssistantView({ reports, vehicles, company, onAddVehicle, onAddPlanning, onNavigate }) {
+function AiAssistantView({ reports, vehicles, company, aiReady, onAddVehicle, onAddPlanning, onNavigate }) {
   const isMobile = useIsMobile();
   const [messages, setMessages] = useState([
     { role: "assistant", content: `Hoi, ik ben de AI-assistent voor ${company.name}. Ik kan meedenken én dingen voor je regelen. Bijvoorbeeld:\n• "Welke meldingen gaan over remmen?"\n• "Plan een reparatie voor VX-77-KL morgen om 9:00"\n• "Voeg voertuig 68-BVG-4, DAF XF, bouwjaar 2023 toe"` },
@@ -2308,10 +2565,10 @@ function AiAssistantView({ reports, vehicles, company, onAddVehicle, onAddPlanni
       if (action.type === "schedule_repair" && action.kenteken) {
         onAddPlanning({
           id: "pl" + Date.now(), vehicle: String(action.kenteken).toUpperCase(),
-          datum: action.datum || DEMO_TODAY, tijd: action.tijd || "09:00",
+          datum: action.datum || TODAY, tijd: action.tijd || "09:00",
           duur: Number(action.duur) || 60, taak: action.taak || "Reparatie", monteur: action.monteur || "—",
         });
-        return `✓ ${action.taak || "Reparatie"} ingepland voor ${String(action.kenteken).toUpperCase()} op ${action.datum || DEMO_TODAY} om ${action.tijd || "09:00"}.`;
+        return `✓ ${action.taak || "Reparatie"} ingepland voor ${String(action.kenteken).toUpperCase()} op ${action.datum || TODAY} om ${action.tijd || "09:00"}.`;
       }
     } catch (e) { return `Kon actie niet uitvoeren: ${e.message}`; }
     return null;
@@ -2331,30 +2588,14 @@ Als de gebruiker om een actie vraagt, antwoord dan met een kort JSON-blok op een
 - Voertuig toevoegen: {"type":"add_vehicle","kenteken":"68-BVG-4","merk":"DAF XF","voertuigtype":"Truck","bouwjaar":2023}
 - Reparatie inplannen: {"type":"schedule_repair","kenteken":"VX-77-KL","taak":"Remmen vervangen","datum":"2026-07-05","tijd":"09:00","duur":90}
 
-Gebruik datum-formaat JJJJ-MM-DD. Vandaag is ${DEMO_TODAY}. Als er geen datum genoemd is, gebruik vandaag. Verzin geen data die je niet hebt; vraag door als iets ontbreekt. Voor gewone vragen antwoord je kort en concreet in het Nederlands zonder <actie>-blok.
+Gebruik datum-formaat JJJJ-MM-DD. Vandaag is ${TODAY}. Als er geen datum genoemd is, gebruik vandaag. Verzin geen data die je niet hebt; vraag door als iets ontbreekt. Voor gewone vragen antwoord je kort en concreet in het Nederlands zonder <actie>-blok.
 
 VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports)}`;
 
-    const apiMessages = [
-      { role: "user", content: instructions + "\n\nBevestig kort dat je klaar staat." },
-      { role: "assistant", content: "Ik sta klaar. Ik kan vragen beantwoorden en voertuigen toevoegen of reparaties inplannen." },
-      ...newMessages.slice(1).map((m) => ({ role: m.role, content: m.content })),
-    ];
+    const apiMessages = newMessages.slice(1).map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: apiMessages }),
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`API ${response.status}${errText ? ": " + errText.slice(0, 120) : ""}`);
-      }
-      const data = await response.json();
-      let text = (Array.isArray(data.content) ? data.content : []).filter((c) => c && c.type === "text").map((c) => c.text).join("\n").trim();
-      if (!text && typeof data.completion === "string") text = data.completion.trim();
-      if (!text) throw new Error("leeg antwoord");
+      const text = await callAIRaw({ system: instructions, messages: apiMessages, maxTokens: 1000 });
 
       // Parse and execute any <actie> block
       const actieMatch = text.match(/<actie>([\s\S]*?)<\/actie>/i);
@@ -2371,7 +2612,7 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
       const finalText = [cleaned, ...results].filter(Boolean).join("\n\n") || "Gedaan.";
       setMessages((m) => [...m, { role: "assistant", content: finalText }]);
     } catch (err) {
-      setMessages((m) => [...m, { role: "assistant", content: `Kon geen antwoord ophalen (${err.message || "netwerkfout"}). Let op: de AI werkt alleen in de gepubliceerde app, niet in dit preview-venster.` }]);
+      setMessages((m) => [...m, { role: "assistant", content: `Kon geen antwoord ophalen (${err.message || "netwerkfout"}).` }]);
     } finally {
       setLoading(false);
     }
@@ -2383,6 +2624,12 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
         <h1 style={{ fontFamily: "Oswald", fontSize: isMobile ? 22 : 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Sparkles size={isMobile ? 18 : 22} color="#3B82F6" /> AI Assistent</h1>
         {!isMobile && <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Doorzoekt meldingen en denkt mee met de garage.</p>}
       </div>
+      {!aiReady && (
+        <div className="mb-3 flex items-start gap-2 p-3 rounded-lg" style={{ background: "#FF8A0014", border: "1px solid #FF8A0044" }}>
+          <AlertTriangle size={15} color="#FF8A00" style={{ flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00" }}>AI is nog niet geconfigureerd. Zet <code>ANTHROPIC_API_KEY</code> op de server (zie README) om de assistent te activeren.</span>
+        </div>
+      )}
       <Card className="flex-1 p-4 overflow-y-auto space-y-4 mb-3" style={{ minHeight: 0 }}>
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -2407,99 +2654,287 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
 --------------------------------------------------------------------- */
 
 const ANGLES = [
-  { id: "voor", label: "Voorkant", hotspots: [
-    { zone: "voorkant", x: 50, y: 40, label: "Bumper / grille" },
-    { zone: "dak", x: 50, y: 15, label: "Verlichting / cabine top" },
-    { zone: "wielen", x: 22, y: 78, label: "Wiel links" },
-    { zone: "wielen", x: 78, y: 78, label: "Wiel rechts" },
+  { id: "voor", label: "Voor", hotspots: [
+    { zone: "dak", x: 50, y: 15, label: "Cabinedak / verlichting" },
+    { zone: "cabine", x: 50, y: 33, label: "Voorruit / cabine" },
+    { zone: "voorkant", x: 50, y: 52, label: "Grille / bumper" },
+    { zone: "wielen", x: 21, y: 76, label: "Wiel links" },
+    { zone: "wielen", x: 79, y: 76, label: "Wiel rechts" },
   ]},
   { id: "zij", label: "Zijkant", hotspots: [
-    { zone: "cabine", x: 25, y: 35, label: "Cabine" },
-    { zone: "onder", x: 55, y: 70, label: "Chassis / onder" },
-    { zone: "wielen", x: 30, y: 88, label: "Wielen" },
-    { zone: "wielen", x: 75, y: 88, label: "Wielen achter" },
+    { zone: "dak", x: 22, y: 24, label: "Cabinedak" },
+    { zone: "cabine", x: 22, y: 44, label: "Cabine / portier" },
+    { zone: "achterkant", x: 72, y: 40, label: "Laadbak" },
+    { zone: "onder", x: 50, y: 66, label: "Chassis / onder" },
+    { zone: "wielen", x: 30, y: 80, label: "Vooras" },
+    { zone: "wielen", x: 72, y: 80, label: "Achteras" },
   ]},
-  { id: "achter", label: "Achterkant", hotspots: [
-    { zone: "achterkant", x: 50, y: 40, label: "Achterportier / laadklep" },
-    { zone: "dak", x: 50, y: 15, label: "Achterverlichting" },
-    { zone: "wielen", x: 25, y: 78, label: "Wiel links" },
-    { zone: "wielen", x: 75, y: 78, label: "Wiel rechts" },
+  { id: "achter", label: "Achter", hotspots: [
+    { zone: "dak", x: 50, y: 16, label: "Achterlicht boven" },
+    { zone: "achterkant", x: 50, y: 40, label: "Deuren / laadklep" },
+    { zone: "onder", x: 50, y: 63, label: "Bumper / onder" },
+    { zone: "wielen", x: 23, y: 76, label: "Wiel links" },
+    { zone: "wielen", x: 77, y: 76, label: "Wiel rechts" },
+  ]},
+  { id: "boven", label: "Boven", hotspots: [
+    { zone: "voorkant", x: 14, y: 50, label: "Voorkant" },
+    { zone: "cabine", x: 30, y: 50, label: "Cabine" },
+    { zone: "dak", x: 62, y: 50, label: "Dak laadbak" },
+    { zone: "achterkant", x: 88, y: 50, label: "Achterkant" },
   ]},
 ];
 
-function InspectionView({ vehicles, reports }) {
+// Gestileerde SVG-weergave per aanzicht (viewBox 0 0 400 300).
+function VehicleDiagram({ angleId }) {
+  const panel = "#232B38", panel2 = "#2A3340", glass = "#324056", tyre = "#12171F", rim = "#3A4252", line = "#3A4252";
+  const common = { fill: panel, stroke: line, strokeWidth: 2 };
+  return (
+    <svg viewBox="0 0 400 300" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+      {angleId === "voor" && (
+        <g>
+          <rect x="118" y="70" width="164" height="150" rx="16" {...common} />
+          <rect x="132" y="86" width="136" height="52" rx="8" fill={glass} stroke={line} strokeWidth="2" />
+          <rect x="150" y="150" width="100" height="34" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <circle cx="140" cy="167" r="7" fill="#FFD100" opacity="0.85" />
+          <circle cx="260" cy="167" r="7" fill="#FFD100" opacity="0.85" />
+          <rect x="112" y="196" width="176" height="16" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="96" y="214" width="40" height="46" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+          <rect x="264" y="214" width="40" height="46" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+        </g>
+      )}
+      {angleId === "zij" && (
+        <g>
+          <rect x="150" y="96" width="200" height="104" rx="10" {...common} />
+          <path d="M46 200 V150 q0-14 14-16 l70-14 q10-2 16 8 l16 30 v42 z" fill={panel} stroke={line} strokeWidth="2" />
+          <path d="M66 150 l58-11 q7-1 11 5 l12 22 h-91 q-4 0-4-6 z" fill={glass} stroke={line} strokeWidth="2" />
+          <rect x="150" y="200" width="200" height="10" fill={panel2} />
+          <circle cx="96" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="96" cy="214" r="8" fill={rim} />
+          <circle cx="258" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="258" cy="214" r="8" fill={rim} />
+          <circle cx="316" cy="214" r="26" fill={tyre} stroke={rim} strokeWidth="5" /><circle cx="316" cy="214" r="8" fill={rim} />
+        </g>
+      )}
+      {angleId === "achter" && (
+        <g>
+          <rect x="120" y="60" width="160" height="164" rx="12" {...common} />
+          <line x1="200" y1="66" x2="200" y2="212" stroke={line} strokeWidth="2" />
+          <rect x="132" y="72" width="136" height="18" rx="4" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="132" y="196" width="60" height="18" rx="4" fill="#F0453F" opacity="0.7" />
+          <rect x="208" y="196" width="60" height="18" rx="4" fill="#F0453F" opacity="0.7" />
+          <rect x="112" y="214" width="176" height="14" rx="6" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="96" y="220" width="40" height="44" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+          <rect x="264" y="220" width="40" height="44" rx="8" fill={tyre} stroke={rim} strokeWidth="3" />
+        </g>
+      )}
+      {angleId === "boven" && (
+        <g>
+          <rect x="40" y="96" width="320" height="108" rx="16" {...common} />
+          <rect x="40" y="104" width="70" height="92" rx="12" fill={panel2} stroke={line} strokeWidth="2" />
+          <rect x="52" y="120" width="46" height="60" rx="6" fill={glass} stroke={line} strokeWidth="2" />
+          <line x1="120" y1="100" x2="120" y2="200" stroke={line} strokeWidth="2" strokeDasharray="4 6" />
+          <rect x="130" y="112" width="220" height="80" rx="8" fill={panel2} stroke={line} strokeWidth="1.5" opacity="0.6" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+const INSPECT_SEV = { kritiek: { rank: 3, color: "#F0453F", label: "Kritiek" }, gemiddeld: { rank: 2, color: "#FF8A00", label: "Aandacht" }, laag: { rank: 1, color: "#84CC16", label: "Licht" }, geen: { rank: 0, color: "#22D3B0", label: "In orde" } };
+const sevFromReport = (r) => (r.prioriteit === "kritiek" ? "kritiek" : r.prioriteit === "gemiddeld" ? "gemiddeld" : "laag");
+
+function InspectionView({ vehicles, reports, onUpdate, aiReady }) {
   const isMobile = useIsMobile();
   const [vehicleId, setVehicleId] = useState(vehicles[0]?.kenteken || "");
   const [angleIdx, setAngleIdx] = useState(0);
   const [activeZone, setActiveZone] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [aiErr, setAiErr] = useState("");
+  const [result, setResult] = useState(null); // { schade, ernst, onderdeel, aanbeveling }
+  const fileRef = useRef(null);
   const angle = ANGLES[angleIdx];
 
-  const zoneReports = (zoneId) => reports.filter((r) => r.vehicle === vehicleId && r.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
-  const activeReports = activeZone ? zoneReports(activeZone) : [];
+  const vehicle = vehicles.find((v) => v.kenteken === vehicleId);
+  const inspecties = (vehicle?.inspecties) || [];
   const zoneLabel = (id) => ZONES.find((z) => z.id === id)?.label || id;
+
+  const zoneReports = (zoneId) => reports.filter((r) => r.vehicle === vehicleId && r.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
+  const zoneFindings = (zoneId) => inspecties.filter((f) => f.zone === zoneId).sort((a, b) => (a.datum < b.datum ? 1 : -1));
+  const zoneWorst = (zoneId) => {
+    const sevs = [...zoneReports(zoneId).map(sevFromReport), ...zoneFindings(zoneId).map((f) => f.ernst)];
+    return sevs.reduce((w, s) => (INSPECT_SEV[s]?.rank > INSPECT_SEV[w].rank ? s : w), "geen");
+  };
+  const zoneCount = (zoneId) => zoneReports(zoneId).length + zoneFindings(zoneId).length;
+
+  const allZones = [...new Set(ANGLES.flatMap((a) => a.hotspots.map((h) => h.zone)))];
+  const totalFindings = inspecties.length;
+  const overallWorst = allZones.reduce((w, z) => (INSPECT_SEV[zoneWorst(z)].rank > INSPECT_SEV[w].rank ? zoneWorst(z) : w), "geen");
+
+  const activeReports = activeZone ? zoneReports(activeZone) : [];
+  const activeFindings = activeZone ? zoneFindings(activeZone) : [];
+
+  if (vehicles.length === 0) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Laat de AI schade op foto's beoordelen, per onderdeel.</p>
+        </div>
+        <EmptyState icon={Truck} text="Voeg eerst een voertuig toe onder 'Voertuigen' om te kunnen inspecteren." />
+      </div>
+    );
+  }
+
+  const analyze = async (file) => {
+    if (!file || !activeZone) return;
+    setBusy(true); setAiErr(""); setResult(null);
+    try {
+      const b64 = await fileToBase64(file);
+      const prompt = `Je bent een truck-schade-expert. Dit is een foto van het onderdeel "${zoneLabel(activeZone)}" van een ${vehicle?.merk || "voertuig"} (${vehicleId}). Bekijk de foto en beoordeel de zichtbare staat/schade. Antwoord UITSLUITEND met JSON, geen extra tekst:
+{"schade":"<korte beschrijving van wat je ziet>","ernst":"laag|gemiddeld|kritiek","onderdeel":"<welk onderdeel>","aanbeveling":"<1 zin advies>"}
+Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag".`;
+      const out = await callAI({ text: prompt, images: [{ media_type: file.type || "image/jpeg", data: b64 }], maxTokens: 500 });
+      setResult(parseAIJson(out));
+    } catch (e) {
+      setAiErr(`Kon foto niet analyseren (${e.message || "fout"}).`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFinding = () => {
+    if (!result || !vehicle) return;
+    const ernst = ["laag", "gemiddeld", "kritiek"].includes(result.ernst) ? result.ernst : "laag";
+    const finding = { id: "insp" + Date.now(), zone: activeZone, ernst, onderdeel: result.onderdeel || zoneLabel(activeZone), schade: result.schade || "", aanbeveling: result.aanbeveling || "", datum: TODAY };
+    onUpdate({ ...vehicle, inspecties: [finding, ...inspecties] });
+    setResult(null);
+  };
+
+  const deleteFinding = (id) => { if (vehicle) onUpdate({ ...vehicle, inspecties: inspecties.filter((f) => f.id !== id) }); };
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> Voertuiginspectie</h1>
-        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Klik op een onderdeel voor status en meldingshistorie. Wissel van aanzicht met de pijlen.</p>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Loop de aanzichten langs, tik een onderdeel aan en laat de AI een foto op schade beoordelen.</p>
       </div>
 
-      <select className="tg-input" value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); }}>
-        {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
-      </select>
+      <div className="flex items-center gap-3 flex-wrap">
+        <select className="tg-input" style={{ maxWidth: 320 }} value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); setResult(null); }}>
+          {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+        </select>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: `${INSPECT_SEV[overallWorst].color}18`, border: `1px solid ${INSPECT_SEV[overallWorst].color}44` }}>
+          <span className="rounded-full" style={{ width: 8, height: 8, background: INSPECT_SEV[overallWorst].color }} />
+          <span style={{ fontFamily: "Inter", fontSize: 12, fontWeight: 600, color: INSPECT_SEV[overallWorst].color }}>{INSPECT_SEV[overallWorst].label}</span>
+        </span>
+        <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>{totalFindings} AI-bevinding(en)</span>
+      </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "2fr 1fr" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "1.4fr 1fr" }}>
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setAngleIdx((i) => (i - 1 + ANGLES.length) % ANGLES.length)} className="p-1"><ChevronLeft color="#B4BCC9" /></button>
-            <div className="flex gap-2">
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <button onClick={() => setAngleIdx((i) => (i - 1 + ANGLES.length) % ANGLES.length)} className="p-1" aria-label="Vorig aanzicht"><ChevronLeft color="#B4BCC9" /></button>
+            <div className="flex gap-2 flex-wrap justify-center">
               {ANGLES.map((a, i) => <Chip key={a.id} active={i === angleIdx} onClick={() => setAngleIdx(i)}>{a.label}</Chip>)}
             </div>
-            <button onClick={() => setAngleIdx((i) => (i + 1) % ANGLES.length)} className="p-1"><ChevronRight color="#B4BCC9" /></button>
+            <button onClick={() => setAngleIdx((i) => (i + 1) % ANGLES.length)} className="p-1" aria-label="Volgend aanzicht"><ChevronRight color="#B4BCC9" /></button>
           </div>
 
-          <div className="relative mx-auto" style={{ width: "100%", maxWidth: 420, aspectRatio: "4/3", background: "#1A2129", borderRadius: 12, border: "1px solid #232B38" }}>
-            {/* simplified vehicle silhouette */}
-            <div style={{ position: "absolute", left: "15%", right: "15%", top: "30%", bottom: "35%", background: "#232B38", borderRadius: 10 }} />
-            <div style={{ position: "absolute", left: "18%", width: 10, height: 10, borderRadius: 5, bottom: "18%", background: "#0A0E14", border: "2px solid #3A4252" }} />
-            <div style={{ position: "absolute", right: "18%", width: 10, height: 10, borderRadius: 5, bottom: "18%", background: "#0A0E14", border: "2px solid #3A4252" }} />
-            <Truck size={38} color="#6B7585" style={{ position: "absolute", left: "50%", top: "48%", transform: "translate(-50%,-50%)" }} />
-
+          <div className="relative mx-auto" style={{ width: "100%", maxWidth: 440, aspectRatio: "4/3", background: "radial-gradient(circle at 50% 40%, #171E28, #12171F)", borderRadius: 14, border: "1px solid #232B38", overflow: "hidden" }}>
+            <VehicleDiagram angleId={angle.id} />
             {angle.hotspots.map((h, i) => {
-              const count = zoneReports(h.zone).length;
+              const worst = zoneWorst(h.zone);
+              const meta = INSPECT_SEV[worst];
+              const count = zoneCount(h.zone);
+              const active = activeZone === h.zone;
               return (
-                <button key={i} onClick={() => setActiveZone(h.zone)}
+                <button key={i} onClick={() => { setActiveZone(h.zone); setResult(null); setAiErr(""); }}
                   className="absolute rounded-full flex items-center justify-center"
-                  style={{ left: `${h.x}%`, top: `${h.y}%`, transform: "translate(-50%,-50%)", width: 22, height: 22, background: count > 0 ? "#FF8A00" : "#22D3B0", border: "2px solid #0A0E14", boxShadow: count > 0 ? "0 0 10px #FF8A0088" : "none" }}>
-                  {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "#0A0E14" }}>{count}</span>}
+                  title={h.label}
+                  style={{ left: `${h.x}%`, top: `${h.y}%`, transform: "translate(-50%,-50%)", width: active ? 28 : 24, height: active ? 28 : 24, background: meta.color, border: `2px solid ${active ? "#FFFFFF" : "#0A0E14"}`, boxShadow: worst !== "geen" ? `0 0 0 4px ${meta.color}22, 0 0 12px ${meta.color}88` : "0 0 0 3px #0A0E1466", cursor: "pointer", animation: worst === "kritiek" ? "tg-pulse 1.6s ease-in-out infinite" : "none", transition: "width .15s, height .15s" }}>
+                  {count > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#0A0E14" }}>{count}</span>}
                 </button>
               );
             })}
           </div>
-          <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11 }} className="text-center mt-3">
-            Amber = onderdeel met meldingen · Teal = geen meldingen
+
+          <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
+            {Object.entries(INSPECT_SEV).map(([k, m]) => (
+              <span key={k} className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0" }}>
+                <span className="rounded-full" style={{ width: 9, height: 9, background: m.color }} /> {m.label}
+              </span>
+            ))}
           </div>
         </Card>
 
         <Card className="p-5">
           <Eyebrow>{activeZone ? zoneLabel(activeZone) : "Selecteer een onderdeel"}</Eyebrow>
           {!activeZone ? (
-            <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>Klik op een stip in het diagram om details te zien.</div>
-          ) : activeReports.length === 0 ? (
-            <div style={{ color: "#34D399", fontFamily: "Inter", fontSize: 13 }}>Geen meldingen bekend voor dit onderdeel.</div>
+            <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>Tik op een stip in het diagram om meldingen, AI-bevindingen en foto-analyse te zien.</div>
           ) : (
-            <div className="space-y-3">
-              {activeReports.map((r) => (
-                <div key={r.id} className="pb-3" style={{ borderBottom: "1px solid #1A2129" }}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600 }}>{PRIO_META[r.prioriteit].label}</span>
-                    <span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{r.datum}</span>
+            <div className="space-y-4">
+              {/* AI foto-analyse */}
+              <div>
+                <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
+                <button onClick={() => fileRef.current?.click()} disabled={busy} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg" style={{ background: busy ? "#1A2129" : "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13, boxShadow: "0 2px 10px rgba(59,130,246,0.3)" }}>
+                  <Camera size={15} /> {busy ? "Analyseren…" : "Foto maken & AI-check"}
+                </button>
+                {!aiReady && <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 6, textAlign: "center" }}>AI staat uit — zet ANTHROPIC_API_KEY op de server om schade te laten herkennen.</div>}
+                {aiErr && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#FF8A00", marginTop: 6 }}>{aiErr}</div>}
+                {result && (() => {
+                  const col = INSPECT_SEV[result.ernst]?.color || "#84CC16";
+                  return (
+                    <div className="mt-3 p-3 rounded-lg" style={{ background: "#161C25", border: `1px solid ${col}55`, borderLeft: `3px solid ${col}` }}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: col, letterSpacing: 0.5, textTransform: "uppercase" }}>AI-analyse</span>
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600 }}>{result.ernst}</span>
+                      </div>
+                      {result.onderdeel && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{result.onderdeel}</div>}
+                      <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 500, marginTop: 2 }}>{result.schade}</div>
+                      {result.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>💡 {result.aanbeveling}</div>}
+                      <div className="flex gap-2 mt-2"><Button small onClick={saveFinding}>Bevinding opslaan</Button><Button small variant="ghost" onClick={() => setResult(null)}>Verwerpen</Button></div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Opgeslagen AI-bevindingen */}
+              {activeFindings.length > 0 && (
+                <div>
+                  <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>AI-bevindingen</div>
+                  <div className="space-y-2">
+                    {activeFindings.map((f) => { const col = INSPECT_SEV[f.ernst]?.color || "#84CC16"; return (
+                      <div key={f.id} className="p-2.5 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600 }}>{INSPECT_SEV[f.ernst]?.label || f.ernst}</span>
+                          <div className="flex items-center gap-2"><span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{f.datum}</span><button onClick={() => deleteFinding(f.id)} style={{ color: "#F0453F" }}><Trash2 size={12} /></button></div>
+                        </div>
+                        <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{f.schade}</div>
+                        {f.aanbeveling && <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">💡 {f.aanbeveling}</div>}
+                      </div>
+                    ); })}
                   </div>
-                  <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{r.omschrijving}</div>
-                  <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">{r.chauffeur} · status: {KANBAN_COLS.find((c) => c.id === r.status)?.label}</div>
                 </div>
-              ))}
+              )}
+
+              {/* Chauffeur-meldingen op dit onderdeel */}
+              <div>
+                <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Meldingen</div>
+                {activeReports.length === 0 ? (
+                  <div style={{ color: "#34D399", fontFamily: "Inter", fontSize: 12.5 }}>Geen meldingen voor dit onderdeel.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {activeReports.map((r) => (
+                      <div key={r.id} className="p-2.5 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600 }}>{PRIO_META[r.prioriteit].label}</span>
+                          <span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{r.datum}</span>
+                        </div>
+                        <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{r.omschrijving}</div>
+                        <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">{r.chauffeur} · {KANBAN_COLS.find((c) => c.id === r.status)?.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </Card>
@@ -2512,16 +2947,16 @@ function InspectionView({ vehicles, reports }) {
    PLANNING — werkplaatskalender: wagens inplannen op datum/tijd
 --------------------------------------------------------------------- */
 
-function toDateKey(d) { return d.toISOString().slice(0, 10); }
+function toDateKey(d) { return toLocalKey(d); }
 
 function FieldLabel({ children }) {
   return <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9", fontWeight: 600, marginBottom: 4 }}>{children}</div>;
 }
 
-function PlanningView({ vehicles, planning, reports, onAdd }) {
+function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
   const isMobile = useIsMobile();
-  const [cursor, setCursor] = useState(new Date(2026, 6, 1)); // juli 2026
-  const [selectedDate, setSelectedDate] = useState(toDateKey(new Date(2026, 6, 2)));
+  const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
+  const [selectedDate, setSelectedDate] = useState(TODAY);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ vehicle: "", tijd: "09:00", duur: "60", taak: "", monteur: "", reportId: null });
 
@@ -2586,7 +3021,7 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
               const items = planningByDate[key] || [];
               const count = items.length;
               const selected = key === selectedDate;
-              const isToday = key === DEMO_TODAY;
+              const isToday = key === TODAY;
               const isWeekend = d.getDay() === 0 || d.getDay() === 6;
               return (
                 <button key={i} onClick={() => setSelectedDate(key)} className="rounded-lg flex flex-col items-center justify-start relative"
@@ -2676,10 +3111,11 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
                   return (
                     <div key={p.id} style={{ position: "absolute", top: `${topPct}%`, left: 44, right: 0, minHeight: 44, height: `${height}%` }}>
                       <span style={{ position: "absolute", left: -44, top: 0, fontFamily: "JetBrains Mono", fontSize: 11, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
-                      <div className="rounded-lg h-full" style={{ background: "#3B82F618", borderLeft: "3px solid #3B82F6", padding: "6px 10px", overflow: "hidden" }}>
+                      <div className="rounded-lg h-full" style={{ background: "#3B82F618", borderLeft: "3px solid #3B82F6", padding: "6px 10px", overflow: "hidden", position: "relative" }}>
                         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
                           <Kenteken value={p.vehicle} />
                           {p.reportId && <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#3B82F6", border: "1px solid #3B82F655", flexShrink: 0 }}>melding</span>}
+                          {onDelete && <button onClick={() => onDelete(p.id)} title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0 }}><Trash2 size={13} /></button>}
                         </div>
                         <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", fontWeight: 500, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taak}</div>
                         <div style={{ fontFamily: "Inter", fontSize: 11, color: "#B4BCC9" }}>{p.duur} min · {p.monteur}</div>
@@ -2692,6 +3128,138 @@ function PlanningView({ vehicles, planning, reports, onAdd }) {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   KOSTEN — overzicht per categorie en per voertuig, met toevoegen/verwijderen
+--------------------------------------------------------------------- */
+
+const COST_CATEGORIES = [
+  { id: "onderhoud", label: "Onderhoud", color: "#22D3B0" },
+  { id: "brandstof", label: "Brandstof", color: "#3B82F6" },
+  { id: "reparatie", label: "Reparatie", color: "#FF8A00" },
+  { id: "verzekering", label: "Verzekering", color: "#A855F7" },
+  { id: "belasting", label: "Belasting", color: "#EC4899" },
+  { id: "overig", label: "Overig", color: "#98A1B0" },
+];
+const costCatMeta = (id) => COST_CATEGORIES.find((c) => c.id === id) || COST_CATEGORIES[5];
+const euro = (n) => "€ " + Math.round(n).toLocaleString("nl-NL");
+
+function CostsView({ costs, vehicles, onAdd, onDelete }) {
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ vehicle: "", categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
+  const [year, setYear] = useState("all");
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const years = Array.from(new Set(costs.map((c) => (c.datum || "").slice(0, 4)).filter(Boolean))).sort().reverse();
+  const filtered = year === "all" ? costs : costs.filter((c) => (c.datum || "").startsWith(year));
+  const total = filtered.reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+
+  const byCat = COST_CATEGORIES.map((cat) => ({ ...cat, bedrag: filtered.filter((c) => c.categorie === cat.id).reduce((a, c) => a + (Number(c.bedrag) || 0), 0) })).filter((c) => c.bedrag > 0);
+  const byVehicle = Object.entries(filtered.reduce((acc, c) => { acc[c.vehicle] = (acc[c.vehicle] || 0) + (Number(c.bedrag) || 0); return acc; }, {})).map(([vehicle, bedrag]) => ({ vehicle, bedrag })).sort((a, b) => b.bedrag - a.bedrag);
+  const maxCat = Math.max(1, ...byCat.map((c) => c.bedrag));
+
+  const submit = () => {
+    if (!form.vehicle || !form.bedrag) return;
+    onAdd({ id: "c" + Date.now(), vehicle: form.vehicle, categorie: form.categorie, bedrag: Number(form.bedrag), datum: form.datum, omschrijving: form.omschrijving });
+    setForm({ vehicle: "", categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
+    setOpen(false);
+  };
+
+  const sorted = [...filtered].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
+
+  const exportCsv = () => {
+    const rows = sorted.map((c) => [c.datum, c.vehicle, costCatMeta(c.categorie).label, c.omschrijving || "", Number(c.bedrag) || 0]);
+    downloadCSV(`kosten-${year === "all" ? "alle" : year}.csv`, ["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag (EUR)"], rows);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Euro size={22} color="#3B82F6" /> Kosten</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Uitgaven per categorie en per voertuig.</p></div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="tg-input" style={{ width: "auto" }} value={year} onChange={(e) => setYear(e.target.value)}>
+            <option value="all">Alle jaren</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>CSV</Button>
+          <Button icon={Plus} onClick={() => setOpen(true)}>Kostenpost</Button>
+        </div>
+      </div>
+
+      {open && (
+        <Card className="p-5 space-y-3">
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))" }}>
+            <div><FieldLabel>Voertuig</FieldLabel>
+              {vehicles.length > 0 ? (
+                <select className="tg-input" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
+                  <option value="">Kies voertuig…</option>
+                  {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+                </select>
+              ) : <input className="tg-input" placeholder="Kenteken" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} />}
+            </div>
+            <div><FieldLabel>Categorie</FieldLabel>
+              <select className="tg-input" value={form.categorie} onChange={(e) => setForm({ ...form, categorie: e.target.value })}>
+                {COST_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div><FieldLabel>Bedrag (€)</FieldLabel><input className="tg-input" type="number" value={form.bedrag} onChange={(e) => setForm({ ...form, bedrag: e.target.value })} placeholder="0" /></div>
+            <div><FieldLabel>Datum</FieldLabel><input className="tg-input" type="date" value={form.datum} onChange={(e) => setForm({ ...form, datum: e.target.value })} /></div>
+          </div>
+          <div><FieldLabel>Omschrijving (optioneel)</FieldLabel><input className="tg-input" value={form.omschrijving} onChange={(e) => setForm({ ...form, omschrijving: e.target.value })} placeholder="Bv. Grote beurt" /></div>
+          <div className="flex gap-2"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
+        </Card>
+      )}
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))" }}>
+        <Card className="p-5"><Eyebrow>Totaal {year !== "all" ? year : ""}</Eyebrow><div style={{ fontFamily: "Oswald", fontSize: 32, fontWeight: 600, color: "#E7ECF3" }}>{euro(total)}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{filtered.length} kostenpost(en)</div></Card>
+        <Card className="p-5"><Eyebrow>Grootste categorie</Eyebrow>{byCat.length ? (() => { const top = [...byCat].sort((a, b) => b.bedrag - a.bedrag)[0]; return <><div style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: top.color }}>{top.label}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{euro(top.bedrag)}</div></>; })() : <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 13 }}>—</div>}</Card>
+        <Card className="p-5"><Eyebrow>Duurste voertuig</Eyebrow>{byVehicle.length ? <><div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3" }}>{byVehicle[0].vehicle}</div><div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{euro(byVehicle[0].bedrag)}</div></> : <div style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 13 }}>—</div>}</Card>
+      </div>
+
+      {byCat.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Per categorie</Eyebrow>
+          <div className="space-y-2.5 mt-2">
+            {byCat.sort((a, b) => b.bedrag - a.bedrag).map((c) => (
+              <div key={c.id} className="flex items-center gap-3">
+                <span style={{ width: 110, fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", flexShrink: 0 }}>{c.label}</span>
+                <div className="flex-1 h-3 rounded-full" style={{ background: "#1A2129", overflow: "hidden" }}><div className="h-full rounded-full" style={{ width: `${(c.bedrag / maxCat) * 100}%`, background: c.color }} /></div>
+                <span style={{ width: 90, textAlign: "right", fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#E7ECF3", flexShrink: 0 }}>{euro(c.bedrag)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : (
+        <Card className="overflow-x-auto">
+          <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {sorted.map((c) => { const meta = costCatMeta(c.categorie); return (
+                <tr key={c.id} style={{ borderBottom: "1px solid #1A2129" }}>
+                  <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>{c.datum}</td>
+                  <td className="px-4 py-3" style={{ color: "#E7ECF3" }}>{c.vehicle}</td>
+                  <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600 }}>{meta.label}</span></td>
+                  <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{c.omschrijving || "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700 }}>{euro(Number(c.bedrag) || 0)}</td>
+                  <td className="px-4 py-3">
+                    {confirmDel === c.id ? (
+                      <span className="flex items-center gap-2"><button onClick={() => { onDelete(c.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(c.id)} style={{ color: "#F0453F" }}><Trash2 size={14} /></button>
+                    )}
+                  </td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        </Card>
+      )}
     </div>
   );
 }
@@ -2711,11 +3279,11 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
       </div>
 
       <nav className="space-y-5 flex-1 overflow-y-auto">
-        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g) => (
-          <div key={g.group}>
+        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g, gi) => (
+          <div key={g.group + gi}>
             <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>{g.group}</div>
             <div className="space-y-1">
-              {g.items.map((n) => {
+              {g.items.filter((n) => !n.roles || n.roles.includes(role)).map((n) => {
                 const active = view === n.id;
                 return (
                   <button key={n.id} onClick={() => { setView(n.id); onClose && onClose(); }}
@@ -2780,15 +3348,15 @@ const NAV_GROUPS = [
     { id: "inspection", label: "360° Inspectie", icon: ScanEye },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
+    { id: "costs", label: "Kosten", icon: Euro, roles: ["admin"] },
     { id: "settings", label: "Instellingen", icon: SlidersHorizontal },
-  ]},
-  { group: "Beheer", roles: ["admin"], items: [
-    { id: "users", label: "Gebruikers", icon: Users },
+    { id: "users", label: "Gebruikers", icon: Users, roles: ["admin"] },
   ]},
 ];
 
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
+  const aiReady = useAiStatus();
   const live = !!session;
   const liveCompanyId = live ? session.company.id : "blex";
 
@@ -2816,9 +3384,13 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [planning, setPlanning] = useState(() => initFrom("planning", seedPlanning));
   const [availability, setAvailability] = useState(() => (live ? { [liveCompanyId]: session.state.availability || {} } : seedAvailability));
   const [workshopHours, setWorkshopHours] = useState(() => (live ? { [liveCompanyId]: session.state.workshopHours || { van: "08:00", tot: "17:00" } } : seedWorkshopHours));
+  const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
+  const firstSave = useRef(true);
 
   useEffect(() => {
     if (!live) return;
+    // Sla niet meteen op bij het laden — pas na een echte wijziging.
+    if (firstSave.current) { firstSave.current = false; return; }
     const dataset = {
       vehicles: vehicles[liveCompanyId] || [],
       trailers: trailers[liveCompanyId] || [],
@@ -2831,7 +3403,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       availability: availability[liveCompanyId] || {},
       workshopHours: workshopHours[liveCompanyId] || { van: "08:00", tot: "17:00" },
     };
-    saveStateDebounced(liveCompanyId, dataset);
+    saveStateDebounced(liveCompanyId, dataset, setSaveStatus);
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, availability, workshopHours, live, liveCompanyId, session]);
 
   const setMechanicWeek = (userId, week) => setAvailability((s) => ({ ...s, [companyId]: { ...(s[companyId] || {}), [userId]: week } }));
@@ -2901,16 +3473,24 @@ export default function TruckGarageApp({ session, onLogout }) {
   const updateVehicle = (v) => setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === v.id ? v : x)) }));
   const deleteVehicle = (id) => setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addTrailer = (t) => setTrailers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), t] }));
+  const updateTrailer = (t) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === t.id ? t : x)) }));
+  const deleteTrailer = (id) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPart = (p) => setParts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
+  const updatePart = (p) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === p.id ? p : x)) }));
+  const deletePart = (id) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addMaintenance = (m) => setMaintenance((s) => ({ ...s, [companyId]: [...(s[companyId] || []), m] }));
+  const updateMaintenance = (m) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === m.id ? m : x)) }));
+  const deleteMaintenance = (id) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addCost = (c) => setCosts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), c] }));
   const deleteCost = (id) => setCosts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...s[companyId]] }));
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
+  const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const resendInvite = () => {};
   const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
+  const deleteReport = (id) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((r) => r.id !== id) }));
 
   return (
     <div style={{ minHeight: "100vh", background: "#0A0E14", fontFamily: "Inter", overflowX: "hidden", width: "100%" }}>
@@ -2992,6 +3572,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
 
             <div className="flex items-center gap-3">
+              {live && <SaveStatus status={saveStatus} compact={isMobile} />}
               {!isChauffeurOnly && (
                 <div className="relative">
                   <button onClick={() => setNotifOpen((s) => !s)} className="relative flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 8, background: notifOpen ? "#1A2129" : "transparent" }}>
@@ -3036,28 +3617,29 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </header>
 
-          <main style={{ padding: isMobile ? 20 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
+          <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 92 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
               <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
-                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} company={company} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
+                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
+                {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
                   return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} onGoInspection={() => { setSelectedVehicleId(null); setView("inspection"); }} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} />;
                 })()}
-                {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} />}
-                {view === "parts" && <PartsView parts={cParts} onAdd={addPart} />}
-                {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} onAdd={addMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
-                {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} />}
-                {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} />}
-                {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
+                {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
+                {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
+                {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
+                {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
+                {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
+                {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} />}
               </>
@@ -3065,6 +3647,30 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </main>
         </div>
+
+        {/* Mobiele bottom-navigatie — snelle toegang tot de kernschermen */}
+        {isMobile && !isChauffeurOnly && (
+          <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "rgba(12,17,25,0.94)", borderTop: "1px solid #1A2129", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", display: "flex", paddingBottom: "env(safe-area-inset-bottom)" }}>
+            {[
+              { id: "dashboard", label: "Home", icon: LayoutDashboard, onClick: () => setView("dashboard") },
+              { id: "workfloor", label: "Werkvloer", icon: KanbanSquare, onClick: () => setView("workfloor") },
+              { id: "planning", label: "Planning", icon: Calendar, onClick: () => setView("planning") },
+              { id: "vehicles", label: "Voertuigen", icon: Truck, onClick: () => { setSelectedVehicleId(null); setView("vehicles"); } },
+              { id: "__more", label: "Meer", icon: Menu, onClick: () => setMobileMenuOpen(true) },
+            ].map((n) => {
+              const active = view === n.id;
+              return (
+                <button key={n.id} onClick={n.onClick} className="flex-1 flex flex-col items-center justify-center" style={{ gap: 3, padding: "9px 0 11px", background: "transparent", border: "none", color: active ? "#3B82F6" : "#8A93A3", position: "relative", cursor: "pointer" }}>
+                  <n.icon size={20} />
+                  <span style={{ fontFamily: "Inter", fontSize: 10.5, fontWeight: active ? 700 : 500 }}>{n.label}</span>
+                  {n.id === "workfloor" && openCount > 0 && (
+                    <span style={{ position: "absolute", top: 5, left: "calc(50% + 6px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 8, background: "#F0453F", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{openCount}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </div>
     </div>
   );
