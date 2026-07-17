@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -2272,9 +2272,10 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
    GEBRUIKERS (admin: invite / user management)
 --------------------------------------------------------------------- */
 
-function UsersView({ users, onAdd, onResend, onDelete, currentUserId }) {
+function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: "invite", wachtwoord: "" });
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -2320,6 +2321,29 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId }) {
         </div>
         {!open && <Button icon={Plus} onClick={() => setOpen(true)}>Nieuwe gebruiker</Button>}
       </div>
+
+      {joinCode && (
+        <Card className="p-4" style={{ border: "1px solid #3B82F633", background: "linear-gradient(180deg,#12233E,#0F1826)" }}>
+          <div className="flex items-start gap-3">
+            <div style={{ width: 38, height: 38, borderRadius: 10, background: "#3B82F622", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <KeyRound size={18} color="#3B82F6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div style={{ fontFamily: "Oswald", fontSize: 16, fontWeight: 600, color: "#E7ECF3" }}>Medewerkers laten meedoen</div>
+              <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13, marginTop: 2, lineHeight: 1.5 }}>
+                Deel deze code met je chauffeurs en monteurs. Ze openen de app, kiezen <b>"Meedoen met een bedrijfscode"</b> en maken hun eigen login voor {companyName}.
+              </p>
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 700, letterSpacing: 4, color: "#E7ECF3", background: "#0A0E14", border: "1px solid #2A3340", borderRadius: 8, padding: "6px 14px" }}>{joinCode}</span>
+                <button onClick={() => { try { navigator.clipboard?.writeText(joinCode); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {} }}
+                  className="text-sm px-3 py-2 rounded-lg" style={{ background: "#3B82F6", color: "#fff", fontFamily: "Inter", fontWeight: 600 }}>
+                  {copied ? "Gekopieerd ✓" : "Kopieer code"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {open && (
         <Card className="p-5 space-y-4">
@@ -3390,7 +3414,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const initFrom = (key, fallback) => (live ? { [liveCompanyId]: session.state[key] ?? fallback } : fallback);
 
   const [companies, setCompanies] = useState(
-    live ? [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent }] : seedCompanies
+    live ? [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent, join_code: session.company.join_code }] : seedCompanies
   );
   const [vehicles, setVehicles] = useState(() => initFrom("vehicles", seedVehicles));
   const [trailers, setTrailers] = useState(() => initFrom("trailers", seedTrailers));
@@ -3661,7 +3685,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
-                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} />}
+                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} />}
               </>
             )}

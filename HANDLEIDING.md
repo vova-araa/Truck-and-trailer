@@ -13,6 +13,13 @@ browser en kun je op je telefoon als app installeren.
 3. Wachtwoord vergeten? Klik op **"Wachtwoord vergeten?"** — je krijgt een
    resetlink per e-mail.
 
+### Nog geen account? Meedoen met de bedrijfscode
+Kreeg je een **bedrijfscode** (6 tekens) van je werkgever?
+1. Open de link → klik op **"Uitgenodigd met een bedrijfscode? Meedoen →"**.
+2. Vul de **code** in en kies of je **Chauffeur** of **Werkplaats** bent.
+3. Vul je naam, e-mail en een wachtwoord in → **Meedoen**. Je zit meteen in de
+   juiste bedrijfsomgeving.
+
 ### De app op je telefoon zetten
 - **iPhone (Safari):** deelknop → *"Zet op beginscherm"*.
 - **Android (Chrome):** menu (⋮) → *"App installeren"* / *"Toevoegen aan
@@ -39,14 +46,17 @@ Je logt in als **Beheerder** en ziet het volledige menu.
 **Trailers** → **Trailer toevoegen**. Klik op de status om te wisselen tussen
 operationeel / let op / in werkplaats.
 
-### 3. Gebruikers uitnodigen (chauffeurs & monteurs)
-1. Ga naar **Gebruikers** → **Nieuwe gebruiker**.
-2. Kies de **rol**:
-   - **Chauffeur** — kan alleen meldingen maken.
-   - **Werkplaats** — werkvloer, planning, onderhoud en voorraad.
-   - **Beheerder** — volledige toegang.
-3. Kies **"Direct actief"** (jij stelt een wachtwoord in) of **"Uitnodiging
-   sturen"**.
+### 3. Medewerkers laten meedoen (chauffeurs & monteurs)
+De makkelijkste manier: **deel de bedrijfscode**.
+1. Ga naar **Gebruikers**. Bovenaan staat je **bedrijfscode** — klik **"Kopieer
+   code"**.
+2. Stuur die code naar je chauffeurs en monteurs (appje, mail, briefje).
+3. Zij openen de app, kiezen **"Meedoen met een bedrijfscode"**, vullen de code
+   in en kiezen hun rol (**Chauffeur** of **Werkplaats**). Ze maken zo hun eigen
+   login en zien meteen jouw bedrijf.
+
+> De code geeft nooit beheerdersrechten — die houd jij. Je kunt met **"Nieuwe
+> gebruiker"** ook nog handmatig mensen toevoegen als je dat liever hebt.
 
 ### 4. Werkplaatstijden instellen
 **Instellingen** → openingstijden van de werkplaats en de beschikbaarheid per
