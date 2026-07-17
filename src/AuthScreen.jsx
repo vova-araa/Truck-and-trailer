@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { Building2, ShieldCheck, LogIn } from "lucide-react";
-import { signIn, signUpCompany, slugify, requestPasswordReset } from "./api.js";
+import { Building2, ShieldCheck, LogIn, KeyRound, AlertTriangle, Wrench } from "lucide-react";
+import { signIn, signUpCompany, signUpWithCode, requestPasswordReset } from "./api.js";
 
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -13,6 +13,7 @@ export default function AuthScreen({ onAuthed }) {
 
   const [login, setLogin] = useState({ email: "", wachtwoord: "" });
   const [reg, setReg] = useState({ bedrijfsnaam: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "" });
+  const [join, setJoin] = useState({ code: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "", rol: "chauffeur" });
 
   const doReset = async () => {
     setErr(""); setNotice("");
@@ -62,6 +63,32 @@ export default function AuthScreen({ onAuthed }) {
     }
   };
 
+  const doJoin = async () => {
+    setErr("");
+    if (!join.code.trim()) return setErr("Vul de bedrijfscode in die je van je werkgever kreeg.");
+    if (!join.naam.trim()) return setErr("Vul je naam in.");
+    if (!validEmail(join.email)) return setErr("Vul een geldig e-mailadres in.");
+    if (join.wachtwoord.length < 6) return setErr("Kies een wachtwoord van minstens 6 tekens.");
+    if (join.wachtwoord !== join.wachtwoord2) return setErr("Wachtwoorden komen niet overeen.");
+    setBusy(true);
+    try {
+      await signUpWithCode({
+        naam: join.naam.trim(), email: join.email, telefoon: join.telefoon,
+        wachtwoord: join.wachtwoord, code: join.code, rol: join.rol,
+      });
+      onAuthed();
+    } catch (e) {
+      setErr(mapError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const joinRoles = [
+    { id: "chauffeur", label: "Chauffeur", desc: "Meldingen maken", icon: AlertTriangle },
+    { id: "garage", label: "Werkplaats", desc: "Werkvloer & planning", icon: Wrench },
+  ];
+
   return (
     <div style={wrap}>
       <div style={{ width: "100%", maxWidth: 380 }}>
@@ -76,7 +103,38 @@ export default function AuthScreen({ onAuthed }) {
           <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); }}>Bedrijf aanmelden</button>
         </div>
 
-        {mode === "login" ? (
+        {mode === "join" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={sectionLabel}>Bedrijfscode</div>
+            <input style={{ ...input, letterSpacing: 3, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }} placeholder="Bv. 7K2Q90" value={join.code}
+              onChange={(e) => setJoin({ ...join, code: e.target.value.toUpperCase() })} />
+            <div style={{ ...sectionLabel, marginTop: 6 }}>Ik ben</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {joinRoles.map((r) => {
+                const active = join.rol === r.id;
+                return (
+                  <button key={r.id} type="button" onClick={() => setJoin({ ...join, rol: r.id })}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                      border: `1px solid ${active ? "#3B82F6" : "#2A3340"}`, background: active ? "#3B82F618" : "#161C25", textAlign: "left" }}>
+                    <r.icon size={16} color={active ? "#3B82F6" : "#98A1B0"} />
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, fontWeight: 600, color: active ? "#3B82F6" : "#E7ECF3" }}>{r.label}</span>
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: "#98A1B0" }}>{r.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw account</div>
+            <input style={input} placeholder="Jouw naam" value={join.naam} onChange={(e) => setJoin({ ...join, naam: e.target.value })} />
+            <input style={input} placeholder="E-mailadres" value={join.email} onChange={(e) => setJoin({ ...join, email: e.target.value })} />
+            <input style={input} placeholder="Telefoon (optioneel)" value={join.telefoon} onChange={(e) => setJoin({ ...join, telefoon: e.target.value })} />
+            <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={join.wachtwoord} onChange={(e) => setJoin({ ...join, wachtwoord: e.target.value })} />
+            <input style={input} type="password" placeholder="Herhaal wachtwoord" value={join.wachtwoord2}
+              onChange={(e) => setJoin({ ...join, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doJoin()} />
+            {err && <div style={errStyle}>{err}</div>}
+            <button style={primaryBtn} disabled={busy} onClick={doJoin}><KeyRound size={16} /> {busy ? "Bezig..." : "Meedoen"}</button>
+            <button style={linkBtn} disabled={busy} onClick={() => { setMode("login"); setErr(""); }}>← Terug naar inloggen</button>
+          </div>
+        ) : mode === "login" ? (
           <div style={{ display: "grid", gap: 10 }}>
             <input style={input} placeholder="E-mailadres" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} />
             <input style={input} type="password" placeholder="Wachtwoord" value={login.wachtwoord}
@@ -85,6 +143,12 @@ export default function AuthScreen({ onAuthed }) {
             {notice && <div style={noticeStyle}>{notice}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doLogin}><LogIn size={16} /> {busy ? "Bezig..." : "Inloggen"}</button>
             <button style={linkBtn} disabled={busy} onClick={doReset}>Wachtwoord vergeten?</button>
+            <div style={{ marginTop: 4, paddingTop: 12, borderTop: "1px solid #1A2129", textAlign: "center" }}>
+              <button style={linkBtn} disabled={busy} onClick={() => { setMode("join"); setErr(""); setNotice(""); }}>
+                <KeyRound size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 4 }} />
+                Uitgenodigd met een bedrijfscode? Meedoen →
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
@@ -117,6 +181,8 @@ export default function AuthScreen({ onAuthed }) {
 
 function mapError(e) {
   const m = (e && e.message) || String(e);
+  if (/INVALID_CODE/i.test(m)) return "Deze bedrijfscode klopt niet. Vraag je werkgever om de juiste code.";
+  if (/EMAIL_CONFIRM_REQUIRED/i.test(m)) return "Je account is aangemaakt — bevestig eerst je e-mail (check je inbox) en log daarna in.";
   if (/already registered|already exists|duplicate/i.test(m)) return "Dit e-mailadres of bedrijf bestaat al.";
   if (/invalid login credentials/i.test(m)) return "Onjuist e-mailadres of wachtwoord.";
   if (/email not confirmed/i.test(m)) return "Bevestig eerst je e-mail (check je inbox), of schakel e-mailbevestiging uit in Supabase.";

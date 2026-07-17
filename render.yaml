@@ -1,0 +1,22 @@
+# Render Blueprint — deploy in één keer.
+# Render → New → Blueprint → kies deze repo. Vul daarna de 3 variabelen in.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: truck-trailer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # VITE_-waarden worden tijdens de Docker-build als build-arg gebruikt en
+      # in de frontend ingebakken. Render geeft deze automatisch mee aan de build.
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      # Server-side (voor de AI-functies). Optioneel — laat leeg om AI uit te zetten.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-8

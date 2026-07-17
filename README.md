@@ -11,6 +11,7 @@ staat.
 ## Functies
 
 - **Rollen:** platformbeheerder, bedrijfsbeheerder, werkplaats, chauffeur — elk met een eigen weergave.
+- **Medewerkers via bedrijfscode:** de beheerder deelt één 6-tekens code (zichtbaar bij _Gebruikers_); chauffeurs en monteurs maken daarmee zelf een echte login (rol chauffeur of werkplaats). Ze zien alleen hun eigen bedrijf.
 - **Vloot:** voertuigen (zoeken/filteren, notities, APK/tacho/verzekering-compliance, CSV-export), trailers, 360°-inspectie.
 - **Werkplaats:** meldingen-kanban (met verwijderen), planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
 - **Kosten:** overzicht per categorie en per voertuig, jaarfilter en CSV-export.
@@ -28,7 +29,7 @@ staat.
    - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (build-time)
    - `ANTHROPIC_API_KEY` (server, optioneel — voor de AI-functies)
    - eventueel `AI_RATE_LIMIT` (max AI-aanvragen per minuut per gebruiker, standaard 30)
-4. Open de publieke URL → **Bedrijf aanmelden** → voertuigen, monteurs (rol Werkplaats) en chauffeurs toevoegen.
+4. Open de publieke URL → **Bedrijf aanmelden** → voertuigen toevoegen. Ga naar **Gebruikers** en deel de **bedrijfscode** met je chauffeurs en monteurs: zij kiezen op het inlogscherm **"Meedoen met een bedrijfscode"** en maken zo hun eigen login.
 5. Op de telefoon: **"Zet op beginscherm"** installeert de app met eigen icoon.
 6. Wil je meekijken over alle bedrijven heen? Zet jezelf als platformbeheerder (zie stap 5 onderaan).
 
@@ -93,6 +94,10 @@ git push -u origin main
 ---
 
 ## 4. Deployen
+
+> 📘 **Uitgebreide stap-voor-stap gids:** zie [`DEPLOY.md`](./DEPLOY.md) — met
+> een kant-en-klare [`render.yaml`](./render.yaml) (Render, één klik) en
+> [`docker-compose.yml`](./docker-compose.yml) (eigen server). Hieronder de korte versie.
 
 De app is één Node-server (`server/index.js`) die de gebouwde frontend én de
 AI-proxy serveert. Je hebt dus geen speciaal platform nodig — het draait op elke

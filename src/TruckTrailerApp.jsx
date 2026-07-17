@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound
 } from "lucide-react";
 import { saveStateDebounced } from "./api.js";
 
@@ -775,14 +775,17 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-7 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Foto maken</span>
+                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Foto toevoegen</span>
               </button>
               <button onClick={() => videoRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-7 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Video maken</span>
+                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Video toevoegen</span>
               </button>
             </div>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => addFiles(e.target.files)} />
-            <input ref={videoRef} type="file" accept="video/*" capture="environment" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+            {/* Geen capture-attribuut: de telefoon toont een keuze tussen camera en galerij.
+                Dit werkt betrouwbaarder dan een geforceerde camera (die in sommige in-app
+                browsers zwart blijft). */}
+            <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+            <input ref={videoRef} type="file" accept="video/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             {media.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {media.map((m, i) => (
@@ -2227,15 +2230,15 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
                         {col.id !== "klaar" && (
-                          <button onClick={() => openSchedule(r)} className="flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}><Calendar size={12} /> Inplannen</button>
+                          <button onClick={() => openSchedule(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5, boxShadow: "0 1px 6px rgba(59,130,246,0.3)" }}><Calendar size={13} /> Inplannen</button>
                         )}
-                        <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter", fontWeight: 600 }}>Verplaatsen <ChevronDown size={12} /></button>
+                        <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}>Verplaatsen <ChevronDown size={13} /></button>
                         {onDelete && (confirmDel === r.id ? (
-                          <span className="flex items-center gap-2"><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
+                          <span className="flex items-center gap-2" style={{ marginLeft: "auto" }}><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs px-2 py-1 rounded" style={{ color: "#fff", background: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Verwijder</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
                         ) : (
-                          <button onClick={() => setConfirmDel(r.id)} className="flex items-center gap-1 text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600, marginLeft: "auto" }}><Trash2 size={12} /></button>
+                          <button onClick={() => setConfirmDel(r.id)} className="flex items-center justify-center rounded-lg" title="Verwijderen" style={{ marginLeft: "auto", width: 30, height: 30, background: "#1A2129", border: "1px solid #2A3340", color: "#F0453F" }}><Trash2 size={14} /></button>
                         ))}
                       </div>
                     )}
@@ -2269,9 +2272,10 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
    GEBRUIKERS (admin: invite / user management)
 --------------------------------------------------------------------- */
 
-function UsersView({ users, onAdd, onResend, onDelete, currentUserId }) {
+function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: "invite", wachtwoord: "" });
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -2317,6 +2321,29 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId }) {
         </div>
         {!open && <Button icon={Plus} onClick={() => setOpen(true)}>Nieuwe gebruiker</Button>}
       </div>
+
+      {joinCode && (
+        <Card className="p-4" style={{ border: "1px solid #3B82F633", background: "linear-gradient(180deg,#12233E,#0F1826)" }}>
+          <div className="flex items-start gap-3">
+            <div style={{ width: 38, height: 38, borderRadius: 10, background: "#3B82F622", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <KeyRound size={18} color="#3B82F6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div style={{ fontFamily: "Oswald", fontSize: 16, fontWeight: 600, color: "#E7ECF3" }}>Medewerkers laten meedoen</div>
+              <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13, marginTop: 2, lineHeight: 1.5 }}>
+                Deel deze code met je chauffeurs en monteurs. Ze openen de app, kiezen <b>"Meedoen met een bedrijfscode"</b> en maken hun eigen login voor {companyName}.
+              </p>
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 700, letterSpacing: 4, color: "#E7ECF3", background: "#0A0E14", border: "1px solid #2A3340", borderRadius: 8, padding: "6px 14px" }}>{joinCode}</span>
+                <button onClick={() => { try { navigator.clipboard?.writeText(joinCode); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {} }}
+                  className="text-sm px-3 py-2 rounded-lg" style={{ background: "#3B82F6", color: "#fff", fontFamily: "Inter", fontWeight: 600 }}>
+                  {copied ? "Gekopieerd ✓" : "Kopieer code"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {open && (
         <Card className="p-5 space-y-4">
@@ -2873,9 +2900,9 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
             <div className="space-y-4">
               {/* AI foto-analyse */}
               <div>
-                <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
                 <button onClick={() => fileRef.current?.click()} disabled={busy} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg" style={{ background: busy ? "#1A2129" : "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13, boxShadow: "0 2px 10px rgba(59,130,246,0.3)" }}>
-                  <Camera size={15} /> {busy ? "Analyseren…" : "Foto maken & AI-check"}
+                  <Camera size={15} /> {busy ? "Analyseren…" : "Foto toevoegen & AI-check"}
                 </button>
                 {!aiReady && <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 6, textAlign: "center" }}>AI staat uit — zet ANTHROPIC_API_KEY op de server om schade te laten herkennen.</div>}
                 {aiErr && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#FF8A00", marginTop: 6 }}>{aiErr}</div>}
@@ -3093,37 +3120,27 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
               <button onClick={() => setOpen(true)} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#3B82F6", fontWeight: 600, marginTop: 6 }}>+ Afspraak toevoegen</button>
             </div>
           ) : (
-            <div style={{ position: "relative" }}>
-              {/* time rail */}
-              {Array.from({ length: dayEnd - dayStart + 1 }).map((_, h) => {
-                const top = ((h * 60) / totalMin) * 100;
-                return (
-                  <div key={h} style={{ position: "relative", height: 0 }}>
-                    <div style={{ position: "absolute", top: `calc(${top}% )`, left: 0, right: 0, borderTop: "1px solid #161C25" }} />
+            <div className="space-y-2.5">
+              {dayItems.map((p) => (
+                <div key={p.id} className="flex items-stretch gap-3 rounded-xl overflow-hidden" style={{ background: "#141A23", border: "1px solid #232B38" }}>
+                  <div className="flex flex-col items-center justify-center px-3 py-3" style={{ background: "#3B82F618", minWidth: 66, flexShrink: 0 }}>
+                    <span style={{ fontFamily: "JetBrains Mono", fontSize: 16, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
+                    <span style={{ fontFamily: "Inter", fontSize: 10.5, color: "#B4BCC9" }}>{p.duur} min</span>
                   </div>
-                );
-              })}
-              <div style={{ position: "relative", minHeight: 340 }}>
-                {dayItems.map((p) => {
-                  const start = Math.max(0, toMin(p.tijd));
-                  const height = Math.max(6, (Number(p.duur) / totalMin) * 100);
-                  const topPct = (start / totalMin) * 100;
-                  return (
-                    <div key={p.id} style={{ position: "absolute", top: `${topPct}%`, left: 44, right: 0, minHeight: 44, height: `${height}%` }}>
-                      <span style={{ position: "absolute", left: -44, top: 0, fontFamily: "JetBrains Mono", fontSize: 11, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
-                      <div className="rounded-lg h-full" style={{ background: "#3B82F618", borderLeft: "3px solid #3B82F6", padding: "6px 10px", overflow: "hidden", position: "relative" }}>
-                        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-                          <Kenteken value={p.vehicle} />
-                          {p.reportId && <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#3B82F6", border: "1px solid #3B82F655", flexShrink: 0 }}>melding</span>}
-                          {onDelete && <button onClick={() => onDelete(p.id)} title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0 }}><Trash2 size={13} /></button>}
-                        </div>
-                        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", fontWeight: 500, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taak}</div>
-                        <div style={{ fontFamily: "Inter", fontSize: 11, color: "#B4BCC9" }}>{p.duur} min · {p.monteur}</div>
-                      </div>
+                  <div className="flex-1 py-2.5 pr-2" style={{ minWidth: 0 }}>
+                    <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                      <Kenteken value={p.vehicle} />
+                      {p.reportId && <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#3B82F6", border: "1px solid #3B82F655", flexShrink: 0 }}>melding</span>}
+                      {onDelete && <button onClick={() => onDelete(p.id)} title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0, padding: 4 }}><Trash2 size={16} /></button>}
                     </div>
-                  );
-                })}
-              </div>
+                    <div style={{ fontFamily: "Inter", fontSize: 14, color: "#E7ECF3", fontWeight: 600, marginTop: 4 }}>{p.taak}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 1 }}>Monteur: {p.monteur}</div>
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setOpen(true)} className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl" style={{ border: "1px dashed #2A3340", color: "#3B82F6", fontFamily: "Inter", fontSize: 13, fontWeight: 600 }}>
+                <Plus size={15} /> Afspraak toevoegen
+              </button>
             </div>
           )}
         </Card>
@@ -3235,7 +3252,32 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
         </Card>
       )}
 
-      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : (
+      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : isMobile ? (
+        <div className="space-y-3">
+          {sorted.map((c) => { const meta = costCatMeta(c.categorie); return (
+            <Card key={c.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span style={{ color: "#E7ECF3", fontWeight: 700, fontSize: 15 }}>{c.vehicle}</span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600 }}>{meta.label}</span>
+                  </div>
+                  <div style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono", fontSize: 12, marginTop: 4 }}>{c.datum}</div>
+                </div>
+                <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, fontSize: 17, flexShrink: 0 }}>{euro(Number(c.bedrag) || 0)}</span>
+              </div>
+              {c.omschrijving && <div style={{ color: "#B4BCC9", fontSize: 13.5, marginTop: 8 }}>{c.omschrijving}</div>}
+              <div className="flex justify-end mt-3 pt-3" style={{ borderTop: "1px solid #1A2129" }}>
+                {confirmDel === c.id ? (
+                  <span className="flex items-center gap-3"><button onClick={() => { onDelete(c.id); setConfirmDel(null); }} className="text-sm" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig verwijderen</button><button onClick={() => setConfirmDel(null)} className="text-sm" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                ) : (
+                  <button onClick={() => setConfirmDel(c.id)} className="flex items-center gap-1.5 text-sm" style={{ color: "#F0453F", fontWeight: 600 }}><Trash2 size={14} /> Verwijderen</button>
+                )}
+              </div>
+            </Card>
+          ); })}
+        </div>
+      ) : (
         <Card className="overflow-x-auto">
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
@@ -3270,15 +3312,15 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
 
 function SidebarContent({ view, setView, openCount, company, currentUser, role, isSuperAdmin, onCompanyClick, onLogout, onClose }) {
   return (
-    <div className="flex flex-col h-full py-6 px-4">
-      <div className="flex items-center justify-between px-2 mb-6">
+    <div className="flex flex-col py-6 px-4" style={{ height: "100%", minHeight: 0 }}>
+      <div className="flex items-center justify-between px-2 mb-6" style={{ flexShrink: 0 }}>
         <button onClick={() => { setView("dashboard"); onClose && onClose(); }} className="flex items-center gap-2">
           <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</div>
         </button>
-        {onClose && <button onClick={onClose}><X size={18} color="#B4BCC9" /></button>}
+        {onClose && <button onClick={onClose} aria-label="Menu sluiten"><X size={20} color="#B4BCC9" /></button>}
       </div>
 
-      <nav className="space-y-5 flex-1 overflow-y-auto">
+      <nav className="space-y-5 flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
         {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g, gi) => (
           <div key={g.group + gi}>
             <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>{g.group}</div>
@@ -3301,7 +3343,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
         ))}
       </nav>
 
-      <div className="pt-4 space-y-3" style={{ borderTop: "1px solid #1A2129" }}>
+      <div className="pt-4 space-y-3 mt-3" style={{ borderTop: "1px solid #1A2129", flexShrink: 0 }}>
         <button onClick={isSuperAdmin ? onCompanyClick : undefined} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-full" style={{ border: "1px solid #232B38", background: "#12171F", cursor: isSuperAdmin ? "pointer" : "default" }}>
           <Building2 size={14} color={company.accent} style={{ flexShrink: 0 }} />
           <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</span>
@@ -3372,7 +3414,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const initFrom = (key, fallback) => (live ? { [liveCompanyId]: session.state[key] ?? fallback } : fallback);
 
   const [companies, setCompanies] = useState(
-    live ? [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent }] : seedCompanies
+    live ? [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent, join_code: session.company.join_code }] : seedCompanies
   );
   const [vehicles, setVehicles] = useState(() => initFrom("vehicles", seedVehicles));
   const [trailers, setTrailers] = useState(() => initFrom("trailers", seedTrailers));
@@ -3405,6 +3447,9 @@ export default function TruckGarageApp({ session, onLogout }) {
     };
     saveStateDebounced(liveCompanyId, dataset, setSaveStatus);
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, availability, workshopHours, live, liveCompanyId, session]);
+
+  // Elke paginawissel begint bovenaan.
+  useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);
 
   const setMechanicWeek = (userId, week) => setAvailability((s) => ({ ...s, [companyId]: { ...(s[companyId] || {}), [userId]: week } }));
   const setCompanyHours = (hours) => setWorkshopHours((s) => ({ ...s, [companyId]: hours }));
@@ -3536,7 +3581,7 @@ export default function TruckGarageApp({ session, onLogout }) {
         {mobileMenuOpen && (
           <div className="fixed inset-0 z-40">
             <div className="absolute inset-0" style={{ background: "#000000AA" }} onClick={() => setMobileMenuOpen(false)} />
-            <div className="absolute left-0 top-0 h-full" style={{ width: 280, background: "#0A0E14", borderRight: "1px solid #1A2129" }}>
+            <div className="absolute left-0 top-0" style={{ width: 284, maxWidth: "88vw", height: "100dvh", background: "#0A0E14", borderRight: "1px solid #1A2129" }}>
               <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin}
                 onCompanyClick={() => setCompanyPicker((s) => !s)} onLogout={live ? onLogout : () => setCurrentUser(null)} onClose={() => setMobileMenuOpen(false)} />
             </div>
@@ -3617,7 +3662,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </header>
 
-          <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 92 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
+          <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
               <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />
@@ -3640,7 +3685,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
-                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} />}
+                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} />}
               </>
             )}
@@ -3648,29 +3693,6 @@ export default function TruckGarageApp({ session, onLogout }) {
           </main>
         </div>
 
-        {/* Mobiele bottom-navigatie — snelle toegang tot de kernschermen */}
-        {isMobile && !isChauffeurOnly && (
-          <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "rgba(12,17,25,0.94)", borderTop: "1px solid #1A2129", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", display: "flex", paddingBottom: "env(safe-area-inset-bottom)" }}>
-            {[
-              { id: "dashboard", label: "Home", icon: LayoutDashboard, onClick: () => setView("dashboard") },
-              { id: "workfloor", label: "Werkvloer", icon: KanbanSquare, onClick: () => setView("workfloor") },
-              { id: "planning", label: "Planning", icon: Calendar, onClick: () => setView("planning") },
-              { id: "vehicles", label: "Voertuigen", icon: Truck, onClick: () => { setSelectedVehicleId(null); setView("vehicles"); } },
-              { id: "__more", label: "Meer", icon: Menu, onClick: () => setMobileMenuOpen(true) },
-            ].map((n) => {
-              const active = view === n.id;
-              return (
-                <button key={n.id} onClick={n.onClick} className="flex-1 flex flex-col items-center justify-center" style={{ gap: 3, padding: "9px 0 11px", background: "transparent", border: "none", color: active ? "#3B82F6" : "#8A93A3", position: "relative", cursor: "pointer" }}>
-                  <n.icon size={20} />
-                  <span style={{ fontFamily: "Inter", fontSize: 10.5, fontWeight: active ? 700 : 500 }}>{n.label}</span>
-                  {n.id === "workfloor" && openCount > 0 && (
-                    <span style={{ position: "absolute", top: 5, left: "calc(50% + 6px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 8, background: "#F0453F", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{openCount}</span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
-        )}
       </div>
     </div>
   );

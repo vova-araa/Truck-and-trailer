@@ -52,6 +52,42 @@ export async function signUpCompany({ bedrijfsnaam, naam, email, telefoon, wacht
   return { userId, company };
 }
 
+// Kijk een bedrijf op via join-code (voor de "Meedoen"-flow: laat de naam zien
+// vóór iemand een account maakt). Geeft null als de code niet klopt.
+export async function previewCompanyByCode(code) {
+  const { data, error } = await supabase.rpc("company_by_join_code", { code: (code || "").trim() });
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
+// Medewerker maakt een echt account en koppelt zich via de code aan het bedrijf.
+// De rol wordt server-side afgedwongen op 'chauffeur' of 'garage'.
+export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code, rol }) {
+  const preview = await previewCompanyByCode(code);
+  if (!preview) throw new Error("INVALID_CODE");
+
+  const { data: signUp, error: signErr } = await supabase.auth.signUp({
+    email,
+    password: wachtwoord,
+    options: { data: { naam } },
+  });
+  if (signErr) throw signErr;
+  if (!signUp.user?.id) throw new Error("Kon geen account aanmaken.");
+
+  // Zonder actieve sessie (e-mailbevestiging aan) kan de koppeling niet — meld dat netjes.
+  if (!signUp.session) throw new Error("EMAIL_CONFIRM_REQUIRED");
+
+  const { error: joinErr } = await supabase.rpc("join_company_with_code", {
+    code: (code || "").trim(),
+    p_naam: naam,
+    p_email: email,
+    p_telefoon: telefoon || "",
+    p_rol: rol === "garage" ? "garage" : "chauffeur",
+  });
+  if (joinErr) throw joinErr;
+  return preview;
+}
+
 export async function signIn({ email, wachtwoord }) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password: wachtwoord });
   if (error) throw error;
