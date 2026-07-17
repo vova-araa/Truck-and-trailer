@@ -3228,7 +3228,32 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
         </Card>
       )}
 
-      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : (
+      {filtered.length === 0 ? <EmptyState icon={Euro} text="Nog geen kosten geregistreerd." /> : isMobile ? (
+        <div className="space-y-3">
+          {sorted.map((c) => { const meta = costCatMeta(c.categorie); return (
+            <Card key={c.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span style={{ color: "#E7ECF3", fontWeight: 700, fontSize: 15 }}>{c.vehicle}</span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600 }}>{meta.label}</span>
+                  </div>
+                  <div style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono", fontSize: 12, marginTop: 4 }}>{c.datum}</div>
+                </div>
+                <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, fontSize: 17, flexShrink: 0 }}>{euro(Number(c.bedrag) || 0)}</span>
+              </div>
+              {c.omschrijving && <div style={{ color: "#B4BCC9", fontSize: 13.5, marginTop: 8 }}>{c.omschrijving}</div>}
+              <div className="flex justify-end mt-3 pt-3" style={{ borderTop: "1px solid #1A2129" }}>
+                {confirmDel === c.id ? (
+                  <span className="flex items-center gap-3"><button onClick={() => { onDelete(c.id); setConfirmDel(null); }} className="text-sm" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig verwijderen</button><button onClick={() => setConfirmDel(null)} className="text-sm" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                ) : (
+                  <button onClick={() => setConfirmDel(c.id)} className="flex items-center gap-1.5 text-sm" style={{ color: "#F0453F", fontWeight: 600 }}><Trash2 size={14} /> Verwijderen</button>
+                )}
+              </div>
+            </Card>
+          ); })}
+        </div>
+      ) : (
         <Card className="overflow-x-auto">
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
