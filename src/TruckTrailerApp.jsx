@@ -20,12 +20,24 @@ function svgWrap(size, color, rest, children) {
   );
 }
 function IconTruckTrailer({ size = 24, color = "currentColor", ...rest }) {
+  // Trekker rechts, oplegger links.
   return svgWrap(size, color, rest, <>
-    <path d="M2 8 h4 l2 3 v4 H2 z" />
-    <rect x="9.5" y="7.5" width="12.5" height="7.5" rx="0.8" />
-    <circle cx="4.6" cy="17.4" r="1.4" />
-    <circle cx="13" cy="17.4" r="1.4" />
-    <circle cx="18.5" cy="17.4" r="1.4" />
+    <rect x="2" y="7.5" width="12.5" height="7.5" rx="0.8" />
+    <path d="M15 9 h4 l3 3 v3 H15 z" />
+    <circle cx="6" cy="17.4" r="1.4" />
+    <circle cx="10.5" cy="17.4" r="1.4" />
+    <circle cx="18.8" cy="17.4" r="1.4" />
+  </>);
+}
+function IconTrailer({ size = 24, color = "currentColor", ...rest }) {
+  // Losse oplegger/aanhanger: lange laadbak, tandem-as achter, steunpoot +
+  // koppeling voor (geen cabine).
+  return svgWrap(size, color, rest, <>
+    <rect x="3" y="6.8" width="16" height="7.6" rx="1" />
+    <path d="M3 10.6 H1" />
+    <path d="M5.5 14.4 v2.6" />
+    <circle cx="11.5" cy="17.2" r="1.5" />
+    <circle cx="15.8" cy="17.2" r="1.5" />
   </>);
 }
 function IconBoxTruck({ size = 24, color = "currentColor", ...rest }) {
@@ -1819,7 +1831,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <IconBoxTruck size={24} color="#3B82F6" /> : filterType === "Bestelwagen" ? <IconVan size={24} color="#3B82F6" /> : filterType === "Trailer" ? <Container size={22} color="#3B82F6" /> : <IconTruckTrailer size={24} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <IconBoxTruck size={24} color="#3B82F6" /> : filterType === "Bestelwagen" ? <IconVan size={24} color="#3B82F6" /> : filterType === "Trailer" ? <IconTrailer size={24} color="#3B82F6" /> : <IconTruckTrailer size={24} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
@@ -2382,7 +2394,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Container size={22} color="#3B82F6" /> Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><IconTrailer size={24} color="#3B82F6" /> Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Trailer toevoegen</Button>
       </div>
       {open && (
@@ -2403,7 +2415,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
       )}
-      {trailers.length === 0 ? <EmptyState icon={Container} text="Nog geen aanhangers." /> : (
+      {trailers.length === 0 ? <EmptyState icon={IconTrailer} text="Nog geen aanhangers." /> : (
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
           {trailers.map((t) => (
             <Card key={t.id} className="p-4">
@@ -4975,7 +4987,7 @@ const MODULE_DEFS = [
   { key: "planning", label: "Planning", desc: "Werkplaats-agenda inplannen", icon: Calendar },
   { key: "maintenance", label: "Voorspellend onderhoud", desc: "Onderhoud op km-stand & tijd", icon: Wrench },
   { key: "parts", label: "Voorraad", desc: "Onderdelen & voorraadbeheer", icon: Package },
-  { key: "trailers", label: "Trailers", desc: "Aanhangers & opleggers", icon: Container },
+  { key: "trailers", label: "Trailers", desc: "Aanhangers & opleggers", icon: IconTrailer },
   { key: "bakwagens", label: "Bakwagens", desc: "Bakwagens apart bijhouden", icon: Boxes },
   { key: "bestelwagens", label: "Bestelwagens", desc: "Bestelwagens apart bijhouden", icon: Truck },
   { key: "drivers", label: "Chauffeurs", desc: "Rijbewijs, Code 95, ADR, keuring", icon: Contact },
@@ -5007,7 +5019,7 @@ const NAV_GROUPS = [
     { id: "vehicles", label: "Vrachtwagens", icon: IconTruckTrailer },
     { id: "bakwagens", label: "Bakwagens", icon: IconBoxTruck, module: "bakwagens" },
     { id: "bestelwagens", label: "Bestelwagens", icon: IconVan, module: "bestelwagens" },
-    { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
+    { id: "trailers", label: "Trailers", icon: IconTrailer, module: "trailers" },
     { id: "drivers", label: "Chauffeurs", icon: Contact, module: "drivers" },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
