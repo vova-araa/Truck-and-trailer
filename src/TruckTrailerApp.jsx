@@ -3842,10 +3842,15 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ vehicle: "", categorie: "onderhoud", bedrag: "", datum: TODAY, omschrijving: "" });
   const [year, setYear] = useState("all");
+  const [month, setMonth] = useState("all");
   const [confirmDel, setConfirmDel] = useState(null);
 
+  const MONTHS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
+  const MONTH_LABELS = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
   const years = Array.from(new Set(costs.map((c) => (c.datum || "").slice(0, 4)).filter(Boolean))).sort().reverse();
-  const filtered = year === "all" ? costs : costs.filter((c) => (c.datum || "").startsWith(year));
+  // Periode: heel jaar, of een specifieke maand binnen dat jaar.
+  const periodPrefix = year === "all" ? "" : month === "all" ? year : `${year}-${month}`;
+  const filtered = periodPrefix ? costs.filter((c) => (c.datum || "").startsWith(periodPrefix)) : costs;
   const total = filtered.reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
 
   const byCat = COST_CATEGORIES.map((cat) => ({ ...cat, bedrag: filtered.filter((c) => c.categorie === cat.id).reduce((a, c) => a + (Number(c.bedrag) || 0), 0) })).filter((c) => c.bedrag > 0);
@@ -3861,9 +3866,16 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
 
   const sorted = [...filtered].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
 
+  const periodLabel = year === "all" ? "alle" : month === "all" ? year : `${year}-${month}`;
   const exportCsv = () => {
     const rows = sorted.map((c) => [c.datum, c.vehicle, costCatMeta(c.categorie).label, c.omschrijving || "", Number(c.bedrag) || 0]);
-    downloadCSV(`kosten-${year === "all" ? "alle" : year}.csv`, ["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag (EUR)"], rows);
+    downloadCSV(`kosten-${periodLabel}.csv`, ["Datum", "Voertuig", "Categorie", "Omschrijving", "Bedrag (EUR)"], rows);
+  };
+  // Alleen de werkbonnen uit de gekozen periode (kostenposten met "Werkbon:").
+  const werkbonnen = sorted.filter((c) => /^werkbon/i.test(c.omschrijving || ""));
+  const exportWerkbonnen = () => {
+    const rows = werkbonnen.map((c) => [c.datum, c.vehicle, costCatMeta(c.categorie).label, (c.omschrijving || "").replace(/^werkbon:\s*/i, ""), Number(c.bedrag) || 0]);
+    downloadCSV(`werkbonnen-${periodLabel}.csv`, ["Datum", "Voertuig", "Categorie", "Werk", "Bedrag (EUR)"], rows);
   };
 
   return (
@@ -3871,11 +3883,18 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Euro size={22} color="#3B82F6" /> Kosten</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Uitgaven per categorie en per voertuig.</p></div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select className="tg-input" style={{ width: "auto" }} value={year} onChange={(e) => setYear(e.target.value)}>
+          <select className="tg-input" style={{ width: "auto" }} value={year} onChange={(e) => { setYear(e.target.value); setMonth("all"); }}>
             <option value="all">Alle jaren</option>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
-          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>CSV</Button>
+          {year !== "all" && (
+            <select className="tg-input" style={{ width: "auto" }} value={month} onChange={(e) => setMonth(e.target.value)}>
+              <option value="all">Hele jaar</option>
+              {MONTHS.map((m, i) => <option key={m} value={m}>{MONTH_LABELS[i]}</option>)}
+            </select>
+          )}
+          <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>Kosten CSV</Button>
+          <Button variant="ghost" icon={FileText} onClick={exportWerkbonnen} disabled={werkbonnen.length === 0}>Werkbonnen ({werkbonnen.length})</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Kostenpost</Button>
         </div>
       </div>
