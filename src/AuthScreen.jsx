@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Building2, ShieldCheck, LogIn, KeyRound, AlertTriangle, Wrench } from "lucide-react";
-import { signIn, signUpCompany, signUpWithCode, requestPasswordReset } from "./api.js";
+import { signIn, signUpCompany, signUpWithCode, requestPasswordReset, activationCodeInfo } from "./api.js";
 
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -14,6 +14,36 @@ export default function AuthScreen({ onAuthed }) {
   const [login, setLogin] = useState({ email: "", wachtwoord: "" });
   const [reg, setReg] = useState({ code: "", bedrijfsnaam: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "" });
   const [join, setJoin] = useState({ code: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "", rol: "chauffeur" });
+  // Gegevens die al aan de code hangen (ingevuld bij het afsluiten van het
+  // abonnement). Zodra ze bekend zijn, hoeven bedrijf/naam/e-mail niet opnieuw.
+  const [codeInfo, setCodeInfo] = useState(null); // null = nog niet opgehaald / geen data
+  const [codeChecking, setCodeChecking] = useState(false);
+
+  // Zoek de bij de code horende gegevens op zodra er 12 cijfers staan.
+  const onRegCode = async (raw) => {
+    const clean = raw.replace(/[^0-9]/g, "").slice(0, 12);
+    setReg((r) => ({ ...r, code: clean }));
+    setCodeInfo(null);
+    if (clean.length !== 12) return;
+    setCodeChecking(true);
+    try {
+      const info = await activationCodeInfo(clean);
+      if (info && (info.company_name || info.admin_email || info.admin_naam)) {
+        setCodeInfo(info);
+        setReg((r) => ({
+          ...r,
+          bedrijfsnaam: info.company_name || r.bedrijfsnaam,
+          naam: info.admin_naam || r.naam,
+          email: info.admin_email || r.email,
+          telefoon: info.admin_telefoon || r.telefoon,
+        }));
+      }
+    } catch {
+      /* stil: geldigheid wordt bij activeren alsnog gecontroleerd */
+    } finally {
+      setCodeChecking(false);
+    }
+  };
 
   const doReset = async () => {
     setErr(""); setNotice("");
@@ -155,17 +185,43 @@ export default function AuthScreen({ onAuthed }) {
           <div style={{ display: "grid", gap: 10 }}>
             <div style={sectionLabel}>Abonnementscode</div>
             <input style={{ ...input, letterSpacing: 2, fontFamily: "'JetBrains Mono', monospace" }} inputMode="numeric" maxLength={14} placeholder="12-cijferige code" value={reg.code}
-              onChange={(e) => setReg({ ...reg, code: e.target.value.replace(/[^0-9]/g, "").slice(0, 12) })} />
-            <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren.</div>
-            <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
-            <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
-            <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>
-            <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />
-            <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />
-            <input style={input} placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />
-            <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
-            <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
-              onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
+              onChange={(e) => onRegCode(e.target.value)} />
+            <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>
+              {codeChecking ? "Code controleren…" : "Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren."}
+            </div>
+
+            {codeInfo ? (
+              // Gegevens hangen al aan de code (ingevuld bij het abonnement) —
+              // niet nog eens vragen. Alleen een wachtwoord kiezen is nog nodig.
+              <>
+                <div style={summaryBox}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, marginBottom: 6 }}>
+                    <ShieldCheck size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 5, color: "#34D399" }} />
+                    Gegevens gevonden bij je abonnement
+                  </div>
+                  {reg.bedrijfsnaam && <div style={summaryRow}><span style={summaryKey}>Bedrijf</span><span style={summaryVal}>{reg.bedrijfsnaam}</span></div>}
+                  {reg.naam && <div style={summaryRow}><span style={summaryKey}>Beheerder</span><span style={summaryVal}>{reg.naam}</span></div>}
+                  {reg.email && <div style={summaryRow}><span style={summaryKey}>E-mail</span><span style={summaryVal}>{reg.email}</span></div>}
+                </div>
+                <div style={{ ...sectionLabel, marginTop: 2 }}>Kies een wachtwoord</div>
+                <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
+                <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
+                  onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
+              </>
+            ) : (
+              // Terugval: code zonder vooraf-ingevulde gegevens (bv. oudere code).
+              <>
+                <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
+                <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
+                <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>
+                <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />
+                <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />
+                <input style={input} placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />
+                <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
+                <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
+                  onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
+              </>
+            )}
             {err && <div style={errStyle}>{err}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Activeren..." : "Bedrijf activeren & starten"}</button>
             <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", textAlign: "center" }}>
@@ -199,3 +255,7 @@ const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight
 const errStyle = { color: "#F0453F", fontFamily: "Inter, sans-serif", fontSize: 12.5 };
 const noticeStyle = { color: "#34D399", fontFamily: "Inter, sans-serif", fontSize: 12.5 };
 const linkBtn = { background: "transparent", border: "none", color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 12.5, cursor: "pointer", padding: 2 };
+const summaryBox = { background: "#0F141C", border: "1px solid #22303F", borderRadius: 10, padding: "11px 12px", display: "grid", gap: 4 };
+const summaryRow = { display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12.5 };
+const summaryKey = { color: "#98A1B0" };
+const summaryVal = { color: "#E7ECF3", fontWeight: 600, textAlign: "right", wordBreak: "break-word" };

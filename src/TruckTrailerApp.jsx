@@ -4,9 +4,9 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -3648,6 +3648,119 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
 }
 
 /* ---------------------------------------------------------------------
+   ABONNEMENTSCODES — alleen de platformbeheerder (superadmin) maakt hier
+   codes aan. Codes die jij aanmaakt zijn standaard GRATIS (paid = false);
+   voor de rest zet je de schakelaar op "Betaald". De gegevens die je hier
+   invult, staan straks al klaar bij "Bedrijf activeren".
+--------------------------------------------------------------------- */
+function CodesView({ live }) {
+  const isMobile = useIsMobile();
+  const blank = () => ({ companyName: "", adminNaam: "", adminEmail: "", adminTelefoon: "", note: "", paid: false });
+  const [form, setForm] = useState(blank());
+  const [codes, setCodes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState("");
+
+  const load = async () => {
+    if (!live) return;
+    setLoading(true); setErr("");
+    try { setCodes(await listActivationCodes()); }
+    catch (e) { setErr(e?.message || "Kon codes niet laden."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [live]);
+
+  const submit = async () => {
+    setErr("");
+    try {
+      setBusy(true);
+      await createActivationCode(form);
+      setForm(blank());
+      await load();
+    } catch (e) {
+      setErr(e?.message || "Kon de code niet aanmaken.");
+    } finally { setBusy(false); }
+  };
+
+  const copy = async (code) => {
+    try { await navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(""), 1500); } catch {}
+  };
+  const fmtCode = (c) => (c || "").replace(/(\d{4})(?=\d)/g, "$1 ");
+
+  if (!live) {
+    return (
+      <div className="space-y-5">
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Ticket size={22} color="#3B82F6" /> Abonnementscodes</h1>
+        <Card><div style={{ padding: 16, fontFamily: "Inter", fontSize: 14, color: "#B4BCC9" }}>Codes aanmaken werkt alleen op de live-omgeving (met Supabase gekoppeld).</div></Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Ticket size={22} color="#3B82F6" /> Abonnementscodes</h1>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Maak 12-cijferige codes om een bedrijf te activeren. Codes die jij aanmaakt zijn standaard gratis; zet de schakelaar op "Betaald" wanneer nodig.</p>
+      </div>
+
+      <Card>
+        <div style={{ padding: 16 }}>
+          <div style={{ fontFamily: "Inter", fontSize: 12, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Nieuwe code</div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)" }}>
+            <label style={fieldLabel}>Bedrijfsnaam<input style={codeInput} value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} placeholder="Bv. Jansen Transport" /></label>
+            <label style={fieldLabel}>Naam beheerder<input style={codeInput} value={form.adminNaam} onChange={(e) => setForm({ ...form, adminNaam: e.target.value })} placeholder="Voor- en achternaam" /></label>
+            <label style={fieldLabel}>E-mail beheerder<input style={codeInput} value={form.adminEmail} onChange={(e) => setForm({ ...form, adminEmail: e.target.value })} placeholder="naam@bedrijf.nl" /></label>
+            <label style={fieldLabel}>Telefoon (optioneel)<input style={codeInput} value={form.adminTelefoon} onChange={(e) => setForm({ ...form, adminTelefoon: e.target.value })} placeholder="+31 6 …" /></label>
+            <label style={{ ...fieldLabel, gridColumn: isMobile ? "auto" : "1 / -1" }}>Notitie (optioneel, alleen voor jezelf)<input style={codeInput} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Bv. jaarabonnement 2026" /></label>
+          </div>
+          <div className="flex items-center justify-between gap-3 flex-wrap" style={{ marginTop: 14 }}>
+            <button type="button" onClick={() => setForm({ ...form, paid: !form.paid })} className="flex items-center gap-2.5 px-3 py-2 rounded-lg" style={{ border: "1px solid #232B38", background: "#12171F" }}>
+              <span className="rounded-full flex items-center" style={{ width: 34, height: 20, background: form.paid ? "#3B82F6" : "#2A3340", padding: 2 }}>
+                <span className="rounded-full" style={{ width: 16, height: 16, background: "#fff", transform: form.paid ? "translateX(14px)" : "translateX(0)", transition: "transform .2s" }} />
+              </span>
+              <span style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3" }}>{form.paid ? "Betaald abonnement" : "Gratis (door jou uitgegeven)"}</span>
+            </button>
+            <Button icon={Plus} onClick={submit} disabled={busy}>{busy ? "Aanmaken…" : "Code aanmaken"}</Button>
+          </div>
+          {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+        </div>
+      </Card>
+
+      <Card className="overflow-x-auto">
+        <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
+          <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Code", "Bedrijf", "Type", "Status", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-6" style={{ color: "#98A1B0", textAlign: "center" }}>Laden…</td></tr>
+            ) : codes.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-6" style={{ color: "#98A1B0", textAlign: "center" }}>Nog geen codes uitgegeven.</td></tr>
+            ) : codes.map((c) => (
+              <tr key={c.code} style={{ borderBottom: "1px solid #1A2129" }}>
+                <td className="px-4 py-3" style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, letterSpacing: 1 }}>{fmtCode(c.code)}</td>
+                <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{c.company_name || "—"}</td>
+                <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.paid ? "#F59E0B" : "#34D399", border: `1px solid ${(c.paid ? "#F59E0B" : "#34D399")}55`, fontWeight: 600 }}>{c.paid ? "Betaald" : "Gratis"}</span></td>
+                <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.status === "used" ? "#98A1B0" : "#3B82F6", border: `1px solid ${(c.status === "used" ? "#98A1B0" : "#3B82F6")}55`, fontWeight: 600 }}>{c.status === "used" ? "Gebruikt" : "Ongebruikt"}</span></td>
+                <td className="px-4 py-3">
+                  {c.status !== "used" && (
+                    <button onClick={() => copy(c.code)} className="flex items-center gap-1.5 text-xs" style={{ color: copied === c.code ? "#34D399" : "#8FB8FF", fontWeight: 600 }}>
+                      {copied === c.code ? <><Check size={13} /> Gekopieerd</> : <><Copy size={13} /> Kopieer</>}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+const fieldLabel = { display: "flex", flexDirection: "column", gap: 5, fontFamily: "Inter", fontSize: 12, fontWeight: 600, color: "#98A1B0" };
+const codeInput = { background: "#161C25", border: "1px solid #2A3340", color: "#E7ECF3", borderRadius: 9, padding: "10px 11px", fontFamily: "Inter", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" };
+
+/* ---------------------------------------------------------------------
    SIDEBAR (grouped, matches Blex Fleet menu structure)
 --------------------------------------------------------------------- */
 
@@ -3686,6 +3799,20 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
           </div>
           );
         })}
+
+        {isSuperAdmin && (
+          <div>
+            <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>Platform</div>
+            <div className="space-y-1">
+              <button onClick={() => { setView("codes"); onClose && onClose(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left"
+                style={{ background: view === "codes" ? "#3B82F618" : "transparent", color: view === "codes" ? "#3B82F6" : "#C4CBD6", fontSize: 14, fontWeight: view === "codes" ? 600 : 500 }}>
+                <Ticket size={16} />
+                <span className="flex-1">Abonnementscodes</span>
+              </button>
+            </div>
+          </div>
+        )}
       </nav>
 
       <div className="pt-4 space-y-3 mt-3" style={{ borderTop: "1px solid #1A2129", flexShrink: 0 }}>
@@ -4267,6 +4394,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} />}
+                {view === "codes" && isSuperAdmin && <CodesView live={live} />}
               </>
             )}
             </div>

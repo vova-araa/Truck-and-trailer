@@ -23,6 +23,39 @@ export async function activationCodeValid(code) {
   return !!data;
 }
 
+// Haal de vooraf-ingevulde gegevens bij een code op (bedrijfsnaam, naam, e-mail,
+// telefoon) zodat "Bedrijf activeren" die alvast toont. Geeft null bij een
+// ongeldige/gebruikte code.
+export async function activationCodeInfo(code) {
+  const clean = (code || "").replace(/\D/g, "");
+  if (clean.length !== 12) return null;
+  const { data, error } = await supabase.rpc("activation_code_info", { p_code: clean });
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
+// Superadmin: maak een nieuwe abonnementscode aan. Codes die jij zelf aanmaakt
+// zijn gratis (paid = false). Geeft de 12-cijferige code terug.
+export async function createActivationCode({ companyName, adminNaam, adminEmail, adminTelefoon, note, paid } = {}) {
+  const { data, error } = await supabase.rpc("create_activation_code", {
+    p_company_name: companyName || "",
+    p_admin_naam: adminNaam || "",
+    p_admin_email: adminEmail || "",
+    p_admin_telefoon: adminTelefoon || "",
+    p_note: note || "",
+    p_paid: paid !== false,
+  });
+  if (error) throw error;
+  return data; // de code (string)
+}
+
+// Superadmin: alle uitgegeven abonnementscodes ophalen.
+export async function listActivationCodes() {
+  const { data, error } = await supabase.rpc("list_activation_codes");
+  if (error) throw error;
+  return data || [];
+}
+
 // Bedrijf aanmelden kan alleen met een geldige abonnementscode. De code wordt
 // server-side (SECURITY DEFINER) ingewisseld: die maakt het bedrijf aan en
 // markeert de code als gebruikt. Zo kan niemand zonder code een bedrijf starten.

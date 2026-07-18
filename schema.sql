@@ -129,11 +129,28 @@ create table if not exists public.activation_codes (
   status text not null default 'unused' check (status in ('unused','used')),
   company_id uuid references public.companies(id) on delete set null,
   note text default '',
+  -- Gegevens die bij het afsluiten van het abonnement al zijn ingevuld, zodat het
+  -- bedrijf ze bij "Bedrijf activeren" niet nóg een keer hoeft in te tikken.
+  company_name text default '',
+  admin_naam text default '',
+  admin_email text default '',
+  admin_telefoon text default '',
+  paid boolean not null default true, -- codes die JIJ zelf aanmaakt zijn gratis (paid = false)
+  created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   used_at timestamptz
 );
 alter table public.activation_codes enable row level security;
 -- Geen directe toegang voor clients; alles loopt via de functies hieronder.
+
+-- Bestond de tabel al van een eerdere versie? Voeg de nieuwe kolommen alsnog toe.
+alter table public.activation_codes
+  add column if not exists company_name text default '',
+  add column if not exists admin_naam text default '',
+  add column if not exists admin_email text default '',
+  add column if not exists admin_telefoon text default '',
+  add column if not exists paid boolean not null default true,
+  add column if not exists created_by uuid references auth.users(id) on delete set null;
 
 -- Snelle check of een code geldig/ongebruikt is (voor nette foutmeldingen vooraf).
 create or replace function public.activation_code_valid(p_code text)
@@ -145,28 +162,50 @@ returns boolean language sql stable security definer as $$
 $$;
 grant execute on function public.activation_code_valid(text) to anon, authenticated;
 
+-- Haal de vooraf-ingevulde gegevens bij een geldige code op, zodat "Bedrijf
+-- activeren" die alvast kan tonen en het bedrijf ze niet opnieuw hoeft in te
+-- tikken. Geeft alleen niet-gevoelige velden terug (geen wachtwoord).
+create or replace function public.activation_code_info(p_code text)
+returns table(company_name text, admin_naam text, admin_email text, admin_telefoon text)
+language sql stable security definer as $$
+  select company_name, admin_naam, admin_email, admin_telefoon
+  from public.activation_codes
+  where code = regexp_replace(coalesce(p_code,''), '\D', '', 'g') and status = 'unused'
+  limit 1
+$$;
+grant execute on function public.activation_code_info(text) to anon, authenticated;
+
 -- Wissel een geldige code in: maak in ÉÉN transactie het bedrijf, het
 -- hoofd-admin-profiel én een lege state aan, en markeer de code als gebruikt.
 -- Atomair (FOR UPDATE): mislukt er iets, dan wordt niets bewaard en blijft de
 -- code bruikbaar — geen verweesde bedrijven of "verbrande" codes meer.
+-- De aan de code gekoppelde gegevens (bedrijfsnaam/naam/e-mail/telefoon) hebben
+-- voorrang; wat de gebruiker meegeeft is alleen een terugval.
 create or replace function public.redeem_company_code(
   p_code text, p_name text, p_slug text, p_accent text,
   p_naam text default null, p_email text default null, p_telefoon text default null
 ) returns uuid language plpgsql security definer as $$
-declare cid uuid; clean text;
+declare cid uuid; clean text; rec public.activation_codes;
+        v_name text; v_naam text; v_email text; v_telefoon text;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   clean := regexp_replace(coalesce(p_code,''), '\D', '', 'g');
-  perform 1 from public.activation_codes where code = clean and status = 'unused' for update;
+  select * into rec from public.activation_codes where code = clean and status = 'unused' for update;
   if not found then raise exception 'INVALID_CODE'; end if;
 
-  insert into public.companies (name, slug, accent)
-    values (p_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+  -- Code-gegevens hebben voorrang; nullif('') zodat lege velden terugvallen op input.
+  v_name     := coalesce(nullif(rec.company_name, ''), p_name);
+  v_naam     := coalesce(nullif(rec.admin_naam, ''), p_naam);
+  v_email    := coalesce(nullif(rec.admin_email, ''), p_email);
+  v_telefoon := coalesce(nullif(rec.admin_telefoon, ''), p_telefoon);
 
-  -- Hoofd-admin-profiel koppelen (alleen als naam/e-mail zijn meegegeven).
-  if p_naam is not null and p_email is not null then
+  insert into public.companies (name, slug, accent)
+    values (v_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+
+  -- Hoofd-admin-profiel koppelen (alleen als naam/e-mail bekend zijn).
+  if v_naam is not null and v_email is not null then
     insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
-      values (auth.uid(), cid, p_naam, p_email, coalesce(p_telefoon, ''), 'admin', 'actief');
+      values (auth.uid(), cid, v_naam, v_email, coalesce(v_telefoon, ''), 'admin', 'actief');
     insert into public.company_state (company_id, data) values (cid, '{}'::jsonb)
       on conflict (company_id) do nothing;
   end if;
@@ -176,12 +215,41 @@ begin
 end $$;
 grant execute on function public.redeem_company_code(text, text, text, text, text, text, text) to authenticated;
 
--- Codes aanmaken doe je als platformbeheerder in de SQL Editor, bijvoorbeeld:
---   insert into public.activation_codes (code, note)
---   values (lpad((floor(random()*1e12))::bigint::text, 12, '0'), 'Bedrijf X - jaarabonnement')
---   returning code;
--- (of zet zelf een vaste 12-cijferige code neer). Bekijk uitgegeven codes met:
---   select code, status, note, used_at from public.activation_codes order by created_at desc;
+-- ---------- ABONNEMENTSCODES BEHEREN (alleen platform-superadmin) ----------
+-- Jij kunt vanuit je eigen account codes aanmaken en bekijken. Codes die JIJ
+-- aanmaakt zijn gratis (paid = false); voor de rest geldt paid = true.
+
+create or replace function public.create_activation_code(
+  p_company_name text default '', p_admin_naam text default '',
+  p_admin_email text default '', p_admin_telefoon text default '',
+  p_note text default '', p_paid boolean default true
+) returns text language plpgsql security definer as $$
+declare new_code text; tries int := 0;
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  loop
+    new_code := lpad((floor(random()*1e12))::bigint::text, 12, '0');
+    exit when not exists(select 1 from public.activation_codes where code = new_code);
+    tries := tries + 1;
+    if tries > 10 then raise exception 'CODE_GEN_FAILED'; end if;
+  end loop;
+  insert into public.activation_codes
+    (code, company_name, admin_naam, admin_email, admin_telefoon, note, paid, created_by)
+    values (new_code, coalesce(p_company_name,''), coalesce(p_admin_naam,''),
+            coalesce(p_admin_email,''), coalesce(p_admin_telefoon,''),
+            coalesce(p_note,''), coalesce(p_paid, true), auth.uid());
+  return new_code;
+end $$;
+grant execute on function public.create_activation_code(text, text, text, text, text, boolean) to authenticated;
+
+-- Alle uitgegeven codes bekijken (alleen superadmin). Retourneert de volledige rij.
+create or replace function public.list_activation_codes()
+returns setof public.activation_codes language plpgsql stable security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  return query select * from public.activation_codes order by created_at desc;
+end $$;
+grant execute on function public.list_activation_codes() to authenticated;
 
 -- ---------- JOIN-CODE: medewerkers laten meedoen ----------
 -- Een bedrijf deelt zijn 6-tekens code. Een medewerker maakt een account en
