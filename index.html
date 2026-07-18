@@ -50,10 +50,24 @@
     <style>
       html, body { margin: 0; padding: 0; background: #0A0E14; }
       #root { min-height: 100vh; }
+      /* Nette merk-loader vóór de app is geladen — geen blanco scherm. Verdwijnt
+         zodra React #root vult. */
+      #boot { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+      #boot .brand { font-family: 'Oswald', system-ui, sans-serif; font-size: 24px; font-weight: 700; letter-spacing: .5px; color: #E7ECF3; }
+      #boot .brand .amp { color: #3B82F6; }
+      #boot .spin { margin: 16px auto 0; width: 26px; height: 26px; border: 3px solid #232B38; border-top-color: #3B82F6; border-radius: 50%; animation: bootspin .8s linear infinite; }
+      @keyframes bootspin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot">
+        <div style="text-align:center">
+          <div class="brand">TRUCK <span class="amp">&amp;</span> TRAILER</div>
+          <div class="spin"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
