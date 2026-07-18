@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
+import { createClient } from "@supabase/supabase-js";
 
 /*
   Productie-server voor Truck & Trailer.
@@ -41,8 +42,72 @@ function rateLimited(ip) {
   return arr.length > RL_MAX;
 }
 
+// --- Supabase admin (service_role): alleen op de server, nooit in de browser ---
+const SUPA_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const adminAuthConfigured = Boolean(SUPA_URL && SERVICE_ROLE);
+const supaAdmin = adminAuthConfigured
+  ? createClient(SUPA_URL, SERVICE_ROLE, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
+
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ai: apiKeyConfigured });
+  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured });
+});
+
+// Beheerder maakt een echt inlogaccount voor een medewerker aan. De service_role
+// staat alleen hier. We verifiëren dat de aanvrager écht admin is van zijn bedrijf
+// en koppelen de nieuwe gebruiker altijd aan datzelfde bedrijf.
+app.post("/api/admin/create-user", async (req, res) => {
+  if (rateLimited("mkuser:" + (req.ip || "onbekend"))) {
+    return res.status(429).json({ error: "Te veel aanvragen. Wacht even en probeer opnieuw." });
+  }
+  if (!supaAdmin) {
+    return res.status(503).json({ error: "Accounts aanmaken is niet geconfigureerd. Zet SUPABASE_SERVICE_ROLE_KEY (en SUPABASE_URL) op de server." });
+  }
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return res.status(401).json({ error: "Niet ingelogd." });
+
+  const { naam, email, wachtwoord, rol, telefoon } = req.body || {};
+  const validRol = ["admin", "garage", "chauffeur"].includes(rol) ? rol : "chauffeur";
+  if (!naam || !String(naam).trim()) return res.status(400).json({ error: "Naam is verplicht." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) return res.status(400).json({ error: "Geldig e-mailadres is verplicht." });
+  if (!wachtwoord || String(wachtwoord).length < 6) return res.status(400).json({ error: "Wachtwoord van minstens 6 tekens is verplicht." });
+
+  try {
+    // 1. Wie vraagt dit aan? Verifieer het access-token.
+    const { data: who, error: whoErr } = await supaAdmin.auth.getUser(token);
+    if (whoErr || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+
+    // 2. Is de aanvrager admin? Haal zijn profiel/bedrijf op.
+    const { data: prof, error: profErr } = await supaAdmin
+      .from("profiles").select("company_id, rol").eq("id", who.user.id).single();
+    if (profErr || !prof) return res.status(403).json({ error: "Geen profiel gevonden." });
+    if (prof.rol !== "admin") return res.status(403).json({ error: "Alleen een beheerder mag accounts aanmaken." });
+
+    // 3. Maak het auth-account (meteen bevestigd, zodat de medewerker direct kan inloggen).
+    const { data: created, error: cErr } = await supaAdmin.auth.admin.createUser({
+      email, password: wachtwoord, email_confirm: true, user_metadata: { naam },
+    });
+    if (cErr) {
+      const dup = /registered|exists|duplicate/i.test(cErr.message || "");
+      return res.status(dup ? 409 : 400).json({ error: dup ? "Dit e-mailadres heeft al een account." : cErr.message });
+    }
+
+    // 4. Koppel het profiel aan HETZELFDE bedrijf als de beheerder.
+    const { error: insErr } = await supaAdmin.from("profiles").insert({
+      id: created.user.id, company_id: prof.company_id, naam: String(naam).trim(),
+      email, telefoon: telefoon || "", rol: validRol, status: "actief",
+    });
+    if (insErr) {
+      // rol-back: verwijder het net aangemaakte auth-account zodat er geen wees ontstaat
+      try { await supaAdmin.auth.admin.deleteUser(created.user.id); } catch {}
+      return res.status(500).json({ error: "Account gemaakt maar profiel koppelen mislukte: " + insErr.message });
+    }
+    res.json({ ok: true, id: created.user.id, rol: validRol });
+  } catch (err) {
+    console.error("create-user fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij het aanmaken van het account." });
+  }
 });
 
 app.post("/api/ai", async (req, res) => {

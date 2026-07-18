@@ -11,7 +11,8 @@ staat.
 ## Functies
 
 - **Rollen:** platformbeheerder, bedrijfsbeheerder, werkplaats, chauffeur — elk met een eigen weergave.
-- **Medewerkers via bedrijfscode:** de beheerder deelt één 6-tekens code (zichtbaar bij _Gebruikers_); chauffeurs en monteurs maken daarmee zelf een echte login (rol chauffeur of werkplaats). Ze zien alleen hun eigen bedrijf.
+- **Medewerkers:** twee manieren. (1) De beheerder maakt **direct een inlogaccount** aan (naam + e-mail + wachtwoord + rol) — vereist `SUPABASE_SERVICE_ROLE_KEY` op de server. (2) Of de beheerder deelt de **bedrijfscode** (6 tekens, zichtbaar bij _Gebruikers_) en medewerkers maken zelf een login. Iedereen ziet alleen zijn eigen bedrijf.
+- **Nieuw bedrijf** starten kan alleen met een **12-cijferige abonnementscode** die de platformbeheerder uitgeeft.
 - **Vloot:** voertuigen (zoeken/filteren, notities, APK/tacho/verzekering-compliance, CSV-export), trailers, 360°-inspectie.
 - **Werkplaats:** meldingen-kanban (met verwijderen), planning-kalender, voorspellend onderhoud, voorraad met +/- afboeken.
 - **Kosten:** overzicht per categorie en per voertuig, jaarfilter en CSV-export.

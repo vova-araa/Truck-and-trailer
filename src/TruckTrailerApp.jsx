@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -373,6 +373,20 @@ function useAiStatus() {
     fetch("/api/health")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d) setReady(!!d.ai); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return ready;
+}
+
+// Kan de server echte inlogaccounts aanmaken? (SUPABASE_SERVICE_ROLE_KEY gezet)
+function useAdminAuthStatus() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setReady(!!d.adminAuth); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -2511,13 +2525,15 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
    GEBRUIKERS (admin: invite / user management)
 --------------------------------------------------------------------- */
 
-function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName }) {
+function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName, onCreateAccount }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: "invite", wachtwoord: "" });
+  // Als de server accounts kan aanmaken, start de "account aanmaken"-modus meteen.
+  const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onCreateAccount ? "account" : "invite", wachtwoord: "" });
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState(false);
   const [confirmDelId, setConfirmDelId] = useState(null);
 
   const roleOptions = [
@@ -2528,18 +2544,37 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
 
   const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-  const reset = () => { setForm({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: "invite", wachtwoord: "" }); setError(""); setOpen(false); };
+  const reset = () => { setForm({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onCreateAccount ? "account" : "invite", wachtwoord: "" }); setError(""); setOpen(false); };
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return;
     if (!form.naam.trim()) return setError("Vul een naam in.");
-    if (!form.email && !form.telefoon) return setError("Vul een e-mail of telefoonnummer in.");
+    if (form.mode !== "account" && !form.email && !form.telefoon) return setError("Vul een e-mail of telefoonnummer in.");
     if (form.email && !validEmail(form.email)) return setError("Vul een geldig e-mailadres in.");
     if (users.some((u) => form.email && u.email && u.email.toLowerCase() === form.email.toLowerCase())) return setError("Er bestaat al een gebruiker met dit e-mailadres.");
-    if (form.mode === "direct" && form.wachtwoord.length < 4) return setError("Kies een wachtwoord van minstens 4 tekens.");
+
+    if (form.mode === "account") {
+      // Echt inlogaccount aanmaken via de server (service_role).
+      if (!validEmail(form.email)) return setError("Een e-mailadres is verplicht voor een inlogaccount.");
+      if (form.wachtwoord.length < 6) return setError("Kies een wachtwoord van minstens 6 tekens.");
+      setError(""); setBusy(true);
+      try {
+        await onCreateAccount({ naam: form.naam.trim(), email: form.email.trim(), wachtwoord: form.wachtwoord, rol: form.rol, telefoon: form.telefoon });
+        onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "actief", wachtwoord: null });
+        setToast(`${form.naam} kan nu inloggen met dit e-mailadres en wachtwoord.`);
+        reset();
+      } catch (e) {
+        setError(e.message || "Kon het account niet aanmaken.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
 
     if (form.mode === "direct") {
+      if (form.wachtwoord.length < 4) return setError("Kies een wachtwoord van minstens 4 tekens.");
       onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email, telefoon: form.telefoon, rol: form.rol, status: "actief", wachtwoord: form.wachtwoord });
-      setToast(`${form.naam} is toegevoegd en kan direct inloggen.`);
+      setToast(`${form.naam} is toegevoegd.`);
     } else {
       onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email, telefoon: form.telefoon, rol: form.rol, status: "uitgenodigd", wachtwoord: null });
       setToast(`Uitnodiging verstuurd naar ${form.naam} via ${form.email ? "e-mail" : "sms"} (gesimuleerd).`);
@@ -2616,27 +2651,36 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
             <div><FieldLabel>Telefoon</FieldLabel><input placeholder="+31 6 ..." value={form.telefoon} onChange={(e) => setForm({ ...form, telefoon: e.target.value })} className="tg-input" style={{ width: "100%" }} /></div>
           </div>
 
-          {/* Invite vs direct */}
+          {/* Toegang: echt account aanmaken (server) of uitnodigen */}
           <div>
             <FieldLabel>Toegang</FieldLabel>
             <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid #232B38" }}>
-              <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodiging sturen</button>
-              <button onClick={() => setForm({ ...form, mode: "direct" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "direct" ? "#1A2129" : "transparent", color: form.mode === "direct" ? "#3B82F6" : "#B4BCC9" }}>Direct actief</button>
+              {onCreateAccount ? (
+                <>
+                  <button onClick={() => setForm({ ...form, mode: "account" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "account" ? "#1A2129" : "transparent", color: form.mode === "account" ? "#3B82F6" : "#B4BCC9" }}>Inlogaccount aanmaken</button>
+                  <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodigen via code</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodiging sturen</button>
+                  <button onClick={() => setForm({ ...form, mode: "direct" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "direct" ? "#1A2129" : "transparent", color: form.mode === "direct" ? "#3B82F6" : "#B4BCC9" }}>Direct actief</button>
+                </>
+              )}
             </div>
             <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 6 }}>
-              {form.mode === "invite" ? "De gebruiker krijgt (gesimuleerd) een uitnodiging en stelt zelf een wachtwoord in." : "Je stelt nu een wachtwoord in; de gebruiker kan meteen inloggen."}
+              {form.mode === "account" ? "Je maakt nu een echt inlogaccount aan. De medewerker logt direct in met dit e-mailadres en wachtwoord." : form.mode === "invite" ? "De medewerker maakt zelf een login met de bedrijfscode (hierboven)." : "Je stelt nu een wachtwoord in; de gebruiker kan meteen inloggen."}
             </div>
           </div>
 
-          {form.mode === "direct" && (
-            <div><FieldLabel>Wachtwoord *</FieldLabel><input type="password" placeholder="Minstens 4 tekens" value={form.wachtwoord} onChange={(e) => setForm({ ...form, wachtwoord: e.target.value })} className="tg-input" style={{ width: isMobile ? "100%" : "50%" }} /></div>
+          {(form.mode === "direct" || form.mode === "account") && (
+            <div><FieldLabel>Wachtwoord *</FieldLabel><input type="password" placeholder={form.mode === "account" ? "Minstens 6 tekens" : "Minstens 4 tekens"} value={form.wachtwoord} onChange={(e) => setForm({ ...form, wachtwoord: e.target.value })} className="tg-input" style={{ width: isMobile ? "100%" : "50%" }} /></div>
           )}
 
           {error && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{error}</div>}
 
           <div className="flex gap-2">
-            <Button onClick={submit} icon={form.mode === "direct" ? ShieldCheck : Send}>{form.mode === "direct" ? "Toevoegen" : "Uitnodiging versturen"}</Button>
-            <Button variant="ghost" onClick={reset}>Annuleren</Button>
+            <Button onClick={submit} disabled={busy} icon={form.mode === "invite" ? Send : ShieldCheck}>{busy ? "Bezig..." : form.mode === "account" ? "Account aanmaken" : form.mode === "direct" ? "Toevoegen" : "Uitnodiging versturen"}</Button>
+            <Button variant="ghost" onClick={reset} disabled={busy}>Annuleren</Button>
           </div>
         </Card>
       )}
@@ -3750,6 +3794,7 @@ const NAV_GROUPS = [
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
   const aiReady = useAiStatus();
+  const canCreateAccounts = useAdminAuthStatus();
   const live = !!session;
   const liveCompanyId = live ? session.company.id : "blex";
 
@@ -4076,7 +4121,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
-                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} />}
+                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} />}
               </>

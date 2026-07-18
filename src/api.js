@@ -100,6 +100,22 @@ export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code, 
   return preview;
 }
 
+// Beheerder maakt een echt inlogaccount voor een medewerker (via de veilige
+// server-endpoint met service_role). Geeft de aangemaakte gebruiker terug.
+export async function createEmployeeAccount({ naam, email, wachtwoord, rol, telefoon }) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  if (!token) throw new Error("Niet ingelogd — log opnieuw in.");
+  const res = await fetch("/api/admin/create-user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ naam, email, wachtwoord, rol, telefoon }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Kon het account niet aanmaken.");
+  return data;
+}
+
 export async function signIn({ email, wachtwoord }) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password: wachtwoord });
   if (error) throw error;

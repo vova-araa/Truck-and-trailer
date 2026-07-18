@@ -20,3 +20,9 @@ services:
         sync: false
       - key: ANTHROPIC_MODEL
         value: claude-opus-4-8
+      # Nodig om als beheerder medewerker-accounts aan te maken (service_role,
+      # blijft server-side). SUPABASE_URL mag gelijk zijn aan VITE_SUPABASE_URL.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

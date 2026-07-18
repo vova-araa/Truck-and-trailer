@@ -21,6 +21,8 @@ kunt 'm overal draaien. Hieronder twee kant-en-klare paden.
 | `VITE_SUPABASE_ANON_KEY` | ja | build-time (frontend) |
 | `ANTHROPIC_API_KEY` | optioneel | server (AI-functies) |
 | `ANTHROPIC_MODEL` | optioneel | server, standaard `claude-opus-4-8` |
+| `SUPABASE_URL` | optioneel | server — nodig om medewerker-accounts aan te maken (mag = `VITE_SUPABASE_URL`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | optioneel | server — de **secret** key (`sb_secret_...`); nodig om als beheerder inlogaccounts aan te maken. Nooit in de browser! |
 | `AI_RATE_LIMIT` | optioneel | max AI-aanvragen/min per gebruiker (standaard 30) |
 | `PORT` | optioneel | serverpoort (platforms zetten dit zelf) |
 
