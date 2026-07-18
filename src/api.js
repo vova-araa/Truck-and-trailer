@@ -69,6 +69,27 @@ export async function listActivationCodes() {
   return data || [];
 }
 
+// ---------- SUPERADMIN-BEHEER ----------
+
+// Alle profielen (voor het bedrijven/gebruikers-overzicht).
+export async function adminListProfiles() {
+  const { data, error } = await supabase.rpc("admin_list_profiles");
+  if (error) throw error;
+  return data || [];
+}
+export async function adminDeleteUser(id) {
+  const { error } = await supabase.rpc("admin_delete_user", { p_id: id });
+  if (error) throw error;
+}
+export async function adminDeleteCompany(id) {
+  const { error } = await supabase.rpc("admin_delete_company", { p_id: id });
+  if (error) throw error;
+}
+export async function setUserSuperadmin(id, value) {
+  const { error } = await supabase.rpc("set_user_superadmin", { p_id: id, p_value: value });
+  if (error) throw error;
+}
+
 // ---------- PROBLEEMMELDINGEN (support) ----------
 
 // Een bedrijf meldt een probleem/vraag bij de platformbeheerder.

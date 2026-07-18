@@ -437,6 +437,58 @@ begin
 end $$;
 grant execute on function public.list_activation_codes() to authenticated;
 
+-- ---------- SUPERADMIN-BEHEER: bedrijven/gebruikers verwijderen, superadmins ----------
+-- Alleen de platform-superadmin. Alles draait SECURITY DEFINER; we proberen ook
+-- het echte login-account (auth.users) op te ruimen — lukt dat niet (rechten),
+-- dan verwijderen we in elk geval het profiel/bedrijf.
+
+-- Alle profielen (voor het overzicht per bedrijf).
+create or replace function public.admin_list_profiles()
+returns setof public.profiles language plpgsql stable security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  return query select * from public.profiles order by created_at;
+end $$;
+grant execute on function public.admin_list_profiles() to authenticated;
+
+-- Een gebruiker verwijderen (nooit jezelf).
+create or replace function public.admin_delete_user(p_id uuid)
+returns void language plpgsql security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  if p_id = auth.uid() then raise exception 'CANNOT_DELETE_SELF'; end if;
+  begin
+    delete from auth.users where id = p_id;   -- ruimt via cascade ook het profiel op
+  exception when others then
+    delete from public.profiles where id = p_id;  -- geen rechten op auth? dan alleen profiel
+  end;
+end $$;
+grant execute on function public.admin_delete_user(uuid) to authenticated;
+
+-- Een heel bedrijf verwijderen (nooit je eigen bedrijf). Profielen en state gaan
+-- mee via cascade; we proberen ook de login-accounts te verwijderen.
+create or replace function public.admin_delete_company(p_id uuid)
+returns void language plpgsql security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  if p_id = public.current_company_id() then raise exception 'CANNOT_DELETE_OWN'; end if;
+  begin
+    delete from auth.users u using public.profiles p where p.id = u.id and p.company_id = p_id;
+  exception when others then null; end;
+  delete from public.companies where id = p_id;  -- cascade: profielen + company_state
+end $$;
+grant execute on function public.admin_delete_company(uuid) to authenticated;
+
+-- Iemand tot superadmin maken (of het weer afnemen). Nooit op jezelf.
+create or replace function public.set_user_superadmin(p_id uuid, p_value boolean)
+returns void language plpgsql security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  if p_id = auth.uid() then raise exception 'CANNOT_CHANGE_SELF'; end if;
+  update public.profiles set is_superadmin = coalesce(p_value, false) where id = p_id;
+end $$;
+grant execute on function public.set_user_superadmin(uuid, boolean) to authenticated;
+
 -- ---------- JOIN-CODE: medewerkers laten meedoen ----------
 -- Een bedrijf deelt zijn 6-tekens code. Een medewerker maakt een account en
 -- koppelt zichzelf via de code aan het bedrijf. Beide functies draaien met

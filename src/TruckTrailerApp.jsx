@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -4029,6 +4029,147 @@ const fieldLabel = { display: "flex", flexDirection: "column", gap: 5, fontFamil
 const codeInput = { background: "#161C25", border: "1px solid #2A3340", color: "#E7ECF3", borderRadius: 9, padding: "10px 11px", fontFamily: "Inter", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" };
 
 /* ---------------------------------------------------------------------
+   BEDRIJVEN & GEBRUIKERS — platformbeheer: bedrijven/gebruikers verwijderen
+   en superadmins benoemen. Alleen zichtbaar voor de superadmin.
+--------------------------------------------------------------------- */
+function CompaniesAdminView({ live, companies = [], currentUserId, currentCompanyId, onRemoveCompany }) {
+  const [profiles, setProfiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [confirmComp, setConfirmComp] = useState(null);
+  const [confirmUser, setConfirmUser] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    if (!live) return;
+    setLoading(true); setErr("");
+    try { setProfiles(await adminListProfiles()); }
+    catch (e) { setErr(e?.message || "Kon gebruikers niet laden."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [live]);
+
+  const roleLabel = (u) => (u.is_superadmin ? "Superadmin" : u.rol === "admin" ? "Beheerder" : u.rol === "garage" ? "Werkplaats" : "Chauffeur");
+  const usersOf = (cid) => profiles.filter((p) => p.company_id === cid);
+
+  const delCompany = async (c) => {
+    setErr(""); setBusy(true);
+    try { await adminDeleteCompany(c.id); onRemoveCompany && onRemoveCompany(c.id); setConfirmComp(null); await load(); }
+    catch (e) { setErr(mapAdminErr(e)); }
+    finally { setBusy(false); }
+  };
+  const delUser = async (u) => {
+    setErr(""); setBusy(true);
+    try { await adminDeleteUser(u.id); setConfirmUser(null); await load(); }
+    catch (e) { setErr(mapAdminErr(e)); }
+    finally { setBusy(false); }
+  };
+  const toggleSuper = async (u) => {
+    setErr(""); setBusy(true);
+    try { await setUserSuperadmin(u.id, !u.is_superadmin); await load(); }
+    catch (e) { setErr(mapAdminErr(e)); }
+    finally { setBusy(false); }
+  };
+
+  if (!live) {
+    return (
+      <div className="space-y-5">
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Building2 size={22} color="#3B82F6" /> Bedrijven &amp; gebruikers</h1>
+        <Card><div style={{ padding: 16, fontFamily: "Inter", fontSize: 14, color: "#B4BCC9" }}>Werkt alleen op de live-omgeving (met Supabase gekoppeld).</div></Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Building2 size={22} color="#3B82F6" /> Bedrijven &amp; gebruikers</h1>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{companies.length} bedrijf/bedrijven · {profiles.length} gebruiker(s). Verwijder bedrijven of gebruikers, of benoem een superadmin.</p>
+      </div>
+      {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{err}</div>}
+      {loading ? (
+        <Card><div style={{ padding: 20, textAlign: "center", color: "#98A1B0", fontFamily: "Inter" }}>Laden…</div></Card>
+      ) : (
+        <div className="space-y-3">
+          {companies.map((c) => {
+            const users = usersOf(c.id);
+            const open = expanded === c.id;
+            const isOwn = c.id === currentCompanyId;
+            return (
+              <Card key={c.id} className="p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <button onClick={() => setExpanded(open ? null : c.id)} className="flex items-center gap-2 text-left" style={{ minWidth: 0 }}>
+                    <ChevronRight size={16} color="#98A1B0" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+                    <span style={{ width: 9, height: 9, borderRadius: 5, background: c.accent || "#3B82F6", flexShrink: 0 }} />
+                    <span style={{ fontFamily: "Inter", fontSize: 15, fontWeight: 700, color: "#E7ECF3" }}>{c.name}</span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ color: "#98A1B0", border: "1px solid #232B38" }}>{users.length} gebr.</span>
+                    {isOwn && <span className="text-xs px-1.5 rounded" style={{ color: "#F5B301", background: "#F5B30118", fontWeight: 600 }}>jouw bedrijf</span>}
+                  </button>
+                  {!isOwn && (confirmComp === c.id ? (
+                    <span className="flex items-center gap-2">
+                      <Button small variant="danger" onClick={() => delCompany(c)} disabled={busy}>{busy ? "Bezig…" : "Ja, bedrijf wissen"}</Button>
+                      <Button small variant="ghost" onClick={() => setConfirmComp(null)}>Nee</Button>
+                    </span>
+                  ) : (
+                    <Button small variant="ghost" icon={Trash2} onClick={() => setConfirmComp(c.id)}>Bedrijf verwijderen</Button>
+                  ))}
+                </div>
+
+                {open && (
+                  <div className="mt-3 pt-3 space-y-2" style={{ borderTop: "1px solid #1A2129" }}>
+                    {users.length === 0 ? <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>Geen gebruikers.</div> : users.map((u) => {
+                      const self = u.id === currentUserId;
+                      return (
+                        <div key={u.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg flex-wrap" style={{ background: "#161C25", border: "1px solid #232B38" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
+                              {u.is_superadmin && <Crown size={13} color="#F5B301" style={{ flexShrink: 0 }} />}
+                              <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3" }}>{u.naam}</span>
+                              <span className="text-xs px-1.5 rounded" style={{ color: u.is_superadmin ? "#F5B301" : "#3B82F6", background: (u.is_superadmin ? "#F5B301" : "#3B82F6") + "18", flexShrink: 0 }}>{roleLabel(u)}</span>
+                            </div>
+                            <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>{u.email}</div>
+                          </div>
+                          {self ? (
+                            <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#6B7585" }}>jij</span>
+                          ) : (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button onClick={() => toggleSuper(u)} disabled={busy} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ border: "1px solid #232B38", color: u.is_superadmin ? "#98A1B0" : "#F5B301", fontFamily: "Inter", fontWeight: 600 }}>
+                                <Crown size={12} /> {u.is_superadmin ? "Superadmin af" : "Maak superadmin"}
+                              </button>
+                              {confirmUser === u.id ? (
+                                <span className="flex items-center gap-1.5">
+                                  <button onClick={() => delUser(u)} disabled={busy} className="text-xs px-2 py-1 rounded-lg" style={{ background: "#F0453F", color: "#fff", fontWeight: 700 }}>{busy ? "…" : "Wissen"}</button>
+                                  <button onClick={() => setConfirmUser(null)} className="text-xs px-2 py-1" style={{ color: "#B4BCC9" }}>Nee</button>
+                                </span>
+                              ) : (
+                                <button onClick={() => setConfirmUser(u.id)} className="text-xs flex items-center gap-1" style={{ color: "#F0453F", fontWeight: 600 }}><Trash2 size={13} /> Verwijderen</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+function mapAdminErr(e) {
+  const m = (e && e.message) || String(e);
+  if (/CANNOT_DELETE_SELF/i.test(m)) return "Je kunt je eigen account niet verwijderen.";
+  if (/CANNOT_DELETE_OWN/i.test(m)) return "Je kunt je eigen bedrijf niet verwijderen.";
+  if (/CANNOT_CHANGE_SELF/i.test(m)) return "Je kunt je eigen superadmin-status niet wijzigen.";
+  if (/NOT_ALLOWED/i.test(m)) return "Alleen de platformbeheerder mag dit.";
+  return m;
+}
+
+/* ---------------------------------------------------------------------
    MELDINGEN-INBOX — de platformbeheerder ziet hier alle probleemmeldingen
    die bedrijven vanuit hun Instellingen insturen, en zet de status.
 --------------------------------------------------------------------- */
@@ -4172,6 +4313,12 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
                 style={{ background: view === "support" ? "#3B82F618" : "transparent", color: view === "support" ? "#3B82F6" : "#C4CBD6", fontSize: 14, fontWeight: view === "support" ? 600 : 500 }}>
                 <Inbox size={16} />
                 <span className="flex-1">Meldingen</span>
+              </button>
+              <button onClick={() => { setView("admincompanies"); onClose && onClose(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left"
+                style={{ background: view === "admincompanies" ? "#3B82F618" : "transparent", color: view === "admincompanies" ? "#3B82F6" : "#C4CBD6", fontSize: 14, fontWeight: view === "admincompanies" ? 600 : 500 }}>
+                <Building2 size={16} />
+                <span className="flex-1">Bedrijven &amp; gebruikers</span>
               </button>
             </div>
           </div>
@@ -5062,6 +5209,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
+                {view === "admincompanies" && isSuperAdmin && <CompaniesAdminView live={live} companies={companies} currentUserId={currentUser.id} currentCompanyId={companyId} onRemoveCompany={(id) => setCompanies((cs) => cs.filter((c) => c.id !== id))} />}
               </>
             )}
             </div>
