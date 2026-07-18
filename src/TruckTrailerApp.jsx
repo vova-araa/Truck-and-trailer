@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -2712,12 +2712,12 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
    GEBRUIKERS (admin: invite / user management)
 --------------------------------------------------------------------- */
 
-function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName, onCreateAccount, live }) {
+function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName, onCreateAccount, onInviteEmail, live }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   // Als de server accounts kan aanmaken, start de "account aanmaken"-modus meteen.
-  const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onCreateAccount ? "account" : "invite", wachtwoord: "" });
+  const [form, setForm] = useState({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onInviteEmail ? "emailinvite" : onCreateAccount ? "account" : "invite", wachtwoord: "" });
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2731,7 +2731,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
 
   const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-  const reset = () => { setForm({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onCreateAccount ? "account" : "invite", wachtwoord: "" }); setError(""); setOpen(false); };
+  const reset = () => { setForm({ naam: "", email: "", telefoon: "", rol: "chauffeur", mode: onInviteEmail ? "emailinvite" : onCreateAccount ? "account" : "invite", wachtwoord: "" }); setError(""); setOpen(false); };
 
   const submit = async () => {
     if (busy) return;
@@ -2739,6 +2739,24 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
     if (form.mode !== "account" && !form.email && !form.telefoon) return setError("Vul een e-mail of telefoonnummer in.");
     if (form.email && !validEmail(form.email)) return setError("Vul een geldig e-mailadres in.");
     if (users.some((u) => form.email && u.email && u.email.toLowerCase() === form.email.toLowerCase())) return setError("Er bestaat al een gebruiker met dit e-mailadres.");
+
+    if (form.mode === "emailinvite") {
+      // Uitnodiging per e-mail: account wordt aangemaakt en Supabase mailt een
+      // link waarmee de medewerker zelf een wachtwoord instelt.
+      if (!validEmail(form.email)) return setError("Een e-mailadres is verplicht voor een e-mailuitnodiging.");
+      setError(""); setBusy(true);
+      try {
+        await onInviteEmail({ naam: form.naam.trim(), email: form.email.trim(), rol: form.rol, telefoon: form.telefoon });
+        onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "uitgenodigd", wachtwoord: null });
+        setToast(`Uitnodiging gemaild naar ${form.email}. Zodra ze een wachtwoord kiezen, kunnen ze inloggen.`);
+        reset();
+      } catch (e) {
+        setError(e.message || "Kon de uitnodiging niet versturen.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
 
     if (form.mode === "account") {
       // Echt inlogaccount aanmaken via de server (service_role).
@@ -2844,7 +2862,11 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
              verstuurknop, wat als dubbel overkwam. */}
           {(() => {
             const opts = onCreateAccount
-              ? [{ v: "account", t: "Inlogaccount aanmaken" }, { v: "invite", t: "Uitnodigen via code" }]
+              ? [
+                  ...(onInviteEmail ? [{ v: "emailinvite", t: "Uitnodigen via e-mail" }] : []),
+                  { v: "account", t: "Inlogaccount aanmaken" },
+                  { v: "invite", t: "Uitnodigen via code" },
+                ]
               : live
                 ? [{ v: "invite", t: "Uitnodigen via code" }]
                 : [{ v: "invite", t: "Uitnodiging sturen" }, { v: "direct", t: "Direct actief" }];
@@ -2858,7 +2880,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
               ))}
             </div>
             <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 6 }}>
-              {form.mode === "account" ? "Je maakt nu een echt inlogaccount aan. De medewerker logt direct in met dit e-mailadres en wachtwoord." : form.mode === "invite" ? "De medewerker maakt zelf een login met de bedrijfscode (hierboven)." : "Je stelt nu een wachtwoord in; de gebruiker kan meteen inloggen."}
+              {form.mode === "emailinvite" ? "De medewerker krijgt een e-mail met een link om zelf een wachtwoord te kiezen en meteen in te loggen." : form.mode === "account" ? "Je maakt nu een echt inlogaccount aan. De medewerker logt direct in met dit e-mailadres en wachtwoord." : form.mode === "invite" ? "De medewerker maakt zelf een login met de bedrijfscode (hierboven)." : "Je stelt nu een wachtwoord in; de gebruiker kan meteen inloggen."}
             </div>
           </div>
             );
@@ -2871,7 +2893,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
           {error && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{error}</div>}
 
           <div className="flex gap-2">
-            <Button onClick={submit} disabled={busy} icon={form.mode === "invite" ? Send : ShieldCheck}>{busy ? "Bezig..." : form.mode === "account" ? "Account aanmaken" : form.mode === "direct" ? "Toevoegen" : "Uitnodiging versturen"}</Button>
+            <Button onClick={submit} disabled={busy} icon={form.mode === "invite" || form.mode === "emailinvite" ? Send : ShieldCheck}>{busy ? "Bezig..." : form.mode === "account" ? "Account aanmaken" : form.mode === "direct" ? "Toevoegen" : form.mode === "emailinvite" ? "E-mailuitnodiging versturen" : "Uitnodiging versturen"}</Button>
             <Button variant="ghost" onClick={reset} disabled={busy}>Annuleren</Button>
           </div>
         </Card>
@@ -5463,7 +5485,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
-                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
+                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} onInviteEmail={live && canCreateAccounts ? inviteEmployeeByEmail : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}

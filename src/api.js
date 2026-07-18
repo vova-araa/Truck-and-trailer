@@ -209,6 +209,28 @@ export async function createEmployeeAccount({ naam, email, wachtwoord, rol, tele
   return data;
 }
 
+// Beheerder nodigt een medewerker uit per e-mail: het account wordt aangemaakt
+// en Supabase mailt een link waarmee de medewerker zelf een wachtwoord instelt.
+export async function inviteEmployeeByEmail({ naam, email, rol, telefoon }) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  if (!token) throw new Error("Niet ingelogd — log opnieuw in.");
+  const res = await fetch("/api/admin/invite-user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ naam, email, rol, telefoon }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Kon de uitnodiging niet versturen.");
+  return data;
+}
+
+// Stelt een nieuw wachtwoord in voor de ingelogde (via invite/recovery) gebruiker.
+export async function setOwnPassword(nieuwWachtwoord) {
+  const { error } = await supabase.auth.updateUser({ password: nieuwWachtwoord });
+  if (error) throw error;
+}
+
 export async function signIn({ email, wachtwoord }) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password: wachtwoord });
   if (error) throw error;

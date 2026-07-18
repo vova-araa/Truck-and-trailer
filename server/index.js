@@ -110,6 +110,60 @@ app.post("/api/admin/create-user", async (req, res) => {
   }
 });
 
+// Beheerder nodigt een medewerker uit per e-mail. We maken het auth-account
+// (nog zonder wachtwoord) en Supabase stuurt een uitnodigingsmail met een link
+// waarmee de medewerker zelf een wachtwoord instelt en daarna direct inlogt.
+app.post("/api/admin/invite-user", async (req, res) => {
+  if (rateLimited("invuser:" + (req.ip || "onbekend"))) {
+    return res.status(429).json({ error: "Te veel aanvragen. Wacht even en probeer opnieuw." });
+  }
+  if (!supaAdmin) {
+    return res.status(503).json({ error: "Uitnodigen is niet geconfigureerd. Zet SUPABASE_SERVICE_ROLE_KEY (en SUPABASE_URL) op de server." });
+  }
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return res.status(401).json({ error: "Niet ingelogd." });
+
+  const { naam, email, rol, telefoon } = req.body || {};
+  const validRol = ["admin", "garage", "chauffeur"].includes(rol) ? rol : "chauffeur";
+  if (!naam || !String(naam).trim()) return res.status(400).json({ error: "Naam is verplicht." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) return res.status(400).json({ error: "Geldig e-mailadres is verplicht." });
+
+  try {
+    const { data: who, error: whoErr } = await supaAdmin.auth.getUser(token);
+    if (whoErr || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+    const { data: prof, error: profErr } = await supaAdmin
+      .from("profiles").select("company_id, rol").eq("id", who.user.id).single();
+    if (profErr || !prof) return res.status(403).json({ error: "Geen profiel gevonden." });
+    if (prof.rol !== "admin") return res.status(403).json({ error: "Alleen een beheerder mag uitnodigen." });
+
+    // Link waar de medewerker na het klikken landt (om een wachtwoord te kiezen).
+    const base = process.env.APP_URL || req.headers.origin || "";
+    const redirectTo = base ? `${base.replace(/\/+$/, "")}/?welkom=1` : undefined;
+
+    const { data: invited, error: invErr } = await supaAdmin.auth.admin.inviteUserByEmail(
+      email, { data: { naam }, ...(redirectTo ? { redirectTo } : {}) }
+    );
+    if (invErr) {
+      const dup = /registered|exists|duplicate/i.test(invErr.message || "");
+      return res.status(dup ? 409 : 400).json({ error: dup ? "Dit e-mailadres heeft al een account." : invErr.message });
+    }
+
+    // Koppel het profiel aan HETZELFDE bedrijf als de beheerder.
+    const { error: insErr } = await supaAdmin.from("profiles").insert({
+      id: invited.user.id, company_id: prof.company_id, naam: String(naam).trim(),
+      email, telefoon: telefoon || "", rol: validRol, status: "uitgenodigd",
+    });
+    if (insErr) {
+      try { await supaAdmin.auth.admin.deleteUser(invited.user.id); } catch {}
+      return res.status(500).json({ error: "Uitnodiging verstuurd maar profiel koppelen mislukte: " + insErr.message });
+    }
+    res.json({ ok: true, id: invited.user.id, rol: validRol });
+  } catch (err) {
+    console.error("invite-user fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij het uitnodigen." });
+  }
+});
+
 app.post("/api/ai", async (req, res) => {
   if (rateLimited(req.ip || "onbekend")) {
     return res.status(429).json({ error: `Te veel AI-aanvragen (max ${RL_MAX}/min). Wacht even en probeer opnieuw.` });

@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
-import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap } from "./api.js";
+import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap, setOwnPassword } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
 
 export default function Root() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null); // { user, profile, company, state }
   const [loadErr, setLoadErr] = useState("");
+  // Uitnodiging/wachtwoord-reset: de gebruiker landt via een e-maillink en moet
+  // eerst zelf een wachtwoord instellen voordat de app opent.
+  const [needPassword, setNeedPassword] = useState(false);
 
   const boot = async () => {
     setReady(false);
@@ -44,8 +47,15 @@ export default function Root() {
 
   useEffect(() => {
     if (!supabaseConfigured) { setReady(true); return; }
+    // Kwam de gebruiker via een uitnodigings- of herstel-link binnen? Dan eerst
+    // een wachtwoord laten kiezen.
+    try {
+      const h = (window.location.hash || "") + (window.location.search || "");
+      if (/type=(invite|recovery)/.test(h) || /[?&]welkom=1/.test(window.location.search || "")) setNeedPassword(true);
+    } catch {}
     boot();
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((evt, s) => {
+      if (evt === "PASSWORD_RECOVERY") setNeedPassword(true);
       if (!s) setSession(null);
     });
     return () => sub?.subscription?.unsubscribe();
@@ -53,6 +63,7 @@ export default function Root() {
 
   if (!supabaseConfigured) return <SetupNotice />;
   if (!ready) return <Splash text="Laden..." />;
+  if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); await signOut(); setSession(null); }} />;
   if (loadErr) return <Splash text={"Fout bij laden: " + loadErr} />;
   if (!session) return <AuthScreen onAuthed={boot} />;
 
@@ -63,6 +74,45 @@ export default function Root() {
     />
   );
 }
+
+function SetPasswordScreen({ onDone, onCancel }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const submit = async () => {
+    setErr("");
+    if (pw.length < 6) { setErr("Kies een wachtwoord van minstens 6 tekens."); return; }
+    if (pw !== pw2) { setErr("De wachtwoorden zijn niet gelijk."); return; }
+    setBusy(true);
+    try { await setOwnPassword(pw); onDone(); }
+    catch (e) { setErr(e.message || "Kon het wachtwoord niet instellen. Open de link uit de e-mail opnieuw."); setBusy(false); }
+  };
+  return (
+    <div style={splash}>
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 24, fontWeight: 700, color: "#E7ECF3", marginBottom: 6, textAlign: "center" }}>
+          TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER
+        </div>
+        <div style={{ color: "#B4BCC9", fontFamily: "Inter, sans-serif", fontSize: 13.5, textAlign: "center", marginBottom: 18 }}>
+          Welkom! Kies een wachtwoord om je account te activeren en direct in te loggen.
+        </div>
+        <label style={lbl}>Nieuw wachtwoord</label>
+        <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Minstens 6 tekens" style={inp} />
+        <label style={lbl}>Herhaal wachtwoord</label>
+        <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} placeholder="Nogmaals" style={inp} />
+        {err && <div style={{ color: "#F0453F", fontFamily: "Inter, sans-serif", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+        <button onClick={submit} disabled={busy} style={{ width: "100%", background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 14, border: "none", borderRadius: 10, padding: "12px 0", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+          {busy ? "Bezig..." : "Wachtwoord instellen & inloggen"}
+        </button>
+        <button onClick={onCancel} style={{ width: "100%", background: "transparent", color: "#98A1B0", fontFamily: "Inter, sans-serif", fontSize: 12.5, border: "none", marginTop: 10, cursor: "pointer" }}>Annuleren</button>
+      </div>
+    </div>
+  );
+}
+
+const lbl = { display: "block", color: "#98A1B0", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 600, marginBottom: 5, marginTop: 10 };
+const inp = { width: "100%", background: "#161C25", border: "1px solid #2A3340", borderRadius: 9, padding: "10px 12px", color: "#E7ECF3", fontFamily: "Inter, sans-serif", fontSize: 14, marginBottom: 4, boxSizing: "border-box" };
 
 function Splash({ text }) {
   return (
