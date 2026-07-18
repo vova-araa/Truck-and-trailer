@@ -255,11 +255,13 @@ function driverWorstCompliance(d, today = TODAY) {
   return driverComplianceItems(d, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
 
-const PRIO_META = {
+// Proxy zodat een onbekende/ontbrekende prioriteit nooit een crash geeft
+// (PRIO_META[onbekend] geeft dan een nette terugval i.p.v. undefined).
+const PRIO_META = new Proxy({
   laag: { label: "Laag", color: "#B4BCC9" },
   gemiddeld: { label: "Gemiddeld", color: "#FF8A00" },
   kritiek: { label: "Kritiek", color: "#F0453F" },
-};
+}, { get: (t, k) => t[k] || { label: typeof k === "string" && k ? k : "—", color: "#98A1B0" } });
 const PRIO_RANK = { kritiek: 0, gemiddeld: 1, laag: 2 };
 
 const KANBAN_COLS = [
@@ -2706,7 +2708,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
               <div className="flex items-center justify-between mt-2 pt-2 gap-2" style={{ borderTop: "1px solid #1A2129" }}>
                 <span className="text-xs px-2 py-0.5 rounded" style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12, background: "#1A2129" }}>{ROLE_LABEL[u.rol]}</span>
                 <div className="flex items-center gap-3">
-                  {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode  met  om mee te doen.` : `Herinner  eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
+                  {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode ${joinCode} met ${u.naam} om mee te doen.` : `Herinner ${u.naam} eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
                   {u.id !== currentUserId && (
                     confirmDelId === u.id
                       ? <span className="flex items-center gap-2"><button onClick={() => { onDelete(u.id); setToast(`${u.naam} verwijderd.`); setConfirmDelId(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDelId(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -2735,7 +2737,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode  met  om mee te doen.` : `Herinner  eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
+                      {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode ${joinCode} met ${u.naam} om mee te doen.` : `Herinner ${u.naam} eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
                       {u.id !== currentUserId && (
                         confirmDelId === u.id
                           ? <span className="flex items-center gap-2"><button onClick={() => { onDelete(u.id); setToast(`${u.naam} verwijderd.`); setConfirmDelId(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDelId(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -3915,6 +3917,7 @@ function SupportInboxView({ live }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [live]);
 
   const setStatus = async (t, status) => {
+    setErr("");
     setTickets((s) => s.map((x) => (x.id === t.id ? { ...x, status } : x))); // optimistisch
     try { await setSupportTicketStatus(t.id, status); } catch (e) { setErr(e?.message || "Bijwerken mislukt."); load(); }
   };
@@ -4173,6 +4176,8 @@ const MODULE_DEFS = [
 const DEFAULT_MODULES = MODULE_DEFS.reduce((a, m) => { a[m.key] = true; return a; }, {});
 // modules aan? (ontbrekende sleutel = aan, zodat bestaande bedrijven niks kwijtraken)
 const modOn = (modules, key) => !key || (modules ? modules[key] !== false : true);
+// welk scherm hoort bij welke module (voor de terugval als een module uit staat)
+const VIEW_MODULE = { planning: "planning", maintenance: "maintenance", parts: "parts", bakwagens: "bakwagens", bestelwagens: "bestelwagens", trailers: "trailers", drivers: "drivers", inspection: "inspection", costs: "costs", ai: "ai" };
 
 const NAV_GROUPS = [
   { group: "Chauffeur", roles: ["admin", "garage", "chauffeur"], items: [
@@ -4336,6 +4341,13 @@ export default function TruckGarageApp({ session, onLogout }) {
 
   // Elke paginawissel begint bovenaan.
   useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);
+  // Staat het huidige scherm bij een module die uit staat (bv. via de AI of een
+  // tegel), val dan netjes terug op het dashboard i.p.v. een leeg scherm.
+  useEffect(() => {
+    const vm = VIEW_MODULE[view];
+    const m = modules[companyId];
+    if (vm && m && m[vm] === false) setView("dashboard");
+  }, [view, companyId, modules]);
 
   const setMechanicWeek = (userId, week) => setAvailability((s) => ({ ...s, [companyId]: { ...(s[companyId] || {}), [userId]: week } }));
   const setCompanyHours = (hours) => setWorkshopHours((s) => ({ ...s, [companyId]: hours }));
@@ -4400,8 +4412,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const setAllModules = (obj) => setModules((s) => ({ ...s, [companyId]: { ...DEFAULT_MODULES, ...obj } }));
   const finishOnboarding = (chosen) => { if (chosen) setAllModules(chosen); setOnboarded((s) => ({ ...s, [companyId]: true })); };
 
-  // Eerste keer voor een bedrijf (alleen de beheerder): kies je onderdelen.
-  if (live && currentUser.rol === "admin" && !cOnboarded) {
+  // Eerste keer voor een bedrijf (alleen de eigen beheerder, niet de
+  // platform-superadmin die tussen bedrijven kijkt): kies je onderdelen.
+  if (live && currentUser.rol === "admin" && !(currentUser.superadmin || currentUser.is_superadmin) && !cOnboarded) {
     return <OnboardingWizard company={company} onDone={finishOnboarding} />;
   }
   const mechanics = cUsers.filter((u) => u.rol === "garage");

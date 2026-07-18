@@ -77,11 +77,21 @@ returns boolean language sql stable security definer as $$
   select exists(select 1 from public.profiles where id = auth.uid() and rol = 'admin')
 $$;
 
--- Je mag alleen je EIGEN profiel-rij aanmaken (id = jij). Medewerker-accounts
--- worden server-side (service_role) of via de join-code-functie aangemaakt.
+-- Je mag alleen je EIGEN profiel-rij aanmaken (id = jij) EN nooit als
+-- superadmin, EN alleen binnen je eigen bedrijf. Nieuwe gebruikers hebben nog
+-- geen bedrijf (current_company_id() = null): die worden via de SECURITY
+-- DEFINER-functies (redeem_company_code / join_company_with_code) of server-side
+-- (service_role) aangemaakt — die omzeilen RLS als tabel-eigenaar. Zonder deze
+-- inperking kon iedereen met een sessie zichzelf als admin van een ander bedrijf
+-- of zelfs als platform-superadmin invoegen. Belangrijk: de client voegt zelf
+-- NOOIT direct een profielrij toe, dus dit breekt geen enkele bestaande flow.
 drop policy if exists "insert own profile" on public.profiles;
 create policy "insert own profile" on public.profiles
-  for insert with check ( id = auth.uid() );
+  for insert with check (
+    id = auth.uid()
+    and coalesce(is_superadmin, false) = false
+    and company_id = public.current_company_id()
+  );
 
 -- Profielen bijwerken mag alleen de BEHEERDER van hetzelfde bedrijf (of de
 -- platform-superadmin). Zo kan een chauffeur/werkplaats niemand aanpassen.
@@ -102,15 +112,26 @@ create policy "admins delete profiles in my company" on public.profiles
 create or replace function public.guard_superadmin_flag()
 returns trigger language plpgsql security definer as $$
 begin
-  if (new.is_superadmin is distinct from old.is_superadmin)
-     and auth.uid() is not null
-     and not public.is_superadmin() then
-    raise exception 'Niet toegestaan: is_superadmin kan alleen door de platformbeheerder gezet worden.';
+  -- Bij wijzigen: alleen een bestaande superadmin (of service_role, waar
+  -- auth.uid() null is) mag de vlag aanpassen.
+  if tg_op = 'UPDATE' then
+    if (new.is_superadmin is distinct from old.is_superadmin)
+       and auth.uid() is not null
+       and not public.is_superadmin() then
+      raise exception 'Niet toegestaan: is_superadmin kan alleen door de platformbeheerder gezet worden.';
+    end if;
+  -- Bij invoegen: een nieuw profiel kan zichzelf nooit tot superadmin maken.
+  elsif tg_op = 'INSERT' then
+    if coalesce(new.is_superadmin, false)
+       and auth.uid() is not null
+       and not public.is_superadmin() then
+      raise exception 'Niet toegestaan: is_superadmin kan alleen door de platformbeheerder gezet worden.';
+    end if;
   end if;
   return new;
 end $$;
 drop trigger if exists trg_guard_superadmin on public.profiles;
-create trigger trg_guard_superadmin before update on public.profiles
+create trigger trg_guard_superadmin before insert or update on public.profiles
   for each row execute function public.guard_superadmin_flag();
 
 -- COMPANY STATE
@@ -190,6 +211,11 @@ declare cid uuid; clean text; rec public.activation_codes;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   clean := regexp_replace(coalesce(p_code,''), '\D', '', 'g');
+  -- Al een profiel? Dan hoort deze gebruiker niet nóg een bedrijf te starten
+  -- (voorkomt een verweesd bedrijf + een verbruikte code bij een PK-botsing).
+  if exists (select 1 from public.profiles where id = auth.uid()) then
+    raise exception 'ALREADY_HAS_PROFILE';
+  end if;
   select * into rec from public.activation_codes where code = clean and status = 'unused' for update;
   if not found then raise exception 'INVALID_CODE'; end if;
 
@@ -198,17 +224,17 @@ begin
   v_naam     := coalesce(nullif(rec.admin_naam, ''), p_naam);
   v_email    := coalesce(nullif(rec.admin_email, ''), p_email);
   v_telefoon := coalesce(nullif(rec.admin_telefoon, ''), p_telefoon);
+  -- Zonder naam/e-mail kunnen we geen beheerder koppelen: dan niets aanmaken
+  -- (geen verweesd bedrijf, code blijft bruikbaar).
+  if v_naam is null or v_email is null then raise exception 'MISSING_ADMIN'; end if;
 
   insert into public.companies (name, slug, accent)
     values (v_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
 
-  -- Hoofd-admin-profiel koppelen (alleen als naam/e-mail bekend zijn).
-  if v_naam is not null and v_email is not null then
-    insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
-      values (auth.uid(), cid, v_naam, v_email, coalesce(v_telefoon, ''), 'admin', 'actief');
-    insert into public.company_state (company_id, data) values (cid, '{}'::jsonb)
-      on conflict (company_id) do nothing;
-  end if;
+  insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
+    values (auth.uid(), cid, v_naam, v_email, coalesce(v_telefoon, ''), 'admin', 'actief');
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb)
+    on conflict (company_id) do nothing;
 
   update public.activation_codes set status = 'used', company_id = cid, used_at = now() where code = clean;
   return cid;
@@ -278,10 +304,13 @@ begin
   select id into cid from public.companies where upper(join_code) = upper(trim(code)) limit 1;
   if cid is null then raise exception 'INVALID_CODE'; end if;
   if p_rol is null or p_rol not in ('chauffeur','garage') then p_rol := 'chauffeur'; end if;
+  -- Al lid van een bedrijf? Dan niet stilzwijgend overzetten naar een ander
+  -- bedrijf (met andermans join-code). Eén account = één bedrijf.
+  if exists (select 1 from public.profiles where id = auth.uid()) then
+    raise exception 'ALREADY_HAS_PROFILE';
+  end if;
   insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
-    values (auth.uid(), cid, p_naam, p_email, coalesce(p_telefoon, ''), p_rol, 'actief')
-  on conflict (id) do update set company_id = excluded.company_id, naam = excluded.naam,
-    email = excluded.email, telefoon = excluded.telefoon, rol = excluded.rol, status = 'actief';
+    values (auth.uid(), cid, p_naam, p_email, coalesce(p_telefoon, ''), p_rol, 'actief');
   return cid;
 end $$;
 grant execute on function public.join_company_with_code(text, text, text, text, text) to authenticated;

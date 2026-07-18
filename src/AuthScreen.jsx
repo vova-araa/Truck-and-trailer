@@ -191,18 +191,28 @@ export default function AuthScreen({ onAuthed }) {
             </div>
 
             {codeInfo ? (
-              // Gegevens hangen al aan de code (ingevuld bij het abonnement) —
-              // niet nog eens vragen. Alleen een wachtwoord kiezen is nog nodig.
+              // Gegevens die al aan de code hangen (ingevuld bij het abonnement)
+              // tonen we als samenvatting; alleen wat ONTBREEKT vragen we nog na,
+              // plus een wachtwoord. Zo loopt een half-ingevulde code niet vast.
               <>
-                <div style={summaryBox}>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, marginBottom: 6 }}>
-                    <ShieldCheck size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 5, color: "#34D399" }} />
-                    Gegevens gevonden bij je abonnement
+                {(codeInfo.company_name || codeInfo.admin_naam || codeInfo.admin_email) && (
+                  <div style={summaryBox}>
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, marginBottom: 6 }}>
+                      <ShieldCheck size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 5, color: "#34D399" }} />
+                      Gegevens gevonden bij je abonnement
+                    </div>
+                    {codeInfo.company_name && <div style={summaryRow}><span style={summaryKey}>Bedrijf</span><span style={summaryVal}>{codeInfo.company_name}</span></div>}
+                    {codeInfo.admin_naam && <div style={summaryRow}><span style={summaryKey}>Beheerder</span><span style={summaryVal}>{codeInfo.admin_naam}</span></div>}
+                    {codeInfo.admin_email && <div style={summaryRow}><span style={summaryKey}>E-mail</span><span style={summaryVal}>{codeInfo.admin_email}</span></div>}
                   </div>
-                  {reg.bedrijfsnaam && <div style={summaryRow}><span style={summaryKey}>Bedrijf</span><span style={summaryVal}>{reg.bedrijfsnaam}</span></div>}
-                  {reg.naam && <div style={summaryRow}><span style={summaryKey}>Beheerder</span><span style={summaryVal}>{reg.naam}</span></div>}
-                  {reg.email && <div style={summaryRow}><span style={summaryKey}>E-mail</span><span style={summaryVal}>{reg.email}</span></div>}
-                </div>
+                )}
+                {!codeInfo.company_name && (<>
+                  <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
+                  <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
+                </>)}
+                {(!codeInfo.admin_naam || !codeInfo.admin_email) && <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>}
+                {!codeInfo.admin_naam && <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
+                {!codeInfo.admin_email && <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
                 <div style={{ ...sectionLabel, marginTop: 2 }}>Kies een wachtwoord</div>
                 <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
                 <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
@@ -238,6 +248,8 @@ export default function AuthScreen({ onAuthed }) {
 function mapError(e) {
   const m = (e && e.message) || String(e);
   if (/INVALID_CODE_FORMAT/i.test(m)) return "De abonnementscode bestaat uit 12 cijfers.";
+  if (/ALREADY_HAS_PROFILE/i.test(m)) return "Dit account is al aan een bedrijf gekoppeld. Log in, of gebruik een ander e-mailadres.";
+  if (/MISSING_ADMIN/i.test(m)) return "Er ontbreken gegevens (naam of e-mail) bij deze code. Vul ze aan en probeer opnieuw.";
   if (/INVALID_CODE/i.test(m)) return "Deze code is ongeldig of al gebruikt. Controleer je abonnementscode (of, als medewerker, je bedrijfscode).";
   if (/EMAIL_CONFIRM_REQUIRED/i.test(m)) return "Je account is aangemaakt — bevestig eerst je e-mail (check je inbox) en log daarna in.";
   if (/already registered|already exists|duplicate/i.test(m)) return "Dit e-mailadres of bedrijf bestaat al.";
