@@ -1682,9 +1682,10 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   );
 }
 
-function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete }) {
+function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete, aiReady, inspectionOn = true }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
+  const [showInsp, setShowInsp] = useState(false);
   const [form, setForm] = useState(vehicle);
   const [note, setNote] = useState(vehicle.notitie || "");
   const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
@@ -1926,11 +1927,28 @@ ${JSON.stringify(ctx)}`;
         );
       })()}
 
+      {/* 360° inspectie — nu direct in het voertuigdetail (geen apart menu meer) */}
+      {inspectionOn && (
+        <Card className="p-5">
+          <button onClick={() => setShowInsp((v) => !v)} className="w-full flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2" style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>
+              <span className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#22D3B018" }}><ScanEye size={15} color="#22D3B0" /></span>
+              360° inspectie
+            </span>
+            <ChevronDown size={18} color="#B4BCC9" style={{ transform: showInsp ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+          </button>
+          {showInsp && (
+            <div className="mt-4">
+              <InspectionView vehicles={[vehicle]} reports={reports} onUpdate={onUpdate} aiReady={aiReady} lockVehicleId={vehicle.kenteken} embedded />
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* Snel inplannen */}
       <Card className="p-5">
         <div className="flex items-center justify-between mb-1">
           <Eyebrow>Werkplaats inplannen</Eyebrow>
-          {onGoInspection && <button onClick={onGoInspection} style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12, fontWeight: 600 }}>360° inspectie</button>}
         </div>
         {!sched.open ? (
           <Button icon={Plus} onClick={() => setSched({ ...sched, open: true })}>Afspraak inplannen</Button>
@@ -3410,9 +3428,9 @@ function VehicleDiagram({ angleId }) {
 const INSPECT_SEV = { kritiek: { rank: 3, color: "#F0453F", label: "Kritiek" }, gemiddeld: { rank: 2, color: "#FF8A00", label: "Aandacht" }, laag: { rank: 1, color: "#84CC16", label: "Licht" }, geen: { rank: 0, color: "#22D3B0", label: "In orde" } };
 const sevFromReport = (r) => (r.prioriteit === "kritiek" ? "kritiek" : r.prioriteit === "gemiddeld" ? "gemiddeld" : "laag");
 
-function InspectionView({ vehicles, reports, onUpdate, aiReady }) {
+function InspectionView({ vehicles, reports, onUpdate, aiReady, lockVehicleId = null, embedded = false }) {
   const isMobile = useIsMobile();
-  const [vehicleId, setVehicleId] = useState(vehicles[0]?.kenteken || "");
+  const [vehicleId, setVehicleId] = useState(lockVehicleId || vehicles[0]?.kenteken || "");
   const [angleIdx, setAngleIdx] = useState(0);
   const [activeZone, setActiveZone] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3481,15 +3499,19 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
-        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Loop de aanzichten langs, tik een onderdeel aan en laat de AI een foto op schade beoordelen.</p>
-      </div>
+      {!embedded && (
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Loop de aanzichten langs, tik een onderdeel aan en laat de AI een foto op schade beoordelen.</p>
+        </div>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
-        <select className="tg-input" style={{ maxWidth: 320 }} value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); setResult(null); }}>
-          {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
-        </select>
+        {!lockVehicleId && (
+          <select className="tg-input" style={{ maxWidth: 320 }} value={vehicleId} onChange={(e) => { setVehicleId(e.target.value); setActiveZone(null); setResult(null); }}>
+            {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} — {v.merk}</option>)}
+          </select>
+        )}
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: `${INSPECT_SEV[overallWorst].color}18`, border: `1px solid ${INSPECT_SEV[overallWorst].color}44` }}>
           <span className="rounded-full" style={{ width: 8, height: 8, background: INSPECT_SEV[overallWorst].color }} />
           <span style={{ fontFamily: "Inter", fontSize: 12, fontWeight: 600, color: INSPECT_SEV[overallWorst].color }}>{INSPECT_SEV[overallWorst].label}</span>
@@ -4670,7 +4692,6 @@ const NAV_GROUPS = [
     { id: "bestelwagens", label: "Bestelwagens", icon: Truck, module: "bestelwagens" },
     { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
     { id: "drivers", label: "Chauffeurs", icon: Contact, module: "drivers" },
-    { id: "inspection", label: "360° Inspectie", icon: ScanEye, module: "inspection" },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
     { id: "costs", label: "Kosten", icon: Euro, roles: ["admin"], module: "costs" },
@@ -5387,7 +5408,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
-                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} onGoInspection={() => { setSelectedVehicleId(null); setView("inspection"); }} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} />;
+                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} aiReady={aiReady} inspectionOn={modOn(cModules, "inspection")} />;
                 })()}
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
