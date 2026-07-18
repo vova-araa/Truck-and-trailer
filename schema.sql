@@ -184,6 +184,8 @@ grant execute on function public.load_company_state() to authenticated;
 -- laden niet kende (dus nieuw sinds dan), blijven behouden. Verwijderen werkt nog
 -- steeds: een rij die de client wél kende (base) maar niet meestuurt, verdwijnt.
 -- Zo blijft financiële data ook voor de werkplaats bewaard (die kreeg 'm niet).
+-- Oudere 1-argument versie opruimen (voorkomt overload-conflict).
+drop function if exists public.save_company_state(jsonb);
 create or replace function public.save_company_state(
   p_data jsonb, p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}'
 ) returns void language plpgsql security definer as $$
@@ -378,6 +380,9 @@ grant execute on function public.redeem_company_code(text, text, text, text, tex
 -- Jij kunt vanuit je eigen account codes aanmaken en bekijken. Codes die JIJ
 -- aanmaakt zijn gratis (paid = false); voor de rest geldt paid = true.
 
+-- Oudere versie zonder p_period_months opruimen, anders bestaan er twee
+-- overloads en weet PostgREST niet welke te kiezen ("could not choose...").
+drop function if exists public.create_activation_code(text, text, text, text, text, boolean);
 create or replace function public.create_activation_code(
   p_company_name text default '', p_admin_naam text default '',
   p_admin_email text default '', p_admin_telefoon text default '',
