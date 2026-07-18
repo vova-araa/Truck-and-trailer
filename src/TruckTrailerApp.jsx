@@ -2931,15 +2931,16 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
           </div>
           <div className="flex flex-wrap gap-2">
             {onLoadSample && <Button icon={Sparkles} onClick={() => { onLoadSample(); setToast("Voorbeelddata geladen."); }}>Voorbeelddata laden</Button>}
-            {onClearData && hasData && (confirmClear ? (
+            {onClearData && (confirmClear ? (
               <span className="flex items-center gap-2">
-                <Button variant="danger" onClick={() => { onClearData(); setConfirmClear(false); setToast("Alle data gewist."); }}>Ja, alles wissen</Button>
+                <Button variant="danger" onClick={() => { onClearData(); setConfirmClear(false); setToast("Voorbeelddata / alle data gewist."); }}>Ja, alles wissen</Button>
                 <Button variant="ghost" onClick={() => setConfirmClear(false)}>Annuleren</Button>
               </span>
             ) : (
-              <Button variant="ghost" icon={Trash2} onClick={() => setConfirmClear(true)}>Alle data wissen</Button>
+              <Button variant="ghost" icon={Trash2} onClick={() => setConfirmClear(true)} disabled={!hasData}>Voorbeelddata / alle data wissen</Button>
             ))}
           </div>
+          {!hasData && <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#6B7585", marginTop: 8 }}>Er is nu geen data om te wissen.</div>}
         </Card>
       )}
 

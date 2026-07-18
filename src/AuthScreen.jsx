@@ -142,6 +142,7 @@ export default function AuthScreen({ onAuthed }) {
         <div style={toggleRow}>
           <button style={tab(mode === "login")} onClick={() => { setMode("login"); setErr(""); setNotice(""); }}>Inloggen</button>
           <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); setRegStep(0); }}>Bedrijf activeren</button>
+          <button style={tab(mode === "join")} onClick={() => { setMode("join"); setErr(""); setNotice(""); }}>Bedrijfscode</button>
         </div>
 
         {mode === "join" ? (
@@ -164,7 +165,6 @@ export default function AuthScreen({ onAuthed }) {
               onChange={(e) => setJoin({ ...join, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doJoin()} />
             {err && <div style={errStyle}>{err}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doJoin}><KeyRound size={16} /> {busy ? "Bezig..." : "Meedoen"}</button>
-            <button style={linkBtn} disabled={busy} onClick={() => { setMode("login"); setErr(""); }}>← Terug naar inloggen</button>
           </div>
         ) : mode === "login" ? (
           <div style={{ display: "grid", gap: 10 }}>
@@ -175,12 +175,6 @@ export default function AuthScreen({ onAuthed }) {
             {notice && <div style={noticeStyle}>{notice}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doLogin}><LogIn size={16} /> {busy ? "Bezig..." : "Inloggen"}</button>
             <button style={linkBtn} disabled={busy} onClick={doReset}>Wachtwoord vergeten?</button>
-            <div style={{ marginTop: 4, paddingTop: 12, borderTop: "1px solid #1A2129", textAlign: "center" }}>
-              <button style={linkBtn} disabled={busy} onClick={() => { setMode("join"); setErr(""); setNotice(""); }}>
-                <KeyRound size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 4 }} />
-                Uitgenodigd met een bedrijfscode? Meedoen →
-              </button>
-            </div>
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
@@ -252,7 +246,7 @@ function mapError(e) {
 
 const wrap = { minHeight: "100vh", background: "#0A0E14", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, sans-serif" };
 const toggleRow = { display: "flex", border: "1px solid #232B38", borderRadius: 12, overflow: "hidden", margin: "16px 0 20px" };
-const tab = (active) => ({ flex: 1, padding: "10px 0", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", border: "none", background: active ? "#1A2129" : "transparent", color: active ? "#3B82F6" : "#98A1B0" });
+const tab = (active) => ({ flex: 1, padding: "9px 4px", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 11.5, lineHeight: 1.15, textAlign: "center", cursor: "pointer", border: "none", background: active ? "#1A2129" : "transparent", color: active ? "#3B82F6" : "#98A1B0" });
 const input = { background: "#161C25", border: "1px solid #2A3340", color: "#E7ECF3", borderRadius: 9, padding: "11px 12px", fontFamily: "Inter, sans-serif", fontSize: 15, outline: "none", width: "100%", boxSizing: "border-box" };
 const primaryBtn = { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 10, border: "none", background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 14, cursor: "pointer" };
 const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 600, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5 };
