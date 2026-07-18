@@ -4305,67 +4305,199 @@ const TUTORIALS = {
     title: "Welkom, chauffeur!",
     intro: "Zo maak je met je telefoon snel een melding als er iets is met je wagen.",
     steps: [
-      { icon: AlertTriangle, title: "Melding maken", text: "Tik op 'Melding maken', kies je voertuig en beschrijf kort wat er aan de hand is." },
-      { icon: Camera, title: "Foto erbij", text: "Maak een foto van het probleem. De app kan de schade zelfs automatisch herkennen." },
-      { icon: Mic, title: "Inspreken kan ook", text: "Geen zin om te typen? Spreek je melding gewoon in — de app zet het om in tekst." },
-      { icon: CheckCircle2, title: "Status volgen", text: "Onder 'Jouw meldingen' zie je of de werkplaats ermee bezig is: nieuw → in behandeling → klaar." },
+      { icon: AlertTriangle, accent: "#3B82F6", visual: "melding", title: "Melding maken", text: "Tik op 'Melding maken', kies je voertuig en beschrijf kort wat er aan de hand is." },
+      { icon: Camera, accent: "#A855F7", visual: "foto", title: "Foto erbij", text: "Maak een foto van het probleem. De app kan de schade zelfs automatisch herkennen." },
+      { icon: Mic, accent: "#22D3B0", visual: "spraak", title: "Inspreken kan ook", text: "Geen zin om te typen? Spreek je melding gewoon in — de app zet het om in tekst." },
+      { icon: CheckCircle2, accent: "#34D399", visual: "status", title: "Status volgen", text: "Onder 'Jouw meldingen' zie je of de werkplaats ermee bezig is: nieuw → in behandeling → klaar." },
     ],
   },
   garage: {
     title: "Welkom bij de werkplaats!",
     intro: "Hier houd je de werkvloer en de planning bij.",
     steps: [
-      { icon: KanbanSquare, title: "Werkvloer", text: "Binnengekomen meldingen zie je als kaarten. Verplaats ze van Nieuw → In behandeling → Klaar." },
-      { icon: Calendar, title: "Inplannen", text: "Plan een klus in de agenda: kies bovenaan een openstaande melding, daarna dag, tijd en monteur." },
-      { icon: Truck, title: "Vloot & onderhoud", text: "Bekijk voertuigen en trailers en houd APK- en onderhoudstermijnen in de gaten." },
-      { icon: Package, title: "Voorraad", text: "Houd je onderdelen bij; bij een klus boek je gebruikte onderdelen meteen af." },
+      { icon: KanbanSquare, accent: "#3B82F6", visual: "kanban", title: "Werkvloer", text: "Binnengekomen meldingen zie je als kaarten. Verplaats ze van Nieuw → In behandeling → Klaar." },
+      { icon: Calendar, accent: "#F59E0B", visual: "planning", title: "Inplannen", text: "Plan een klus in de agenda: kies bovenaan een openstaande melding, daarna dag, tijd en monteur." },
+      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot & onderhoud", text: "Bekijk voertuigen en trailers en houd APK- en onderhoudstermijnen in de gaten." },
+      { icon: Package, accent: "#A855F7", visual: "voorraad", title: "Voorraad", text: "Houd je onderdelen bij; bij een klus boek je gebruikte onderdelen meteen af." },
     ],
   },
   admin: {
     title: "Welkom, beheerder!",
     intro: "Jij beheert het hele bedrijf. Dit zijn de belangrijkste plekken:",
     steps: [
-      { icon: LayoutDashboard, title: "Dashboard", text: "Begint met de planning van vandaag en de punten die aandacht nodig hebben." },
-      { icon: Truck, title: "Vloot & chauffeurs", text: "Beheer voertuigen, trailers en de papieren van chauffeurs (rijbewijs, Code 95, APK)." },
-      { icon: Euro, title: "Kosten", text: "Zie uitgaven per voertuig en categorie, en exporteer naar CSV." },
-      { icon: Users, title: "Gebruikers", text: "Nodig chauffeurs uit met de bedrijfscode. Werkplaats- en beheerder-accounts maak je hier aan." },
-      { icon: SlidersHorizontal, title: "Instellingen", text: "Zet onderdelen aan/uit die je wel of niet gebruikt, en meld problemen rechtstreeks bij ons." },
+      { icon: LayoutDashboard, accent: "#3B82F6", visual: "dashboard", title: "Dashboard", text: "Begint met de planning van vandaag en de punten die aandacht nodig hebben." },
+      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot & chauffeurs", text: "Beheer voertuigen, trailers en de papieren van chauffeurs (rijbewijs, Code 95, APK)." },
+      { icon: Euro, accent: "#F59E0B", visual: "kosten", title: "Kosten", text: "Zie uitgaven per voertuig en categorie, en exporteer naar CSV." },
+      { icon: Users, accent: "#A855F7", visual: "gebruikers", title: "Gebruikers", text: "Nodig chauffeurs uit met de bedrijfscode. Werkplaats- en beheerder-accounts maak je hier aan." },
+      { icon: SlidersHorizontal, accent: "#EC4899", visual: "instellingen", title: "Instellingen", text: "Zet onderdelen aan/uit die je wel of niet gebruikt, en meld problemen rechtstreeks bij ons." },
     ],
   },
 };
+
+// Kleine, nagemaakte "screenshots" per stap — zo ziet de gebruiker meteen
+// grafisch waar het over gaat, zonder echte schermafbeeldingen.
+function TutorialVisual({ type, accent }) {
+  const card = { background: "#0E131A", border: "1px solid #232B38", borderRadius: 10 };
+  const chip = (txt) => <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700, color: "#E7ECF3", background: "#0E131A", border: "1px solid #232B38", borderRadius: 6, padding: "3px 8px" }}>{txt}</span>;
+  const pill = (txt, c) => <span style={{ fontFamily: "Inter", fontSize: 10.5, fontWeight: 600, color: c, border: `1px solid ${c}66`, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{txt}</span>;
+  const line = (w) => <span style={{ display: "block", height: 8, borderRadius: 4, background: "#232B38", width: w }} />;
+
+  let inner = null;
+  if (type === "melding") inner = (
+    <div style={{ width: "100%", maxWidth: 250, display: "grid", gap: 10, ...card, padding: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{chip("GD-42-TR")}{pill("Kritiek", "#F0453F")}</div>
+      {line("100%")}{line("65%")}
+      <span style={{ marginTop: 2, alignSelf: "flex-start", fontFamily: "Inter", fontSize: 11.5, fontWeight: 600, color: "#fff", background: accent, borderRadius: 8, padding: "6px 14px" }}>Versturen</span>
+    </div>
+  );
+  else if (type === "foto") inner = (
+    <div style={{ width: "100%", maxWidth: 230, position: "relative" }}>
+      <div style={{ height: 130, borderRadius: 12, background: `linear-gradient(135deg, ${accent}44, #0E131A)`, border: "1px solid #232B38", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Camera size={40} color={accent} />
+      </div>
+      <span style={{ position: "absolute", bottom: 8, left: 8, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "Inter", fontSize: 10.5, fontWeight: 600, color: "#0A0E14", background: "#34D399", borderRadius: 999, padding: "3px 9px" }}><Check size={12} /> Schade herkend</span>
+    </div>
+  );
+  else if (type === "spraak") inner = (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+      <div style={{ width: 66, height: 66, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 8px ${accent}22` }}><Mic size={28} color="#fff" /></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, height: 34 }}>
+        {[12, 22, 34, 18, 28, 14, 26, 20, 10].map((h, i) => <span key={i} style={{ width: 4, height: h, borderRadius: 2, background: accent, opacity: 0.45 + h / 70 }} />)}
+      </div>
+    </div>
+  );
+  else if (type === "status") inner = (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 7 }}>
+      {pill("Nieuw", "#B4BCC9")}<ChevronRight size={15} color="#6B7585" />{pill("In behandeling", "#F59E0B")}<ChevronRight size={15} color="#6B7585" />{pill("Klaar", "#34D399")}
+    </div>
+  );
+  else if (type === "kanban") inner = (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, width: "100%", maxWidth: 290 }}>
+      {[["Nieuw", "#B4BCC9", 1], ["Bezig", accent, 2], ["Klaar", "#34D399", 1]].map(([t, c, n], i) => (
+        <div key={i} style={{ ...card, padding: 8, minHeight: 92 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}><span style={{ width: 6, height: 6, borderRadius: 3, background: c }} /><span style={{ fontFamily: "Inter", fontSize: 9, color: "#98A1B0", fontWeight: 700 }}>{t}</span></div>
+          {Array.from({ length: n }).map((_, j) => <div key={j} style={{ height: 22, borderRadius: 6, background: "#161C25", border: `1px solid ${i === 1 ? accent + "55" : "#232B38"}`, marginBottom: 5 }} />)}
+        </div>
+      ))}
+    </div>
+  );
+  else if (type === "planning") inner = (
+    <div style={{ width: "100%", maxWidth: 210, ...card, padding: 12 }}>
+      {["08:00", "09:00", "10:00", "11:00"].map((t, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, height: 30 }}>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#6B7585", width: 34 }}>{t}</span>
+          {i === 1 ? <span style={{ flex: 1, height: 20, borderRadius: 6, background: accent, display: "flex", alignItems: "center", paddingLeft: 8, fontFamily: "Inter", fontSize: 9.5, fontWeight: 700, color: "#0A0E14" }}>Grote beurt</span> : <span style={{ flex: 1, height: 1, background: "#1A2129" }} />}
+        </div>
+      ))}
+    </div>
+  );
+  else if (type === "vloot") inner = (
+    <div style={{ display: "grid", gap: 8, width: "100%", maxWidth: 240 }}>
+      {[["DAF XF", "AJ-12-BT", "#34D399"], ["Volvo FH", "GK-88-PL", "#F59E0B"]].map(([m, k, c], i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", ...card, padding: "8px 10px" }}>
+          <div><div style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, color: "#E7ECF3" }}>{m}</div><div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#98A1B0" }}>{k}</div></div>
+          <span style={{ width: 11, height: 11, borderRadius: 6, background: c, boxShadow: `0 0 0 3px ${c}22` }} />
+        </div>
+      ))}
+    </div>
+  );
+  else if (type === "voorraad") inner = (
+    <div style={{ display: "grid", gap: 8, width: "100%", maxWidth: 240 }}>
+      {[["Remblokken", 12, "#34D399"], ["Oliefilter", 3, "#F59E0B"], ["Luchtfilter", 8, "#34D399"]].map(([n, q, c], i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", ...card, padding: "8px 10px" }}>
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3" }}>{n}</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700, color: c, background: c + "1A", borderRadius: 6, padding: "2px 9px" }}>{q}</span>
+        </div>
+      ))}
+    </div>
+  );
+  else if (type === "dashboard") inner = (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, width: "100%", maxWidth: 290 }}>
+      {[["Vandaag", "4", accent], ["APK bijna", "2", "#F59E0B"], ["Open", "7", "#3B82F6"]].map(([l, v, c], i) => (
+        <div key={i} style={{ ...card, padding: 10, textAlign: "center" }}>
+          <div style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
+          <div style={{ fontFamily: "Inter", fontSize: 9, color: "#98A1B0", marginTop: 4 }}>{l}</div>
+        </div>
+      ))}
+    </div>
+  );
+  else if (type === "kosten") inner = (
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 10, height: 120 }}>
+      {[45, 72, 55, 96, 63].map((h, i) => <span key={i} style={{ width: 22, height: h, borderRadius: "5px 5px 0 0", background: i === 3 ? accent : accent + "55" }} />)}
+    </div>
+  );
+  else if (type === "gebruikers") inner = (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+      <div style={{ display: "flex" }}>
+        {[["#3B82F6", "A"], ["#22D3B0", "B"], ["#A855F7", "C"]].map(([c, l], i) => <span key={i} style={{ width: 38, height: 38, borderRadius: "50%", background: c + "33", border: `2px solid ${c}`, marginLeft: i ? -10 : 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter", fontWeight: 700, fontSize: 13, color: c }}>{l}</span>)}
+      </div>
+      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, letterSpacing: 4, color: "#E7ECF3", background: "#0E131A", border: "1px solid #232B38", borderRadius: 8, padding: "6px 14px" }}>7K2Q90</span>
+    </div>
+  );
+  else if (type === "instellingen") inner = (
+    <div style={{ display: "grid", gap: 12, width: "100%", maxWidth: 220 }}>
+      {[["Planning", true], ["Voorraad", true], ["Kosten", false]].map(([n, on], i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3" }}>{n}</span>
+          <span style={{ width: 34, height: 20, borderRadius: 999, background: on ? accent : "#2A3340", padding: 2, display: "flex" }}><span style={{ width: 16, height: 16, borderRadius: "50%", background: "#fff", transform: on ? "translateX(14px)" : "none", transition: "transform .2s" }} /></span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ background: `radial-gradient(120% 100% at 50% 0%, ${accent}1F, #12171F 70%)`, border: `1px solid ${accent}44`, borderRadius: 20, padding: 20, minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {inner}
+    </div>
+  );
+}
 
 function RoleTutorial({ role, onDone }) {
   const t = TUTORIALS[role] || TUTORIALS.admin;
   const [i, setI] = useState(0);
   const step = t.steps[i];
   const last = i === t.steps.length - 1;
+  const a = step.accent;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 85, background: "#0A0E14", overflowY: "auto", padding: 16, display: "flex", flexDirection: "column" }}>
-      <div style={{ maxWidth: 480, margin: "0 auto", width: "100%", paddingTop: 22, paddingBottom: 30, flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ textAlign: "center", marginBottom: 6 }}>
-          <span style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</span>
+      <style>{`@keyframes tut-in{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
+      <div style={{ maxWidth: 460, margin: "0 auto", width: "100%", paddingTop: 18, paddingBottom: 26, flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <span style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</span>
         </div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3", textAlign: "center", marginTop: 6 }}>{t.title}</h1>
-        <p style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", textAlign: "center", lineHeight: 1.5, margin: "6px auto 10px", maxWidth: 400 }}>{t.intro}</p>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", gap: 16, minHeight: 220 }}>
-          <div style={{ width: 76, height: 76, borderRadius: 20, background: "#12233E", border: "1px solid #3B82F6", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <step.icon size={34} color="#3B82F6" />
+        {/* Voortgangsbalk: één segment per stap */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
+          {t.steps.map((_, idx) => (
+            <span key={idx} onClick={() => setI(idx)} style={{ flex: 1, height: 5, borderRadius: 3, cursor: "pointer", background: idx <= i ? a : "#232B38", transition: "background .3s" }} />
+          ))}
+        </div>
+
+        <div key={i} style={{ animation: "tut-in .35s ease both" }}>
+          <TutorialVisual type={step.visual} accent={a} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20 }}>
+            <span style={{ width: 42, height: 42, borderRadius: 12, background: `${a}22`, border: `1px solid ${a}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <step.icon size={20} color={a} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: a, textTransform: "uppercase", letterSpacing: 0.6 }}>Stap {i + 1} van {t.steps.length}</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{step.title}</div>
+            </div>
           </div>
-          <div>
-            <div style={{ fontFamily: "Oswald", fontSize: 21, fontWeight: 600, color: "#E7ECF3" }}>{step.title}</div>
-            <p style={{ fontFamily: "Inter", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.55, marginTop: 8, maxWidth: 360 }}>{step.text}</p>
+          <p style={{ fontFamily: "Inter", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.55, marginTop: 12 }}>{step.text}</p>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 22 }}>
+          <button onClick={() => (last ? onDone() : setI(i + 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 13, borderRadius: 12, border: "none", background: `linear-gradient(180deg, ${a}, ${a}CC)`, color: "#fff", fontFamily: "Inter", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
+            {last ? "Aan de slag →" : "Volgende"}
+          </button>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <button onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0} style={{ fontFamily: "Inter", fontSize: 12.5, color: i === 0 ? "#3A4250" : "#98A1B0", padding: 6, background: "none", border: "none", cursor: i === 0 ? "default" : "pointer" }}>← Terug</button>
+            <button onClick={onDone} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6, background: "none", border: "none", cursor: "pointer" }}>Overslaan</button>
           </div>
-          <div style={{ fontFamily: "Inter", fontSize: 12, color: "#6B7585" }}>Stap {i + 1} van {t.steps.length}</div>
-        </div>
-
-        <div className="flex items-center justify-center gap-2" style={{ margin: "18px 0" }}>
-          {t.steps.map((_, idx) => <span key={idx} onClick={() => setI(idx)} style={{ width: idx === i ? 22 : 8, height: 8, borderRadius: 4, background: idx === i ? "#3B82F6" : "#2A3340", cursor: "pointer", transition: "width .2s" }} />)}
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Button onClick={() => (last ? onDone() : setI(i + 1))}>{last ? "Aan de slag →" : "Volgende"}</Button>
-          {!last && <button onClick={onDone} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6 }}>Overslaan</button>}
         </div>
       </div>
     </div>
