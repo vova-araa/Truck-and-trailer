@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin } from "./api.js";
 
@@ -208,12 +208,22 @@ function daysUntil(dateStr, today = TODAY) {
   return Math.round((d - t) / 86400000);
 }
 
-// status: 'verlopen' (past) | 'binnenkort' (<=30d) | 'ok' | 'onbekend'
-function complianceStatus(dateStr, today = TODAY) {
+// Waarschuwingstermijn (in dagen) waarbinnen iets als "verloopt binnenkort"
+// telt. De beheerder stelt dit in maanden in bij Instellingen; we bewaren het
+// hier als module-variabele zodat alle bestaande aanroepen het automatisch
+// oppikken zonder dat we overal een extra parameter hoeven mee te geven.
+export let WARN_DAYS = 30;
+export function setWarnMonths(m) {
+  const months = Number(m);
+  WARN_DAYS = Number.isFinite(months) && months > 0 ? Math.round(months * 30) : 30;
+}
+
+// status: 'verlopen' (past) | 'binnenkort' (<=WARN_DAYS) | 'ok' | 'onbekend'
+function complianceStatus(dateStr, today = TODAY, warnDays = WARN_DAYS) {
   const d = daysUntil(dateStr, today);
   if (d === null) return "onbekend";
   if (d < 0) return "verlopen";
-  if (d <= 30) return "binnenkort";
+  if (d <= warnDays) return "binnenkort";
   return "ok";
 }
 
@@ -643,6 +653,7 @@ function LoginScreen({ allUsers, companies, onLogin, onRegister }) {
 // voor opgeslagen paden; werkt ook met directe objectURLs (demo).
 function ReportMedia({ media }) {
   const [urls, setUrls] = useState([]);
+  const [lightbox, setLightbox] = useState(null); // { url, type }
   useEffect(() => {
     let alive = true;
     if (!media || !media.length) { setUrls([]); return; }
@@ -651,15 +662,23 @@ function ReportMedia({ media }) {
   }, [media]);
   if (!urls.length) return null;
   return (
-    <div className="flex gap-2 flex-wrap mb-2">
-      {urls.map((m, i) => m.type === "video" ? (
-        <video key={i} src={m.url} controls playsInline style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", background: "#000" }} />
-      ) : (
-        <a key={i} href={m.url} target="_blank" rel="noreferrer" title="Foto openen">
-          <img src={m.url} alt="foto bij melding" loading="lazy" style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", display: "block" }} />
-        </a>
-      ))}
-    </div>
+    <>
+      <div className="flex gap-2 flex-wrap mb-2">
+        {urls.map((m, i) => m.type === "video" ? (
+          <video key={i} src={m.url} controls playsInline style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", background: "#000" }} />
+        ) : (
+          <button key={i} type="button" onClick={() => setLightbox(m)} title="Foto openen" style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
+            <img src={m.url} alt="foto bij melding" loading="lazy" style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", display: "block" }} />
+          </button>
+        ))}
+      </div>
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(5,8,12,0.92)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <button onClick={() => setLightbox(null)} aria-label="Sluiten" style={{ position: "absolute", top: 16, right: 16, background: "#12171F", border: "1px solid #232B38", borderRadius: 999, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center" }}><X size={20} color="#E7ECF3" /></button>
+          <img src={lightbox.url} alt="foto bij melding" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10 }} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2292,21 +2311,34 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
   const [tarief, setTarief] = useState("65");
   const [lines, setLines] = useState([]);
   const [pick, setPick] = useState("");
+  const [customNaam, setCustomNaam] = useState("");
+  const [customPrijs, setCustomPrijs] = useState("");
   const [extraOms, setExtraOms] = useState("");
   const [extraBedrag, setExtraBedrag] = useState("");
   const [notities, setNotities] = useState(report?.omschrijving || "");
   const [categorie, setCategorie] = useState("reparatie");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [saved, setSaved] = useState(false);
   const canvasRef = useRef(null);
   const drawing = useRef(false);
   const signedRef = useRef(false);
 
+  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+
   const addLine = () => {
     const part = parts.find((p) => p.id === pick);
     if (!part) return;
-    setLines((l) => [...l, { key: part.id + "_" + l.length, partId: part.id, naam: part.naam, prijs: Number(part.prijs) || 0, aantal: 1 }]);
+    setLines((l) => [...l, { key: part.id + "_" + Date.now(), partId: part.id, naam: part.naam, prijs: Number(part.prijs) || 0, aantal: 1 }]);
     setPick("");
+  };
+  // Los onderdeel dat niet in de voorraad staat (naam + prijs zelf invullen).
+  const addCustomLine = () => {
+    const naam = customNaam.trim();
+    if (!naam) return;
+    setLines((l) => [...l, { key: "custom_" + Date.now(), partId: null, naam, prijs: Number(customPrijs) || 0, aantal: 1 }]);
+    setCustomNaam(""); setCustomPrijs("");
   };
   const setAantal = (key, n) => setLines((l) => l.map((x) => (x.key === key ? { ...x, aantal: Math.max(1, Number(n) || 1) } : x)));
   const removeLine = (key) => setLines((l) => l.filter((x) => x.key !== key));
@@ -2361,7 +2393,11 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
         try { doc.addImage(canvasRef.current.toDataURL("image/png"), "PNG", M, y, 60, 22); } catch {}
       }
       doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text("Handtekening klant", M, y + 27);
-      doc.save(`werkbon-${(report?.vehicle || "voertuig").replace(/[^A-Za-z0-9-]/g, "")}-${TODAY}.pdf`);
+      // Niet automatisch downloaden: we maken een download-link en tonen een
+      // knop, zodat de gebruiker zelf kiest wanneer/of hij de PDF bewaart.
+      const blob = doc.output("blob");
+      setPdfUrl(URL.createObjectURL(blob));
+      setSaved(true);
 
       // Gebruikte onderdelen van de voorraad afboeken.
       if (onUsePart) lines.forEach((l) => { if (l.partId) onUsePart(l.partId, l.aantal); });
@@ -2404,6 +2440,12 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
               </select>
               <Button small onClick={addLine} disabled={!pick}>Toevoegen</Button>
             </div>
+            {/* Los onderdeel dat niet in de voorraad staat */}
+            <div className="flex gap-2 mt-2">
+              <input className="tg-input" style={{ flex: 1, minWidth: 0 }} placeholder="Los onderdeel (naam)" value={customNaam} onChange={(e) => setCustomNaam(e.target.value)} />
+              <input type="number" className="tg-input" style={{ width: 92 }} placeholder="Prijs €" value={customPrijs} onChange={(e) => setCustomPrijs(e.target.value)} />
+              <Button small variant="ghost" onClick={addCustomLine} disabled={!customNaam.trim()}>+ Los</Button>
+            </div>
             {lines.length > 0 && (
               <div className="space-y-1.5 mt-2">
                 {lines.map((l) => (
@@ -2440,11 +2482,29 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
 
           {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F" }}>{err}</div>}
 
-          <div className="flex gap-2 pt-1">
-            <Button icon={FileText} onClick={finish} disabled={busy}>{busy ? "Bezig..." : "Werkbon opslaan (PDF)"}</Button>
-            <Button variant="ghost" onClick={onClose}>Annuleren</Button>
-          </div>
-          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>Bij opslaan wordt de melding op <b>Klaar</b> gezet en het totaalbedrag toegevoegd aan het kostenoverzicht.</div>
+          {saved ? (
+            <>
+              <div className="flex items-center gap-2 px-3 py-3 rounded-lg" style={{ background: "#12271C", border: "1px solid #34D39955" }}>
+                <ShieldCheck size={16} color="#34D399" />
+                <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 600 }}>Werkbon opgeslagen — melding op Klaar en kosten toegevoegd.</span>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <a href={pdfUrl} download={`werkbon-${(report?.vehicle || "voertuig").replace(/[^A-Za-z0-9-]/g, "")}-${TODAY}.pdf`}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5 }}>
+                  <FileText size={15} /> Werkbon downloaden (PDF)
+                </a>
+                <Button variant="ghost" onClick={onClose}>Sluiten</Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex gap-2 pt-1">
+                <Button icon={FileText} onClick={finish} disabled={busy}>{busy ? "Bezig..." : "Werkbon opslaan"}</Button>
+                <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+              </div>
+              <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>Bij opslaan wordt de melding op <b>Klaar</b> gezet en het totaalbedrag toegevoegd aan het kostenoverzicht. Daarna kun je de werkbon als PDF downloaden.</div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2566,7 +2626,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
       {werkbonFor && (
         <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} onUsePart={onUsePart}
           onClose={() => setWerkbonFor(null)}
-          onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setWerkbonFor(null); setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
+          onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
       )}
     </div>
   );
@@ -3023,6 +3083,21 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
         <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "180px 180px" }}>
           <div style={{ minWidth: 0 }}><FieldLabel>Open vanaf</FieldLabel><input type="time" className="tg-input" value={hours.van} onChange={(e) => onSetHours({ ...hours, van: e.target.value })} /></div>
           <div style={{ minWidth: 0 }}><FieldLabel>Sluit om</FieldLabel><input type="time" className="tg-input" value={hours.tot} onChange={(e) => onSetHours({ ...hours, tot: e.target.value })} /></div>
+        </div>
+      </Card>
+
+      {/* Waarschuwingstermijn — hoeveel maanden vooraf je gewaarschuwd wordt voor
+          aflopende APK, Code 95, rijbewijs, verzekering, ADR, medische keuring. */}
+      <Card className="p-5">
+        <Eyebrow><span className="inline-flex items-center gap-1.5"><BellRing size={13} color="#FF8A00" /> Waarschuwingstermijn</span></Eyebrow>
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+          Hoeveel maanden van tevoren wil je een waarschuwing zien voor aflopende APK, Code 95, rijbewijs, verzekering, ADR en medische keuring?
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <select className="tg-input" style={{ width: 160 }} value={String(hours.warnMonths ?? 1)} onChange={(e) => onSetHours({ ...hours, warnMonths: Number(e.target.value) })}>
+            {[1, 2, 3, 4, 6].map((m) => <option key={m} value={m}>{m} {m === 1 ? "maand" : "maanden"} vooraf</option>)}
+          </select>
+          <span style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>Standaard: 1 maand.</span>
         </div>
       </Card>
 
@@ -4995,6 +5070,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cDrivers = drivers[companyId] || [];
   const cAvailability = availability[companyId] || {};
   const cHours = workshopHours[companyId] || { van: "08:00", tot: "17:00" };
+  // Waarschuwingstermijn toepassen op de compliance-berekeningen zodra die
+  // instelling verandert (of bij het wisselen van bedrijf).
+  useEffect(() => { setWarnMonths(cHours.warnMonths); }, [cHours.warnMonths]);
   const cModules = modules[companyId] || { ...DEFAULT_MODULES };
   const cOnboarded = onboarded[companyId] === true;
   const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
