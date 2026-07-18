@@ -286,6 +286,76 @@ begin
 end $$;
 grant execute on function public.join_company_with_code(text, text, text, text, text) to authenticated;
 
+-- ---------- PROBLEEMMELDINGEN: bedrijf -> platformbeheerder ----------
+-- Een bedrijf kan vanuit Instellingen een probleem/vraag melden. Alleen de
+-- platform-superadmin (jij) ziet alle meldingen; een bedrijf ziet alleen zijn
+-- eigen meldingen (en de status). Alles loopt via SECURITY DEFINER-functies.
+
+create table if not exists public.support_tickets (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid references public.companies(id) on delete set null,
+  company_name text default '',
+  reporter_id uuid references auth.users(id) on delete set null,
+  reporter_naam text default '',
+  reporter_email text default '',
+  onderwerp text not null default '',
+  bericht text not null,
+  status text not null default 'open' check (status in ('open','in_behandeling','opgelost')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+alter table public.support_tickets enable row level security;
+-- Geen directe client-toegang; alles via de functies hieronder.
+
+-- Een bedrijf meldt een probleem. We koppelen automatisch bedrijf + melder.
+create or replace function public.create_support_ticket(p_onderwerp text, p_bericht text)
+returns uuid language plpgsql security definer as $$
+declare cid uuid; new_id uuid; v_naam text; v_email text; v_cname text;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  if coalesce(trim(p_bericht), '') = '' then raise exception 'EMPTY_MESSAGE'; end if;
+  select company_id, naam, email into cid, v_naam, v_email from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  select name into v_cname from public.companies where id = cid;
+  insert into public.support_tickets (company_id, company_name, reporter_id, reporter_naam, reporter_email, onderwerp, bericht)
+    values (cid, coalesce(v_cname,''), auth.uid(), coalesce(v_naam,''), coalesce(v_email,''),
+            coalesce(nullif(trim(p_onderwerp), ''), 'Probleemmelding'), trim(p_bericht))
+    returning id into new_id;
+  return new_id;
+end $$;
+grant execute on function public.create_support_ticket(text, text) to authenticated;
+
+-- Het bedrijf ziet zijn eigen meldingen (met status).
+create or replace function public.my_support_tickets()
+returns setof public.support_tickets language sql stable security definer as $$
+  select * from public.support_tickets
+  where company_id = public.current_company_id()
+  order by created_at desc
+$$;
+grant execute on function public.my_support_tickets() to authenticated;
+
+-- De platformbeheerder ziet alle meldingen.
+create or replace function public.list_support_tickets()
+returns setof public.support_tickets language plpgsql stable security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  return query select * from public.support_tickets order by
+    case status when 'open' then 0 when 'in_behandeling' then 1 else 2 end, created_at desc;
+end $$;
+grant execute on function public.list_support_tickets() to authenticated;
+
+-- De platformbeheerder zet de status (open / in_behandeling / opgelost).
+create or replace function public.set_support_ticket_status(p_id uuid, p_status text)
+returns void language plpgsql security definer as $$
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  if p_status not in ('open','in_behandeling','opgelost') then raise exception 'BAD_STATUS'; end if;
+  update public.support_tickets
+    set status = p_status, resolved_at = case when p_status = 'opgelost' then now() else null end
+    where id = p_id;
+end $$;
+grant execute on function public.set_support_ticket_status(uuid, text) to authenticated;
+
 -- ---------- OPTIONAL: mark a platform super-admin ----------
 -- After you have signed up your own account, run this once with your email:
 -- update public.profiles set is_superadmin = true where email = 'jij@truckandtrailer.nl';

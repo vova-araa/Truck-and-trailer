@@ -4,9 +4,9 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -1523,6 +1523,8 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
     return [v.kenteken, v.merk, v.type, v.driver].filter(Boolean).some((s) => String(s).toLowerCase().includes(q));
   });
   const totalForType = filterType ? vehicles.filter((v) => v.type === filterType).length : vehicles.length;
+  // Passend meervoud voor de teller onder de titel.
+  const noun = filterType === "Bakwagen" ? "bakwagen(s)" : filterType === "Bestelwagen" ? "bestelwagen(s)" : filterType ? `${filterType.toLowerCase()}(s)` : "voertuig(en)";
 
   const exportCsv = () => {
     const label = { operational: "Operationeel", attention: "Let op", workshop: "In werkplaats" };
@@ -1533,7 +1535,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>{title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {filterType ? "bakwagen(s)" : "voertuig(en)"}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>{title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
@@ -2755,7 +2757,67 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
    INSTELLINGEN — werkplaatstijden + beschikbaarheid per monteur
 --------------------------------------------------------------------- */
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule }) {
+// Bedrijf meldt een probleem bij de platformbeheerder en ziet zijn eigen
+// eerdere meldingen met status. Werkt alleen live (Supabase gekoppeld).
+function CompanySupportCard() {
+  const [onderwerp, setOnderwerp] = useState("");
+  const [bericht, setBericht] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [mine, setMine] = useState([]);
+
+  const load = async () => { try { setMine(await mySupportTickets()); } catch { /* stil */ } };
+  useEffect(() => { load(); }, []);
+
+  const submit = async () => {
+    setErr(""); setMsg("");
+    if (!bericht.trim()) return setErr("Beschrijf kort je probleem of vraag.");
+    setBusy(true);
+    try {
+      await createSupportTicket({ onderwerp, bericht });
+      setOnderwerp(""); setBericht("");
+      setMsg("Verstuurd! We hebben je melding ontvangen.");
+      load();
+    } catch (e) {
+      setErr(e?.message || "Versturen mislukt. Probeer het later opnieuw.");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-5" style={{ border: "1px solid #232B38" }}>
+      <Eyebrow>Probleem of vraag melden</Eyebrow>
+      <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+        Loop je ergens tegenaan of heb je een vraag? Stuur het rechtstreeks naar de makers van Truck &amp; Trailer. Je krijgt zo snel mogelijk antwoord.
+      </div>
+      <div className="space-y-2.5">
+        <input className="tg-input w-full" placeholder="Onderwerp (bv. Inloggen lukt niet)" value={onderwerp} onChange={(e) => setOnderwerp(e.target.value)} />
+        <textarea className="tg-input w-full" style={{ minHeight: 90, resize: "vertical", fontFamily: "Inter" }} placeholder="Beschrijf je probleem of vraag…" value={bericht} onChange={(e) => setBericht(e.target.value)} />
+        {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{err}</div>}
+        {msg && <div style={{ color: "#34D399", fontFamily: "Inter", fontSize: 12.5 }}>{msg}</div>}
+        <Button icon={LifeBuoy} onClick={submit} disabled={busy}>{busy ? "Versturen…" : "Melding versturen"}</Button>
+      </div>
+      {mine.length > 0 && (
+        <div className="mt-4 pt-4" style={{ borderTop: "1px solid #1A2129" }}>
+          <div style={{ fontFamily: "Inter", fontSize: 12, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Jouw eerdere meldingen</div>
+          <div className="space-y-2">
+            {mine.map((t) => {
+              const meta = TICKET_STATUS[t.status] || TICKET_STATUS.open;
+              return (
+                <div key={t.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg" style={{ background: "#161C25", border: "1px solid #232B38" }}>
+                  <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.onderwerp || "Probleemmelding"}</span>
+                  <span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600, flexShrink: 0 }}>{meta.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
@@ -2810,6 +2872,9 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
           </div>
         </Card>
       )}
+
+      {/* Probleem melden bij de platformbeheerder (Truck & Trailer). */}
+      {live && <CompanySupportCard />}
 
       {/* Testomgeving — voorbeelddata laden of alles wissen (alleen beheerder) */}
       {(onLoadSample || onClearData) && (
@@ -3342,6 +3407,16 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
   const openReportsForVehicle = form.vehicle ? reports.filter((r) => r.vehicle === form.vehicle && r.status !== "klaar") : [];
   const pickReport = (r) => setForm({ ...form, taak: r.omschrijving, reportId: r.id });
 
+  // Snel inplannen: alle openstaande meldingen die nog niet zijn ingepland,
+  // zodat de werkplaats meteen vanuit een melding een afspraak kan maken —
+  // voertuig én taak worden dan ineens ingevuld.
+  const plannedReportIds = new Set(planning.map((p) => p.reportId).filter(Boolean));
+  const allOpenReports = reports
+    .filter((r) => r.status !== "klaar" && !plannedReportIds.has(r.id))
+    .sort((a, b) => (PRIO_RANK[a.prioriteit] ?? 9) - (PRIO_RANK[b.prioriteit] ?? 9));
+  const pickReportFull = (r) => setForm({ ...form, vehicle: r.vehicle, taak: r.omschrijving, reportId: r.id });
+  const openForm = (r) => { setForm(r ? { vehicle: r.vehicle, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "", reportId: r.id } : { vehicle: "", tijd: "09:00", duur: "60", taak: "", monteur: "", reportId: null }); setOpen(true); };
+
   const submit = () => {
     if (!form.vehicle || !form.taak) return;
     onAdd({ id: "pl" + Date.now(), vehicle: form.vehicle, datum: selectedDate, tijd: form.tijd, duur: Number(form.duur) || 60, taak: form.taak, monteur: form.monteur || "—", reportId: form.reportId });
@@ -3364,7 +3439,7 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" small onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)); setSelectedDate(TODAY); }}>Vandaag</Button>
-          <Button icon={Plus} onClick={() => setOpen(true)}>Inplannen</Button>
+          <Button icon={Plus} onClick={() => openForm()}>Inplannen</Button>
         </div>
       </div>
 
@@ -3420,6 +3495,24 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
 
           {open && (
             <div className="mb-4 space-y-3 p-3 rounded-lg" style={{ background: "#1A2129", border: "1px solid #232B38" }}>
+              {allOpenReports.length > 0 && (
+                <div>
+                  <FieldLabel>Snel inplannen — kies een openstaande melding</FieldLabel>
+                  <div className="space-y-1.5" style={{ maxHeight: 190, overflowY: "auto" }}>
+                    {allOpenReports.map((r) => (
+                      <button key={r.id} onClick={() => pickReportFull(r)} className="w-full text-left p-2 rounded-lg flex items-center gap-2"
+                        style={{ background: form.reportId === r.id ? "#3B82F618" : "#12171F", border: `1px solid ${form.reportId === r.id ? "#3B82F6" : "#232B38"}` }}>
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ fontFamily: "JetBrains Mono", color: "#E7ECF3", background: "#0E131A", border: "1px solid #232B38", fontWeight: 700, flexShrink: 0 }}>{r.vehicle}</span>
+                        <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#C4CBD6", minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.omschrijving}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0 }}>{PRIO_META[r.prioriteit].label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 my-1" style={{ color: "#6B7585" }}>
+                    <span style={{ flex: 1, height: 1, background: "#232B38" }} /><span style={{ fontFamily: "Inter", fontSize: 11 }}>of vul handmatig in</span><span style={{ flex: 1, height: 1, background: "#232B38" }} />
+                  </div>
+                </div>
+              )}
               <div>
                 <FieldLabel>Voertuig</FieldLabel>
                 <select className="tg-input w-full" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value, taak: "", reportId: null })}>
@@ -3458,7 +3551,7 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
             <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
               <Calendar size={28} color="#6B7585" />
               <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>Niets ingepland op deze dag.</span>
-              <button onClick={() => setOpen(true)} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#3B82F6", fontWeight: 600, marginTop: 6 }}>+ Afspraak toevoegen</button>
+              <button onClick={() => openForm()} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#3B82F6", fontWeight: 600, marginTop: 6 }}>+ Afspraak toevoegen</button>
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -3479,7 +3572,7 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
                   </div>
                 </div>
               ))}
-              <button onClick={() => setOpen(true)} className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl" style={{ border: "1px dashed #2A3340", color: "#3B82F6", fontFamily: "Inter", fontSize: 13, fontWeight: 600 }}>
+              <button onClick={() => openForm()} className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl" style={{ border: "1px dashed #2A3340", color: "#3B82F6", fontFamily: "Inter", fontSize: 13, fontWeight: 600 }}>
                 <Plus size={15} /> Afspraak toevoegen
               </button>
             </div>
@@ -3653,7 +3746,7 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
    voor de rest zet je de schakelaar op "Betaald". De gegevens die je hier
    invult, staan straks al klaar bij "Bedrijf activeren".
 --------------------------------------------------------------------- */
-function CodesView({ live }) {
+function CodesView({ live, companies = [] }) {
   const isMobile = useIsMobile();
   const blank = () => ({ companyName: "", adminNaam: "", adminEmail: "", adminTelefoon: "", note: "", paid: false });
   const [form, setForm] = useState(blank());
@@ -3662,6 +3755,7 @@ function CodesView({ live }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
+  const compName = (c) => c.company_name || (companies.find((x) => x.id === c.company_id) || {}).name || "—";
 
   const load = async () => {
     if (!live) return;
@@ -3698,12 +3792,51 @@ function CodesView({ live }) {
     );
   }
 
+  const active = codes.filter((c) => c.status === "used");
+  const unusedCount = codes.length - active.length;
+  const paidActive = active.filter((c) => c.paid).length;
+  const freeActive = active.length - paidActive;
+
   return (
     <div className="space-y-5">
       <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Ticket size={22} color="#3B82F6" /> Abonnementscodes</h1>
-        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Maak 12-cijferige codes om een bedrijf te activeren. Codes die jij aanmaakt zijn standaard gratis; zet de schakelaar op "Betaald" wanneer nodig.</p>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Ticket size={22} color="#3B82F6" /> Abonnementen</h1>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Overzicht van lopende abonnementen en 12-cijferige activatiecodes. Codes die jij aanmaakt zijn standaard gratis; zet de schakelaar op "Betaald" wanneer nodig.</p>
       </div>
+
+      {/* Overzicht lopende abonnementen */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))" }}>
+        {[
+          { label: "Lopende abonnementen", val: active.length, color: "#3B82F6" },
+          { label: "Betaald", val: paidActive, color: "#F59E0B" },
+          { label: "Gratis (door jou)", val: freeActive, color: "#34D399" },
+          { label: "Ongebruikte codes", val: unusedCount, color: "#98A1B0" },
+        ].map((s) => (
+          <Card key={s.label} className="p-4">
+            <div style={{ fontFamily: "Oswald", fontSize: 30, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.val}</div>
+            <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0", marginTop: 4 }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      {active.length > 0 && (
+        <Card className="overflow-x-auto">
+          <div style={{ padding: "12px 16px 0", fontFamily: "Inter", fontSize: 12, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5 }}>Lopende abonnementen</div>
+          <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Bedrijf", "Type", "Sinds", "Code"].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {active.map((c) => (
+                <tr key={c.code} style={{ borderBottom: "1px solid #1A2129" }}>
+                  <td className="px-4 py-3" style={{ color: "#E7ECF3", fontWeight: 600 }}>{compName(c)}</td>
+                  <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.paid ? "#F59E0B" : "#34D399", border: `1px solid ${(c.paid ? "#F59E0B" : "#34D399")}55`, fontWeight: 600 }}>{c.paid ? "Betaald" : "Gratis"}</span></td>
+                  <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>{(c.used_at || "").slice(0, 10) || "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "#6B7585", fontFamily: "JetBrains Mono" }}>{fmtCode(c.code)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
 
       <Card>
         <div style={{ padding: 16 }}>
@@ -3729,6 +3862,7 @@ function CodesView({ live }) {
       </Card>
 
       <Card className="overflow-x-auto">
+        <div style={{ padding: "12px 16px 0", fontFamily: "Inter", fontSize: 12, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5 }}>Alle uitgegeven codes</div>
         <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
           <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Code", "Bedrijf", "Type", "Status", ""].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
           <tbody>
@@ -3739,7 +3873,7 @@ function CodesView({ live }) {
             ) : codes.map((c) => (
               <tr key={c.code} style={{ borderBottom: "1px solid #1A2129" }}>
                 <td className="px-4 py-3" style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono", fontWeight: 700, letterSpacing: 1 }}>{fmtCode(c.code)}</td>
-                <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{c.company_name || "—"}</td>
+                <td className="px-4 py-3" style={{ color: "#B4BCC9" }}>{compName(c)}</td>
                 <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.paid ? "#F59E0B" : "#34D399", border: `1px solid ${(c.paid ? "#F59E0B" : "#34D399")}55`, fontWeight: 600 }}>{c.paid ? "Betaald" : "Gratis"}</span></td>
                 <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.status === "used" ? "#98A1B0" : "#3B82F6", border: `1px solid ${(c.status === "used" ? "#98A1B0" : "#3B82F6")}55`, fontWeight: 600 }}>{c.status === "used" ? "Gebruikt" : "Ongebruikt"}</span></td>
                 <td className="px-4 py-3">
@@ -3759,6 +3893,94 @@ function CodesView({ live }) {
 }
 const fieldLabel = { display: "flex", flexDirection: "column", gap: 5, fontFamily: "Inter", fontSize: 12, fontWeight: 600, color: "#98A1B0" };
 const codeInput = { background: "#161C25", border: "1px solid #2A3340", color: "#E7ECF3", borderRadius: 9, padding: "10px 11px", fontFamily: "Inter", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" };
+
+/* ---------------------------------------------------------------------
+   MELDINGEN-INBOX — de platformbeheerder ziet hier alle probleemmeldingen
+   die bedrijven vanuit hun Instellingen insturen, en zet de status.
+--------------------------------------------------------------------- */
+const TICKET_STATUS = { open: { label: "Open", color: "#F0453F" }, in_behandeling: { label: "In behandeling", color: "#F59E0B" }, opgelost: { label: "Opgelost", color: "#34D399" } };
+function SupportInboxView({ live }) {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [filter, setFilter] = useState("alle");
+
+  const load = async () => {
+    if (!live) return;
+    setLoading(true); setErr("");
+    try { setTickets(await listSupportTickets()); }
+    catch (e) { setErr(e?.message || "Kon meldingen niet laden."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [live]);
+
+  const setStatus = async (t, status) => {
+    setTickets((s) => s.map((x) => (x.id === t.id ? { ...x, status } : x))); // optimistisch
+    try { await setSupportTicketStatus(t.id, status); } catch (e) { setErr(e?.message || "Bijwerken mislukt."); load(); }
+  };
+
+  const shown = filter === "alle" ? tickets : tickets.filter((t) => t.status === filter);
+  const openCount = tickets.filter((t) => t.status === "open").length;
+
+  if (!live) {
+    return (
+      <div className="space-y-5">
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Inbox size={22} color="#3B82F6" /> Meldingen</h1>
+        <Card><div style={{ padding: 16, fontFamily: "Inter", fontSize: 14, color: "#B4BCC9" }}>Meldingen werken alleen op de live-omgeving (met Supabase gekoppeld).</div></Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Inbox size={22} color="#3B82F6" /> Meldingen</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Problemen en vragen die bedrijven insturen{openCount > 0 ? ` · ${openCount} open` : ""}.</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {["alle", "open", "in_behandeling", "opgelost"].map((f) => (
+            <button key={f} onClick={() => setFilter(f)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, border: `1px solid ${filter === f ? "#3B82F6" : "#232B38"}`, background: filter === f ? "#3B82F618" : "transparent", color: filter === f ? "#3B82F6" : "#B4BCC9" }}>{f === "alle" ? "Alle" : (TICKET_STATUS[f]?.label || f)}</button>
+          ))}
+        </div>
+      </div>
+      {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{err}</div>}
+      {loading ? (
+        <Card><div style={{ padding: 20, textAlign: "center", color: "#98A1B0", fontFamily: "Inter" }}>Laden…</div></Card>
+      ) : shown.length === 0 ? (
+        <EmptyState icon={Inbox} text="Geen meldingen." />
+      ) : (
+        <div className="space-y-3">
+          {shown.map((t) => {
+            const meta = TICKET_STATUS[t.status] || TICKET_STATUS.open;
+            return (
+              <Card key={t.id} className="p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ fontFamily: "Inter", fontSize: 15, fontWeight: 700, color: "#E7ECF3" }}>{t.onderwerp || "Probleemmelding"}</span>
+                      <span className="text-xs px-2 py-0.5 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600 }}>{meta.label}</span>
+                    </div>
+                    <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginTop: 2 }}>
+                      {t.company_name || "Onbekend bedrijf"} · {t.reporter_naam || "—"}{t.reporter_email ? ` · ${t.reporter_email}` : ""} · {(t.created_at || "").slice(0, 10)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#C4CBD6", marginTop: 8, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{t.bericht}</div>
+                <div className="flex items-center gap-2 mt-3 pt-3 flex-wrap" style={{ borderTop: "1px solid #1A2129" }}>
+                  {t.reporter_email && <a href={`mailto:${t.reporter_email}?subject=${encodeURIComponent("Re: " + (t.onderwerp || "je melding"))}`} className="text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5" style={{ fontFamily: "Inter", fontWeight: 600, border: "1px solid #232B38", color: "#8FB8FF" }}><Mail size={13} /> Reageren</a>}
+                  {["open", "in_behandeling", "opgelost"].filter((s) => s !== t.status).map((s) => (
+                    <button key={s} onClick={() => setStatus(t, s)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, border: "1px solid #232B38", color: TICKET_STATUS[s].color }}>→ {TICKET_STATUS[s].label}</button>
+                  ))}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ---------------------------------------------------------------------
    SIDEBAR (grouped, matches Blex Fleet menu structure)
@@ -3808,7 +4030,13 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left"
                 style={{ background: view === "codes" ? "#3B82F618" : "transparent", color: view === "codes" ? "#3B82F6" : "#C4CBD6", fontSize: 14, fontWeight: view === "codes" ? 600 : 500 }}>
                 <Ticket size={16} />
-                <span className="flex-1">Abonnementscodes</span>
+                <span className="flex-1">Abonnementen</span>
+              </button>
+              <button onClick={() => { setView("support"); onClose && onClose(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left"
+                style={{ background: view === "support" ? "#3B82F618" : "transparent", color: view === "support" ? "#3B82F6" : "#C4CBD6", fontSize: 14, fontWeight: view === "support" ? 600 : 500 }}>
+                <Inbox size={16} />
+                <span className="flex-1">Meldingen</span>
               </button>
             </div>
           </div>
@@ -3936,6 +4164,7 @@ const MODULE_DEFS = [
   { key: "parts", label: "Voorraad", desc: "Onderdelen & voorraadbeheer", icon: Package },
   { key: "trailers", label: "Trailers", desc: "Aanhangers & opleggers", icon: Container },
   { key: "bakwagens", label: "Bakwagens", desc: "Bakwagens apart bijhouden", icon: Boxes },
+  { key: "bestelwagens", label: "Bestelwagens", desc: "Bestelwagens apart bijhouden", icon: Truck },
   { key: "drivers", label: "Chauffeurs", desc: "Rijbewijs, Code 95, ADR, keuring", icon: Contact },
   { key: "inspection", label: "360° Inspectie", desc: "AI-schadeherkenning op foto's", icon: ScanEye },
   { key: "costs", label: "Kosten", desc: "Uitgaven per categorie & voertuig", icon: Euro },
@@ -3962,6 +4191,7 @@ const NAV_GROUPS = [
   { group: "Vloot", roles: ["admin", "garage"], items: [
     { id: "vehicles", label: "Voertuigen", icon: Truck },
     { id: "bakwagens", label: "Bakwagens", icon: Boxes, module: "bakwagens" },
+    { id: "bestelwagens", label: "Bestelwagens", icon: Truck, module: "bestelwagens" },
     { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
     { id: "drivers", label: "Chauffeurs", icon: Contact, module: "drivers" },
     { id: "inspection", label: "360° Inspectie", icon: ScanEye, module: "inspection" },
@@ -4377,7 +4607,8 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
-                {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} filterType="Bakwagen" title="Bakwagens" />}
+                {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
+                {view === "bestelwagens" && modOn(cModules, "bestelwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bestelwagen" title="Bestelwagens" />}
                 {view === "costs" && isAdmin && modOn(cModules, "costs") && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
@@ -4393,8 +4624,9 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} />}
-                {view === "codes" && isSuperAdmin && <CodesView live={live} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} />}
+                {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
+                {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
               </>
             )}
             </div>

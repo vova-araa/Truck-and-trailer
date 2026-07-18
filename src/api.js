@@ -56,6 +56,38 @@ export async function listActivationCodes() {
   return data || [];
 }
 
+// ---------- PROBLEEMMELDINGEN (support) ----------
+
+// Een bedrijf meldt een probleem/vraag bij de platformbeheerder.
+export async function createSupportTicket({ onderwerp, bericht }) {
+  const { data, error } = await supabase.rpc("create_support_ticket", {
+    p_onderwerp: onderwerp || "",
+    p_bericht: bericht || "",
+  });
+  if (error) throw error;
+  return data; // id
+}
+
+// Het bedrijf haalt zijn eigen meldingen op (met status).
+export async function mySupportTickets() {
+  const { data, error } = await supabase.rpc("my_support_tickets");
+  if (error) throw error;
+  return data || [];
+}
+
+// Superadmin: alle binnengekomen meldingen ophalen.
+export async function listSupportTickets() {
+  const { data, error } = await supabase.rpc("list_support_tickets");
+  if (error) throw error;
+  return data || [];
+}
+
+// Superadmin: status van een melding aanpassen.
+export async function setSupportTicketStatus(id, status) {
+  const { error } = await supabase.rpc("set_support_ticket_status", { p_id: id, p_status: status });
+  if (error) throw error;
+}
+
 // Bedrijf aanmelden kan alleen met een geldige abonnementscode. De code wordt
 // server-side (SECURITY DEFINER) ingewisseld: die maakt het bedrijf aan en
 // markeert de code als gebruikt. Zo kan niemand zonder code een bedrijf starten.
