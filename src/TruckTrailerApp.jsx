@@ -9,6 +9,43 @@ import {
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail } from "./api.js";
 
 /* ---------------------------------------------------------------------
+   EIGEN VOERTUIG-PICTOGRAMMEN (in lucide-stijl: stroke = color-prop)
+   - IconTruckTrailer: trekker + lange oplegger (vrachtwagens)
+   - IconBoxTruck: bakwagen (cabine + gesloten laadbak)
+   - IconVan: bestelwagen (busje)
+--------------------------------------------------------------------- */
+function svgWrap(size, color, rest, children) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...rest}>{children}</svg>
+  );
+}
+function IconTruckTrailer({ size = 24, color = "currentColor", ...rest }) {
+  return svgWrap(size, color, rest, <>
+    <path d="M2 8 h4 l2 3 v4 H2 z" />
+    <rect x="9.5" y="7.5" width="12.5" height="7.5" rx="0.8" />
+    <circle cx="4.6" cy="17.4" r="1.4" />
+    <circle cx="13" cy="17.4" r="1.4" />
+    <circle cx="18.5" cy="17.4" r="1.4" />
+  </>);
+}
+function IconBoxTruck({ size = 24, color = "currentColor", ...rest }) {
+  return svgWrap(size, color, rest, <>
+    <rect x="2" y="6.5" width="11" height="8.5" rx="0.8" />
+    <path d="M13 9.5 h3.5 l3.5 3.3 V15 H13 z" />
+    <circle cx="6" cy="17.4" r="1.4" />
+    <circle cx="16.5" cy="17.4" r="1.4" />
+  </>);
+}
+function IconVan({ size = 24, color = "currentColor", ...rest }) {
+  return svgWrap(size, color, rest, <>
+    <path d="M2 15 V9 a1 1 0 0 1 1-1 h10.5 l4 3.4 H21 a1 1 0 0 1 1 1 V15 z" />
+    <path d="M13.5 8 v3.4 H17.5" />
+    <circle cx="6.5" cy="16.6" r="1.5" />
+    <circle cx="17.5" cy="16.6" r="1.5" />
+  </>);
+}
+
+/* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
    border #232B38 · text #E7ECF3 · dim #B4BCC9 · amber #FF8A00 (signal)
    teal #22D3B0 (diagnostic) · danger #F0453F · success #34D399
@@ -771,6 +808,84 @@ function ReportMedia({ media }) {
   );
 }
 
+// In-app camera via getUserMedia. Betrouwbaarder dan de native bestand-camera,
+// die op sommige iPhones/in-app browsers zwart blijft. Valt netjes terug op de
+// galerij als de camera niet mag/kan.
+function CameraCapture({ onCapture, onClose, onFallback }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [err, setErr] = useState("");
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function start() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("no-support");
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+        setReady(true);
+      } catch (e) {
+        setErr(e?.name === "NotAllowedError" ? "geen-toestemming" : "geen-camera");
+      }
+    }
+    start();
+    return () => { cancelled = true; if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
+  }, []);
+
+  const stop = () => { if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
+
+  const snap = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" });
+      stop();
+      onCapture(file);
+    }, "image/jpeg", 0.9);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#000", display: "flex", flexDirection: "column" }}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ background: "#0A0E14" }}>
+        <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Foto maken</span>
+        <button onClick={() => { stop(); onClose(); }} aria-label="Sluiten"><X size={22} color="#E7ECF3" /></button>
+      </div>
+      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        {err ? (
+          <div className="text-center px-6" style={{ maxWidth: 340 }}>
+            <div style={{ fontFamily: "Inter", fontSize: 14, color: "#E7ECF3", marginBottom: 6 }}>
+              {err === "geen-toestemming" ? "De camera mag niet gebruikt worden." : "De camera kon niet gestart worden op dit apparaat."}
+            </div>
+            <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 16 }}>
+              {err === "geen-toestemming" ? "Sta de camera toe in je browser-/telefooninstellingen, of kies een foto uit je galerij." : "Kies een foto uit je galerij."}
+            </div>
+            <button onClick={() => { stop(); onFallback(); }} className="px-4 py-2.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5 }}>Kies uit galerij</button>
+          </div>
+        ) : (
+          <video ref={videoRef} playsInline muted autoPlay style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
+        )}
+      </div>
+      {!err && (
+        <div className="flex items-center justify-center gap-6 py-5" style={{ background: "#0A0E14" }}>
+          <button onClick={() => { stop(); onFallback(); }} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>Galerij</button>
+          <button onClick={snap} disabled={!ready} aria-label="Foto maken" style={{ width: 66, height: 66, borderRadius: "50%", background: ready ? "#fff" : "#555", border: "4px solid #3B82F6", flexShrink: 0 }} />
+          <span style={{ width: 48 }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   const [step, setStep] = useState(0);
   const [vehicle, setVehicle] = useState("");
@@ -823,6 +938,7 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
     catch (e) { setVoiceError("Kon niet starten met luisteren."); }
   };
 
+  const [camOpen, setCamOpen] = useState(false);
   const addFiles = (files) => {
     const arr = Array.from(files).map((f) => ({ name: f.name, url: URL.createObjectURL(f), type: f.type.startsWith("video") ? "video" : "foto", file: f, mediaType: f.type }));
     setMedia((m) => [...m, ...arr]);
@@ -973,21 +1089,24 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                 <li>Zorg voor goed licht en een scherp beeld (schade goed zichtbaar).</li>
               </ul>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-7 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Foto toevoegen</span>
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={() => setCamOpen(true)} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
+                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Foto maken</span>
               </button>
-              <button onClick={() => videoRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-7 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Video toevoegen</span>
+              <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
+                <Boxes size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Uit galerij</span>
+              </button>
+              <button onClick={() => videoRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
+                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Video</span>
               </button>
             </div>
-            {/* Geen capture-attribuut: de telefoon toont een keuze tussen camera en galerij.
-                Dit werkt betrouwbaarder dan een geforceerde camera (die in sommige in-app
-                browsers zwart blijft). */}
+            {/* "Foto maken" opent een echte in-app camera (getUserMedia) i.p.v. de
+                native bestand-camera die op sommige iPhones zwart blijft. */}
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             <input ref={videoRef} type="file" accept="video/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+            {camOpen && <CameraCapture onCapture={(file) => { addFiles([file]); setCamOpen(false); }} onClose={() => setCamOpen(false)} onFallback={() => { setCamOpen(false); fileRef.current?.click(); }} />}
             <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", lineHeight: 1.5 }}>
-              📱 <b style={{ color: "#B4BCC9" }}>iPhone-tip:</b> blijft de camera zwart? Kies in het menu dan <b style={{ color: "#B4BCC9" }}>"Fotobibliotheek"</b> — of maak eerst een foto met de Camera-app en voeg 'm hier toe.
+              Tip: "Foto maken" opent de camera direct in de app. Werkt dat niet? Kies dan <b style={{ color: "#B4BCC9" }}>"Uit galerij"</b>.
             </div>
             {media.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -1697,7 +1816,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <Boxes size={22} color="#3B82F6" /> : filterType === "Trailer" ? <Container size={22} color="#3B82F6" /> : <Truck size={22} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <IconBoxTruck size={24} color="#3B82F6" /> : filterType === "Bestelwagen" ? <IconVan size={24} color="#3B82F6" /> : filterType === "Trailer" ? <Container size={22} color="#3B82F6" /> : <IconTruckTrailer size={24} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
@@ -4705,23 +4824,16 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
           <ChevronDown size={15} color="#B4BCC9" style={{ flexShrink: 0, transform: footOpen ? "rotate(0deg)" : "rotate(180deg)", transition: "transform .15s" }} />
         </button>
         {footOpen && (
-          <div className="space-y-3">
+          <div className="space-y-2 pb-1">
             <button onClick={isSuperAdmin ? onCompanyClick : undefined} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-full" style={{ border: "1px solid #232B38", background: "#12171F", cursor: isSuperAdmin ? "pointer" : "default" }}>
               <Building2 size={14} color={company.accent} style={{ flexShrink: 0 }} />
               <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</span>
               {isSuperAdmin && <ChevronDown size={14} color="#B4BCC9" style={{ flexShrink: 0 }} />}
             </button>
-            <div className="flex items-center gap-2.5 px-1">
-              <div style={{ width: 34, height: 34, borderRadius: "50%", position: "relative", background: isSuperAdmin ? "#F5B30122" : "#3B82F633", border: `1px solid ${isSuperAdmin ? "#F5B30188" : "#3B82F655"}`, flexShrink: 0 }} className="flex items-center justify-center">
-                <span style={{ color: isSuperAdmin ? "#F5B301" : "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 12 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
-                {isSuperAdmin && <span style={{ position: "absolute", top: -6, right: -5, background: "#0A0E14", borderRadius: "50%", padding: 1, display: "flex" }}><Crown size={13} color="#F5B301" /></span>}
-              </div>
-              <div>
-                <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 600 }}>{currentUser.naam}</div>
-                {isSuperAdmin
-                  ? <span className="text-xs px-1.5 rounded inline-flex items-center gap-1" style={{ color: "#F5B301", background: "#F5B30118" }}><Crown size={11} /> Superadmin</span>
-                  : <span className="text-xs px-1.5 rounded" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>}
-              </div>
+            <div className="px-1">
+              {isSuperAdmin
+                ? <span className="text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ color: "#F5B301", background: "#F5B30118" }}><Crown size={11} /> Superadmin</span>
+                : <span className="text-xs px-1.5 py-0.5 rounded inline-flex" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>}
             </div>
           </div>
         )}
@@ -4885,9 +4997,9 @@ const NAV_GROUPS = [
     { id: "parts", label: "Voorraad", icon: Package, module: "parts" },
   ]},
   { group: "Vloot", roles: ["admin", "garage"], items: [
-    { id: "vehicles", label: "Vrachtwagens", icon: Truck },
-    { id: "bakwagens", label: "Bakwagens", icon: Boxes, module: "bakwagens" },
-    { id: "bestelwagens", label: "Bestelwagens", icon: Truck, module: "bestelwagens" },
+    { id: "vehicles", label: "Vrachtwagens", icon: IconTruckTrailer },
+    { id: "bakwagens", label: "Bakwagens", icon: IconBoxTruck, module: "bakwagens" },
+    { id: "bestelwagens", label: "Bestelwagens", icon: IconVan, module: "bestelwagens" },
     { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
     { id: "drivers", label: "Chauffeurs", icon: Contact, module: "drivers" },
   ]},
@@ -5510,8 +5622,14 @@ export default function TruckGarageApp({ session, onLogout }) {
         @keyframes tg-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes tg-fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes tg-pop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-        .tg-page { animation: tg-fade-up .35s ease both; }
-        .tg-card { animation: tg-fade-up .4s ease both; }
+        /* Alleen opacity animeren: een resterende transform maakt van .tg-page een
+           containing block, waardoor position:fixed (o.a. bevestigingspopups) niet
+           meer t.o.v. het scherm maar t.o.v. deze pagina uitlijnt en "rondzwerft". */
+        .tg-page { animation: tg-fade-in .3s ease both; }
+        /* Op groot scherm de content compact houden (niet edge-to-edge), zodat de
+           balken niet het hele scherm beslaan en er ruimte naast overblijft. */
+        @media (min-width: 1100px) { .tg-page { max-width: 1040px; } }
+        .tg-card { animation: tg-fade-in .35s ease both; }
         .tg-input { background: #161C25; border: 1px solid #2A3340; color: #E7ECF3; border-radius: 9px; padding: 10px 12px; font-family: Inter; font-size: 16px; outline: none; max-width: 100%; min-width: 0; width: 100%; transition: border-color .15s, box-shadow .15s; }
         input[type="date"].tg-input, input[type="time"].tg-input, input[type="number"].tg-input { min-width: 0; -webkit-appearance: none; appearance: none; }
         .tg-input:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
