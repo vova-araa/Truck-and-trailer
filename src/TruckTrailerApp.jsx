@@ -1324,7 +1324,15 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         </Card>
       )}
 
-      {/* Planning van de dag — bovenaan, het eerste wat je ziet */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
+        <ClickableKpi label="Voertuigen" value={vehicles.length} icon={Truck} accent="#22D3B0" onClick={() => go("vehicles")} />
+        <ClickableKpi label="Open meldingen" value={openReports} icon={Wrench} accent="#3B82F6" onClick={() => go("workfloor")} />
+        <ClickableKpi label="Kritiek open" value={critical} icon={AlertTriangle} accent="#F0453F" onClick={() => go("workfloor")} />
+        <ClickableKpi label="Lage voorraad" value={lowStock} icon={Package} accent="#B4BCC9" onClick={() => go("parts")} />
+      </div>
+
+      {/* Planning + kosten naast elkaar op laptop (compact, minder loze ruimte) */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile || !isAdmin ? "minmax(0, 1fr)" : "1.5fr 1fr" }}>
       <Card className="p-5" style={{ border: "1px solid #3B82F544", background: "linear-gradient(135deg,#12233E,#12171F)" }}>
         <div className="flex items-start justify-between mb-3 gap-3">
           <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
@@ -1362,16 +1370,9 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         )}
       </Card>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
-        <ClickableKpi label="Voertuigen" value={vehicles.length} icon={Truck} accent="#22D3B0" onClick={() => go("vehicles")} />
-        <ClickableKpi label="Open meldingen" value={openReports} icon={Wrench} accent="#3B82F6" onClick={() => go("workfloor")} />
-        <ClickableKpi label="Kritiek open" value={critical} icon={AlertTriangle} accent="#F0453F" onClick={() => go("workfloor")} />
-        <ClickableKpi label="Lage voorraad" value={lowStock} icon={Package} accent="#B4BCC9" onClick={() => go("parts")} />
-      </div>
-
       {isAdmin && (
         <button onClick={() => go("costs")} className="text-left w-full">
-          <Card hover className="p-5" style={{ cursor: "pointer" }}>
+          <Card hover className="p-5 h-full" style={{ cursor: "pointer" }}>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
                 <div className="flex items-center justify-center rounded-lg" style={{ width: 38, height: 38, background: "#3B82F618", flexShrink: 0 }}><Euro size={19} color="#3B82F6" /></div>
@@ -1385,32 +1386,9 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
           </Card>
         </button>
       )}
+      </div>
 
-      {/* Compliance-alerts: verlopen of binnenkort verlopende keuringen */}
-      {complianceAlerts.length > 0 && (
-        <Card className="p-5" style={{ border: "1px solid #FF8A0055", background: "#FF8A000A" }}>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="flex items-center justify-center rounded-full" style={{ width: 26, height: 26, background: "#FF8A0022" }}><ShieldCheck size={14} color="#FF8A00" /></div>
-            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Keuringen die aandacht nodig hebben</span>
-            <span className="rounded-full flex items-center justify-center" style={{ minWidth: 20, height: 20, padding: "0 6px", background: "#FF8A00", color: "#0A0E14", fontSize: 11, fontWeight: 700, fontFamily: "Inter" }}>{complianceAlerts.length}</span>
-          </div>
-          <div className="space-y-2">
-            {complianceAlerts.slice(0, 6).map(({ vehicle: v, items }) => (
-              <button key={v.id} onClick={() => onSelectVehicle && onSelectVehicle(v.id)} className="w-full text-left flex items-center justify-between gap-2 p-3 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
-                <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-                  <Kenteken value={v.kenteken} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {items.map((it) => `${it.label}${it.status === "verlopen" ? " verlopen" : ` (${it.dagen}d)`}`).join(" · ")}
-                    </div>
-                  </div>
-                </div>
-                {(() => { const worst = items.some((i) => i.status === "verlopen") ? "verlopen" : "binnenkort"; const meta = COMPLIANCE_META[worst]; return <span className="text-xs px-2 py-1 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{meta.label}</span>; })()}
-              </button>
-            ))}
-          </div>
-        </Card>
-      )}
+      {/* Vlootgezondheid — mag de volle breedte houden */}
       <Card className="p-5">
         <Eyebrow>Gemiddelde vlootgezondheid</Eyebrow>
         <div className="flex items-end gap-4">
@@ -1445,7 +1423,32 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         })()}
       </Card>
 
+      {/* Keuringen + vloot + meldingen: compact naast elkaar op laptop */}
       <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))" }}>
+        {complianceAlerts.length > 0 && (
+          <Card className="p-5" style={{ border: "1px solid #FF8A0055", background: "#FF8A000A" }}>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center justify-center rounded-full" style={{ width: 26, height: 26, background: "#FF8A0022" }}><ShieldCheck size={14} color="#FF8A00" /></div>
+              <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Keuringen die aandacht nodig hebben</span>
+              <span className="rounded-full flex items-center justify-center" style={{ minWidth: 20, height: 20, padding: "0 6px", background: "#FF8A00", color: "#0A0E14", fontSize: 11, fontWeight: 700, fontFamily: "Inter" }}>{complianceAlerts.length}</span>
+            </div>
+            <div className="space-y-2">
+              {complianceAlerts.slice(0, 6).map(({ vehicle: v, items }) => (
+                <button key={v.id} onClick={() => onSelectVehicle && onSelectVehicle(v.id)} className="w-full text-left flex items-center justify-between gap-2 p-3 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                  <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                    <Kenteken value={v.kenteken} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {items.map((it) => `${it.label}${it.status === "verlopen" ? " verlopen" : ` (${it.dagen}d)`}`).join(" · ")}
+                      </div>
+                    </div>
+                  </div>
+                  {(() => { const worst = items.some((i) => i.status === "verlopen") ? "verlopen" : "binnenkort"; const meta = COMPLIANCE_META[worst]; return <span className="text-xs px-2 py-1 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{meta.label}</span>; })()}
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
         <Card className="p-5">
           <div className="flex items-center justify-between mb-1"><Eyebrow>Vloot status</Eyebrow><button onClick={() => go("vehicles")} style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12, fontWeight: 600 }}>Alles bekijken</button></div>
           <div className="space-y-3 mt-2">
