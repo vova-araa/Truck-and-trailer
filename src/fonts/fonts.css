@@ -1,9 +1,13 @@
-@font-face{font-family:'Oswald';font-style:normal;font-weight:500;font-display:swap;src:url('./oswald-500.woff2') format('woff2');}
-@font-face{font-family:'Oswald';font-style:normal;font-weight:600;font-display:swap;src:url('./oswald-600.woff2') format('woff2');}
-@font-face{font-family:'Oswald';font-style:normal;font-weight:700;font-display:swap;src:url('./oswald-700.woff2') format('woff2');}
-@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('./inter-400.woff2') format('woff2');}
-@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('./inter-500.woff2') format('woff2');}
-@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('./inter-600.woff2') format('woff2');}
-@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('./inter-700.woff2') format('woff2');}
-@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url('./jetbrains-mono-500.woff2') format('woff2');}
-@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:700;font-display:swap;src:url('./jetbrains-mono-700.woff2') format('woff2');}
+/* Zelf-gehoste fonts uit /public/fonts (stabiele, niet-gehashte URLs zodat we ze
+   in index.html kunnen preloaden). Oswald (de titel/koppen) staat op
+   font-display:optional: hij wordt vooraf geladen en meteen gebruikt, en springt
+   nooit zichtbaar om (geen "flash" van het verkeerde lettertype). */
+@font-face{font-family:'Oswald';font-style:normal;font-weight:500;font-display:optional;src:url('/fonts/oswald-500.woff2') format('woff2');}
+@font-face{font-family:'Oswald';font-style:normal;font-weight:600;font-display:optional;src:url('/fonts/oswald-600.woff2') format('woff2');}
+@font-face{font-family:'Oswald';font-style:normal;font-weight:700;font-display:optional;src:url('/fonts/oswald-700.woff2') format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/inter-400.woff2') format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/inter-500.woff2') format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('/fonts/inter-600.woff2') format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/inter-700.woff2') format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/jetbrains-mono-500.woff2') format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/jetbrains-mono-700.woff2') format('woff2');}

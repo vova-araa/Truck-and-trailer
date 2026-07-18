@@ -33,6 +33,12 @@
         "offers": { "@type": "Offer", "category": "subscription" }
       }
     </script>
+    <!-- Kritieke lettertypen vooraf laden zodat de titel/koppen meteen in Oswald
+         verschijnen (geen zichtbare font-swap bij het openen van de site). -->
+    <link rel="preload" href="/fonts/oswald-700.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/oswald-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-600.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
