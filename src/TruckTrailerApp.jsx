@@ -2221,13 +2221,180 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
   );
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours }) {
+/* ---------------------------------------------------------------------
+   WERKBON — melding afronden met ondertekende PDF + kosten naar overzicht
+--------------------------------------------------------------------- */
+function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, onComplete }) {
+  const [monteur, setMonteur] = useState(mechanics[0]?.naam || "");
+  const [uren, setUren] = useState("1");
+  const [tarief, setTarief] = useState("65");
+  const [lines, setLines] = useState([]);
+  const [pick, setPick] = useState("");
+  const [extraOms, setExtraOms] = useState("");
+  const [extraBedrag, setExtraBedrag] = useState("");
+  const [notities, setNotities] = useState(report?.omschrijving || "");
+  const [categorie, setCategorie] = useState("reparatie");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const signedRef = useRef(false);
+
+  const addLine = () => {
+    const part = parts.find((p) => p.id === pick);
+    if (!part) return;
+    setLines((l) => [...l, { key: part.id + "_" + l.length, naam: part.naam, prijs: Number(part.prijs) || 0, aantal: 1 }]);
+    setPick("");
+  };
+  const setAantal = (key, n) => setLines((l) => l.map((x) => (x.key === key ? { ...x, aantal: Math.max(1, Number(n) || 1) } : x)));
+  const removeLine = (key) => setLines((l) => l.filter((x) => x.key !== key));
+
+  const arbeid = (Number(uren) || 0) * (Number(tarief) || 0);
+  const ondTot = lines.reduce((a, x) => a + x.prijs * x.aantal, 0);
+  const extra = Number(extraBedrag) || 0;
+  const total = arbeid + ondTot + extra;
+
+  const relPos = (e) => {
+    const c = canvasRef.current; const rect = c.getBoundingClientRect();
+    const t = e.touches && e.touches[0] ? e.touches[0] : e;
+    return { x: (t.clientX - rect.left) * (c.width / rect.width), y: (t.clientY - rect.top) * (c.height / rect.height) };
+  };
+  const startDraw = (e) => { e.preventDefault(); drawing.current = true; const ctx = canvasRef.current.getContext("2d"); const p = relPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const moveDraw = (e) => { if (!drawing.current) return; e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = relPos(e); ctx.lineTo(p.x, p.y); ctx.strokeStyle = "#0A0E14"; ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.stroke(); signedRef.current = true; };
+  const endDraw = () => { drawing.current = false; };
+  const clearSig = () => { const c = canvasRef.current; if (c) c.getContext("2d").clearRect(0, 0, c.width, c.height); signedRef.current = false; };
+
+  const euro = (n) => "€ " + (Math.round(n * 100) / 100).toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const finish = async () => {
+    if (!notities.trim()) { setErr("Beschrijf kort het uitgevoerde werk."); return; }
+    setBusy(true); setErr("");
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const M = 16; let y = 20;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("WERKBON", M, y);
+      doc.setFontSize(12); doc.setFont("helvetica", "normal"); doc.text(company?.name || "", 210 - M, y, { align: "right" });
+      y += 4; doc.setDrawColor(200); doc.line(M, y, 210 - M, y); y += 8;
+      doc.setFontSize(10);
+      const row = (label, val) => { doc.setFont("helvetica", "bold"); doc.text(label, M, y); doc.setFont("helvetica", "normal"); doc.text(String(val || "-"), M + 40, y); y += 6; };
+      row("Datum", TODAY);
+      row("Voertuig", report?.vehicle);
+      row("Melding door", report?.chauffeur);
+      row("Monteur", monteur);
+      y += 3; doc.setFont("helvetica", "bold"); doc.text("Uitgevoerd werk", M, y); y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.text(doc.splitTextToSize(notities, 210 - 2 * M), M, y); y += 6 * Math.max(1, doc.splitTextToSize(notities, 210 - 2 * M).length) + 2;
+      // Kostenregels
+      doc.setFont("helvetica", "bold"); doc.text("Omschrijving", M, y); doc.text("Aantal", 120, y); doc.text("Prijs", 150, y); doc.text("Totaal", 210 - M, y, { align: "right" }); y += 2;
+      doc.line(M, y, 210 - M, y); y += 6; doc.setFont("helvetica", "normal");
+      const line = (oms, aantal, prijs, tot) => { doc.text(String(oms), M, y); doc.text(String(aantal), 120, y); doc.text(euro(prijs), 150, y); doc.text(euro(tot), 210 - M, y, { align: "right" }); y += 6; };
+      line(`Arbeid (${uren} u × ${euro(Number(tarief) || 0)})`, uren, Number(tarief) || 0, arbeid);
+      lines.forEach((l) => line(l.naam, l.aantal, l.prijs, l.prijs * l.aantal));
+      if (extra > 0) line(extraOms || "Overig", 1, extra, extra);
+      y += 1; doc.line(M, y, 210 - M, y); y += 7;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Totaal (excl. btw)", 150, y); doc.text(euro(total), 210 - M, y, { align: "right" }); y += 14;
+      // Handtekening
+      if (signedRef.current && canvasRef.current) {
+        try { doc.addImage(canvasRef.current.toDataURL("image/png"), "PNG", M, y, 60, 22); } catch {}
+      }
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text("Handtekening klant", M, y + 27);
+      doc.save(`werkbon-${(report?.vehicle || "voertuig").replace(/[^A-Za-z0-9-]/g, "")}-${TODAY}.pdf`);
+
+      onComplete({
+        id: "c" + Date.now(),
+        vehicle: report?.vehicle || "",
+        categorie,
+        bedrag: Math.round(total),
+        datum: TODAY,
+        omschrijving: "Werkbon: " + notities.trim().slice(0, 60),
+      });
+    } catch (e) {
+      setErr("Kon de werkbon niet maken: " + (e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(5,8,12,0.75)", display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: 12 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 540, background: "#0F141B", border: "1px solid #232B38", borderRadius: 16, margin: "12px 0" }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #1A2129" }}>
+          <div className="flex items-center gap-2"><ClipboardList size={18} color="#3B82F6" /><span style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: "#E7ECF3" }}>Werkbon — {report?.vehicle}</span></div>
+          <button onClick={onClose} aria-label="Sluiten"><X size={20} color="#B4BCC9" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div><FieldLabel>Uitgevoerd werk</FieldLabel><textarea className="tg-input w-full" rows={2} value={notities} onChange={(e) => setNotities(e.target.value)} /></div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)" }}>
+            <div style={{ minWidth: 0 }}><FieldLabel>Monteur</FieldLabel>{mechanics.length > 0 ? <select className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)}>{mechanics.map((m) => <option key={m.id}>{m.naam}</option>)}</select> : <input className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)} />}</div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Arbeid (uren)</FieldLabel><input type="number" step="0.5" className="tg-input w-full" value={uren} onChange={(e) => setUren(e.target.value)} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Uurtarief €</FieldLabel><input type="number" className="tg-input w-full" value={tarief} onChange={(e) => setTarief(e.target.value)} /></div>
+          </div>
+
+          <div>
+            <FieldLabel>Onderdelen uit voorraad</FieldLabel>
+            <div className="flex gap-2">
+              <select className="tg-input" style={{ flex: 1, minWidth: 0 }} value={pick} onChange={(e) => setPick(e.target.value)}>
+                <option value="">Kies onderdeel...</option>
+                {parts.map((p) => <option key={p.id} value={p.id}>{p.naam} — {euro(Number(p.prijs) || 0)}</option>)}
+              </select>
+              <Button small onClick={addLine} disabled={!pick}>Toevoegen</Button>
+            </div>
+            {lines.length > 0 && (
+              <div className="space-y-1.5 mt-2">
+                {lines.map((l) => (
+                  <div key={l.key} className="flex items-center gap-2 px-2.5 py-2 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                    <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.naam}</span>
+                    <input type="number" value={l.aantal} onChange={(e) => setAantal(l.key, e.target.value)} className="tg-input" style={{ width: 56, textAlign: "center" }} />
+                    <span style={{ fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#B4BCC9", minWidth: 64, textAlign: "right" }}>{euro(l.prijs * l.aantal)}</span>
+                    <button onClick={() => removeLine(l.key)} style={{ color: "#F0453F" }}><Trash2 size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-3" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
+            <div style={{ minWidth: 0 }}><FieldLabel>Overige kosten (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="Omschrijving" value={extraOms} onChange={(e) => setExtraOms(e.target.value)} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Bedrag €</FieldLabel><input type="number" className="tg-input w-full" value={extraBedrag} onChange={(e) => setExtraBedrag(e.target.value)} /></div>
+          </div>
+
+          <div><FieldLabel>Kostencategorie</FieldLabel><select className="tg-input w-full" value={categorie} onChange={(e) => setCategorie(e.target.value)}><option value="reparatie">Reparatie</option><option value="onderhoud">Onderhoud</option></select></div>
+
+          <div className="flex items-center justify-between px-3 py-3 rounded-lg" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
+            <span style={{ fontFamily: "Inter", fontWeight: 600, color: "#E7ECF3" }}>Totaal (excl. btw)</span>
+            <span style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: "#E7ECF3" }}>{euro(total)}</span>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between"><FieldLabel>Handtekening klant</FieldLabel><button onClick={clearSig} style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 12 }}>Wissen</button></div>
+            <canvas ref={canvasRef} width={480} height={150} style={{ width: "100%", height: 130, background: "#FFFFFF", borderRadius: 10, touchAction: "none", cursor: "crosshair" }}
+              onMouseDown={startDraw} onMouseMove={moveDraw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={moveDraw} onTouchEnd={endDraw} />
+            <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 4 }}>Laat de klant hierboven tekenen met vinger of muis (optioneel).</div>
+          </div>
+
+          {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F" }}>{err}</div>}
+
+          <div className="flex gap-2 pt-1">
+            <Button icon={FileText} onClick={finish} disabled={busy}>{busy ? "Bezig..." : "Werkbon opslaan (PDF)"}</Button>
+            <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+          </div>
+          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>Bij opslaan wordt de melding op <b>Klaar</b> gezet en het totaalbedrag toegevoegd aan het kostenoverzicht.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost }) {
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
   const [schedForm, setSchedForm] = useState({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
+  const [werkbonFor, setWerkbonFor] = useState(null);
 
   const openSchedule = (r) => {
     setMoveMenu(null);
@@ -2298,6 +2465,9 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
                         {col.id !== "klaar" && (
                           <button onClick={() => openSchedule(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5, boxShadow: "0 1px 6px rgba(59,130,246,0.3)" }}><Calendar size={13} /> Inplannen</button>
                         )}
+                        {col.id !== "klaar" && onAddCost && (
+                          <button onClick={() => setWerkbonFor(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}><ClipboardList size={13} /> Werkbon</button>
+                        )}
                         <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}>Verplaatsen <ChevronDown size={13} /></button>
                         {onDelete && (confirmDel === r.id ? (
                           <span className="flex items-center gap-2" style={{ marginLeft: "auto" }}><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs px-2 py-1 rounded" style={{ color: "#fff", background: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Verwijder</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -2327,6 +2497,11 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
             </div>
           ); })}
         </div>
+      )}
+      {werkbonFor && (
+        <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company}
+          onClose={() => setWerkbonFor(null)}
+          onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setWerkbonFor(null); setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
       )}
     </div>
   );
@@ -3887,7 +4062,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} />}
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}

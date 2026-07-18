@@ -33,6 +33,9 @@ export default defineConfig({
           if (id.includes("@supabase")) return "supabase";
           if (id.includes("/react") || id.includes("react-dom") || id.includes("scheduler")) return "react";
           if (id.includes("lucide-react")) return "icons";
+          // jsPDF + al zijn (optionele) deps in één lazy chunk: pas laden bij het
+          // maken van een werkbon-PDF. Zo blijft de eerste app-load klein.
+          if (/(jspdf|fflate|fast-png|pako|html2canvas|canvg|dompurify|rgbcolor|stackblur|core-js|@babel\/runtime|regenerator)/.test(id)) return "pdf";
           return "vendor";
         },
       },
