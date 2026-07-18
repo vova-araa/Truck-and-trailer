@@ -4,9 +4,9 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -2584,7 +2584,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
   );
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost, onUsePart }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost, onUsePart, onRefresh, refreshing }) {
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
@@ -2613,7 +2613,10 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
   return (
     <div className="space-y-5">
       {toast && <Toast message={toast} onDone={() => setToast("")} />}
-      <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
+        {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
+      </div>
       {reports.length === 0 ? <EmptyState icon={CheckCircle2} text="Niks meer te doen. Goed werk!" /> : (
         <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
           {KANBAN_COLS.map((col) => { const items = reports.filter((r) => r.status === col.id); return (
@@ -3660,7 +3663,7 @@ function FieldLabel({ children }) {
   return <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9", fontWeight: 600, marginBottom: 4 }}>{children}</div>;
 }
 
-function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
+function PlanningView({ vehicles, planning, reports, onAdd, onDelete, onRefresh, refreshing }) {
   const isMobile = useIsMobile();
   const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [selectedDate, setSelectedDate] = useState(TODAY);
@@ -3715,6 +3718,7 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik een dag aan om de werkplaats-agenda te zien.</p>
         </div>
         <div className="flex items-center gap-2">
+          {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "..." : "Ververs"}</Button>}
           <Button variant="ghost" small onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)); setSelectedDate(TODAY); }}>Vandaag</Button>
           <Button icon={Plus} onClick={() => openForm()}>Inplannen</Button>
         </div>
@@ -5239,6 +5243,32 @@ export default function TruckGarageApp({ session, onLogout }) {
     if (live) return await uploadReportMedia(companyId, reportId, items);
     return (items || []).map((m) => ({ url: m.url, type: m.type }));
   };
+  // Verversen: haalt de actuele serverdata op zodat nieuwe meldingen (bv. van
+  // een chauffeur) en planning meteen zichtbaar worden — de app heeft nog geen
+  // live-sync, dus dit is de handmatige "ophalen".
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshData = async () => {
+    if (!live || refreshing) return;
+    setRefreshing(true);
+    try {
+      let fresh;
+      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [] }; }
+      else if (role === "garage") fresh = await loadCompanyStateScoped();
+      else fresh = await loadState(companyId);
+      if (fresh) {
+        if (Array.isArray(fresh.reports)) setReports((s) => ({ ...s, [companyId]: fresh.reports }));
+        if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
+        if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
+        // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
+        if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
+      }
+    } catch (e) {
+      console.error("Verversen mislukt:", e?.message || e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
@@ -5429,8 +5459,8 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} onUsePart={usePart} />}
-                {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
+                {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
