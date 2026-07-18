@@ -135,10 +135,99 @@ create trigger trg_guard_superadmin before insert or update on public.profiles
   for each row execute function public.guard_superadmin_flag();
 
 -- COMPANY STATE
+-- De volledige dataset (jsonb) is alleen direct te lezen/schrijven door de
+-- BEHEERDER van het bedrijf (of de platform-superadmin). Werkplaats en chauffeur
+-- krijgen géén directe tabeltoegang — zij gaan via de rol-gescheiden functies
+-- hieronder, die gevoelige delen (kosten, andermans gegevens) weglaten. Zo staat
+-- financiële/PII-data niet zomaar in de browser van een chauffeur of monteur.
 drop policy if exists "state of my company" on public.company_state;
-create policy "state of my company" on public.company_state
-  for all using ( company_id = public.current_company_id() or public.is_superadmin() )
-  with check ( company_id = public.current_company_id() or public.is_superadmin() );
+drop policy if exists "state admin of my company" on public.company_state;
+create policy "state admin of my company" on public.company_state
+  for all using ( (company_id = public.current_company_id() and public.is_company_admin()) or public.is_superadmin() )
+  with check ( (company_id = public.current_company_id() and public.is_company_admin()) or public.is_superadmin() );
+
+-- ---------- ROL-GESCHEIDEN TOEGANG TOT DE BEDRIJFSDATASET ----------
+
+-- Werkplaats laadt de dataset ZONDER financiële data (kosten).
+create or replace function public.load_company_state()
+returns jsonb language plpgsql stable security definer as $$
+declare cid uuid; v_rol text; d jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, rol into cid, v_rol from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  select data into d from public.company_state where company_id = cid;
+  d := coalesce(d, '{}'::jsonb);
+  if v_rol = 'garage' then d := d - 'costs'; end if; -- werkplaats ziet geen kosten
+  return d;
+end $$;
+grant execute on function public.load_company_state() to authenticated;
+
+-- Werkplaats slaat op; bestaande (voor haar verborgen) kosten blijven behouden,
+-- nieuwe kosten (bv. bij een afgeronde klus) worden toegevoegd. Zo kan de
+-- werkplaats de financiële data niet per ongeluk wissen.
+create or replace function public.save_company_state(p_data jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_rol text; existing jsonb; ex_costs jsonb; in_costs jsonb; final jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, rol into cid, v_rol from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  if v_rol not in ('admin','garage') then raise exception 'NOT_ALLOWED'; end if;
+  final := coalesce(p_data, '{}'::jsonb);
+  if v_rol = 'garage' then
+    select data into existing from public.company_state where company_id = cid for update;
+    ex_costs := coalesce(existing -> 'costs', '[]'::jsonb);
+    in_costs := coalesce(p_data -> 'costs', '[]'::jsonb);
+    final := final || jsonb_build_object('costs', ex_costs || coalesce((
+      select jsonb_agg(e) from jsonb_array_elements(in_costs) e
+      where (e ->> 'id') is not null
+        and not exists (select 1 from jsonb_array_elements(ex_costs) x where x ->> 'id' = e ->> 'id')
+    ), '[]'::jsonb));
+  end if;
+  insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
+    on conflict (company_id) do update set data = excluded.data, updated_at = now();
+end $$;
+grant execute on function public.save_company_state(jsonb) to authenticated;
+
+-- Chauffeur: alleen minimale voertuiggegevens (om uit te kiezen) + eigen meldingen.
+create or replace function public.driver_bootstrap()
+returns jsonb language plpgsql stable security definer as $$
+declare cid uuid; d jsonb; vlist jsonb; rlist jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id into cid from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  select data into d from public.company_state where company_id = cid;
+  d := coalesce(d, '{}'::jsonb);
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'id', v->'id', 'kenteken', v->'kenteken', 'merk', v->'merk', 'type', v->'type')), '[]'::jsonb)
+    into vlist from jsonb_array_elements(coalesce(d->'vehicles','[]'::jsonb)) v;
+  select coalesce(jsonb_agg(r), '[]'::jsonb) into rlist
+    from jsonb_array_elements(coalesce(d->'reports','[]'::jsonb)) r
+    where r ->> 'chauffeurId' = auth.uid()::text;
+  return jsonb_build_object('vehicles', vlist, 'reports', rlist);
+end $$;
+grant execute on function public.driver_bootstrap() to authenticated;
+
+-- Chauffeur voegt een melding toe (server dwingt de chauffeur-identiteit af).
+create or replace function public.driver_add_report(p_report jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_naam text; newrep jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  newrep := coalesce(p_report, '{}'::jsonb)
+    || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'), 'status', 'nieuw');
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  update public.company_state
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{reports}',
+          jsonb_build_array(newrep) || coalesce(data -> 'reports', '[]'::jsonb)),
+        updated_at = now()
+    where company_id = cid;
+end $$;
+grant execute on function public.driver_add_report(jsonb) to authenticated;
 
 -- ---------- ABONNEMENTSCODE: een nieuw bedrijf activeren ----------
 -- Jij (platformbeheerder) geeft bij een abonnement een 12-cijferige code uit.

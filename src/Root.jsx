@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
-import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState } from "./api.js";
+import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
 
 export default function Root() {
@@ -17,7 +17,18 @@ export default function Root() {
       if (!user) { setSession(null); setReady(true); return; }
       const profile = await getProfile(user.id);
       const company = await getCompany(profile.company_id);
-      const state = await loadState(profile.company_id);
+      // Rol-gescheiden laden: een beheerder/superadmin leest de volledige dataset;
+      // de werkplaats krijgt 'm zonder kosten; een chauffeur krijgt alleen
+      // voertuigen (om te kiezen) + zijn eigen meldingen — nooit de rest.
+      let state;
+      if (profile.rol === "chauffeur") {
+        const boot = await driverBootstrap();
+        state = { vehicles: boot.vehicles || [], reports: boot.reports || [] };
+      } else if (profile.rol === "garage") {
+        state = await loadCompanyStateScoped();
+      } else {
+        state = await loadState(profile.company_id);
+      }
       // Platformbeheerder: laad álle bedrijven + hun data zodat je alles kunt inzien.
       let allCompanies = null;
       if (profile.is_superadmin) {

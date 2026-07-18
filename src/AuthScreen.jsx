@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Building2, ShieldCheck, LogIn, KeyRound, AlertTriangle } from "lucide-react";
-import { signIn, signUpCompany, signUpWithCode, requestPasswordReset, activationCodeInfo } from "./api.js";
+import { signIn, signUpCompany, signUpWithCode, requestPasswordReset, activationCodeInfo, activationCodeValid } from "./api.js";
 
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -18,16 +18,30 @@ export default function AuthScreen({ onAuthed }) {
   // abonnement). Zodra ze bekend zijn, hoeven bedrijf/naam/e-mail niet opnieuw.
   const [codeInfo, setCodeInfo] = useState(null); // null = nog niet opgehaald / geen data
   const [codeChecking, setCodeChecking] = useState(false);
+  // Stap in "Bedrijf activeren": 0 = alleen de code invoeren, 1 = na akkoord de
+  // rest (gegevens + wachtwoord).
+  const [regStep, setRegStep] = useState(0);
 
-  // Zoek de bij de code horende gegevens op zodra er 12 cijfers staan.
-  const onRegCode = async (raw) => {
+  // Bij het typen van de code: reset naar stap 0 (code) tot er opnieuw akkoord is.
+  const onRegCode = (raw) => {
     const clean = raw.replace(/[^0-9]/g, "").slice(0, 12);
     setReg((r) => ({ ...r, code: clean }));
     setCodeInfo(null);
-    if (clean.length !== 12) return;
+    setRegStep(0);
+    setErr("");
+  };
+
+  // Stap 1: eerst alleen de code controleren. Pas na akkoord tonen we de rest.
+  const acceptCode = async () => {
+    setErr("");
+    if ((reg.code || "").replace(/\D/g, "").length !== 12) return setErr("Vul de 12-cijferige abonnementscode in.");
     setCodeChecking(true);
     try {
-      const info = await activationCodeInfo(clean);
+      const ok = await activationCodeValid(reg.code);
+      if (!ok) { setErr("Deze code is ongeldig of al gebruikt."); return; }
+      // Geldig: haal (optioneel) de vooraf-ingevulde gegevens op en ga naar stap 2.
+      let info = null;
+      try { info = await activationCodeInfo(reg.code); } catch { /* niet kritiek */ }
       if (info && (info.company_name || info.admin_email || info.admin_naam)) {
         setCodeInfo(info);
         setReg((r) => ({
@@ -38,8 +52,9 @@ export default function AuthScreen({ onAuthed }) {
           telefoon: info.admin_telefoon || r.telefoon,
         }));
       }
-    } catch {
-      /* stil: geldigheid wordt bij activeren alsnog gecontroleerd */
+      setRegStep(1);
+    } catch (e) {
+      setErr(mapError(e));
     } finally {
       setCodeChecking(false);
     }
@@ -126,7 +141,7 @@ export default function AuthScreen({ onAuthed }) {
 
         <div style={toggleRow}>
           <button style={tab(mode === "login")} onClick={() => { setMode("login"); setErr(""); setNotice(""); }}>Inloggen</button>
-          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); }}>Bedrijf activeren</button>
+          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); setRegStep(0); }}>Bedrijf activeren</button>
         </div>
 
         {mode === "join" ? (
@@ -169,60 +184,51 @@ export default function AuthScreen({ onAuthed }) {
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            <div style={sectionLabel}>Abonnementscode</div>
-            <input style={{ ...input, letterSpacing: 2, fontFamily: "'JetBrains Mono', monospace" }} inputMode="numeric" maxLength={14} placeholder="12-cijferige code" value={reg.code}
-              onChange={(e) => onRegCode(e.target.value)} />
-            <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>
-              {codeChecking ? "Code controleren…" : "Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren."}
-            </div>
-
-            {codeInfo ? (
-              // Gegevens die al aan de code hangen (ingevuld bij het abonnement)
-              // tonen we als samenvatting; alleen wat ONTBREEKT vragen we nog na,
-              // plus een wachtwoord. Zo loopt een half-ingevulde code niet vast.
+            {regStep === 0 ? (
+              // Stap 1: ALLEEN de code invoeren. Pas na akkoord komt de rest.
               <>
-                {(codeInfo.company_name || codeInfo.admin_naam || codeInfo.admin_email) && (
-                  <div style={summaryBox}>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, marginBottom: 6 }}>
-                      <ShieldCheck size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 5, color: "#34D399" }} />
-                      Gegevens gevonden bij je abonnement
-                    </div>
-                    {codeInfo.company_name && <div style={summaryRow}><span style={summaryKey}>Bedrijf</span><span style={summaryVal}>{codeInfo.company_name}</span></div>}
-                    {codeInfo.admin_naam && <div style={summaryRow}><span style={summaryKey}>Beheerder</span><span style={summaryVal}>{codeInfo.admin_naam}</span></div>}
-                    {codeInfo.admin_email && <div style={summaryRow}><span style={summaryKey}>E-mail</span><span style={summaryVal}>{codeInfo.admin_email}</span></div>}
+                <div style={sectionLabel}>Abonnementscode</div>
+                <input style={{ ...input, letterSpacing: 2, fontFamily: "'JetBrains Mono', monospace" }} inputMode="numeric" maxLength={14} placeholder="12-cijferige code" value={reg.code}
+                  onChange={(e) => onRegCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && acceptCode()} />
+                <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>
+                  Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren.
+                </div>
+                {err && <div style={errStyle}>{err}</div>}
+                <button style={primaryBtn} disabled={codeChecking || reg.code.length !== 12} onClick={acceptCode}>
+                  <KeyRound size={16} /> {codeChecking ? "Code controleren…" : "Code controleren"}
+                </button>
+              </>
+            ) : (
+              // Stap 2: code is akkoord — gegevens (voor zover nodig) + wachtwoord.
+              <>
+                <div style={{ ...summaryBox, borderColor: "#34D39955" }}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span><ShieldCheck size={13} style={{ display: "inline", verticalAlign: "-2px", marginRight: 5, color: "#34D399" }} /> Code akkoord</span>
+                    <button type="button" onClick={() => { setRegStep(0); setErr(""); }} style={{ ...linkBtn, fontSize: 11.5 }}>Andere code</button>
                   </div>
-                )}
-                {!codeInfo.company_name && (<>
+                  {codeInfo && codeInfo.company_name && <div style={{ ...summaryRow, marginTop: 6 }}><span style={summaryKey}>Bedrijf</span><span style={summaryVal}>{codeInfo.company_name}</span></div>}
+                  {codeInfo && codeInfo.admin_naam && <div style={summaryRow}><span style={summaryKey}>Beheerder</span><span style={summaryVal}>{codeInfo.admin_naam}</span></div>}
+                  {codeInfo && codeInfo.admin_email && <div style={summaryRow}><span style={summaryKey}>E-mail</span><span style={summaryVal}>{codeInfo.admin_email}</span></div>}
+                </div>
+                {(!codeInfo || !codeInfo.company_name) && (<>
                   <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
                   <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
                 </>)}
-                {(!codeInfo.admin_naam || !codeInfo.admin_email) && <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>}
-                {!codeInfo.admin_naam && <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
-                {!codeInfo.admin_email && <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
+                {(!codeInfo || !codeInfo.admin_naam || !codeInfo.admin_email) && <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>}
+                {(!codeInfo || !codeInfo.admin_naam) && <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
+                {(!codeInfo || !codeInfo.admin_email) && <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
+                {(!codeInfo || !codeInfo.company_name) && <input style={input} placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />}
                 <div style={{ ...sectionLabel, marginTop: 2 }}>Kies een wachtwoord</div>
                 <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
                 <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
                   onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
-              </>
-            ) : (
-              // Terugval: code zonder vooraf-ingevulde gegevens (bv. oudere code).
-              <>
-                <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
-                <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
-                <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>
-                <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />
-                <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />
-                <input style={input} placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />
-                <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
-                <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
-                  onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
+                {err && <div style={errStyle}>{err}</div>}
+                <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Activeren..." : "Bedrijf activeren & starten"}</button>
+                <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", textAlign: "center" }}>
+                  Je wordt direct ingelogd als beheerder. Daarna kies je in de tutorial welke onderdelen je gebruikt en nodig je je medewerkers uit.
+                </div>
               </>
             )}
-            {err && <div style={errStyle}>{err}</div>}
-            <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Activeren..." : "Bedrijf activeren & starten"}</button>
-            <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", textAlign: "center" }}>
-              Je wordt direct ingelogd als beheerder. Daarna nodig je je medewerkers uit met de bedrijfscode (menu Gebruikers).
-            </div>
           </div>
         )}
 

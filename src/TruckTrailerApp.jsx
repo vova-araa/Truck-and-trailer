@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -4353,6 +4353,10 @@ export default function TruckGarageApp({ session, onLogout }) {
 
   useEffect(() => {
     if (!live) return;
+    // Chauffeurs slaan NOOIT de hele dataset op (ze hebben 'm ook niet); hun
+    // meldingen gaan los via driver_add_report. Anders zou hun minimale weergave
+    // de volledige bedrijfsdata overschrijven.
+    if (session.profile.rol === "chauffeur") return;
     // Sla niet meteen op bij het laden — pas na een echte wijziging.
     if (firstSave.current) { firstSave.current = false; lastCid.current = companyId; return; }
     // Alleen van bedrijf gewisseld (superadmin)? Dan niets opslaan.
@@ -4375,7 +4379,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       modules: modules[cid] || { ...DEFAULT_MODULES },
       onboarded: onboarded[cid] === true,
     };
-    saveStateDebounced(cid, dataset, setSaveStatus);
+    saveStateDebounced(cid, dataset, setSaveStatus, session.profile.rol);
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan.
@@ -4479,7 +4483,11 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deleteMaintenance = (id) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addCost = (c) => setCosts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), c] }));
   const deleteCost = (id) => setCosts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
-  const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+  const addReport = (r) => {
+    setReports((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+    // Chauffeur: los opslaan via de veilige functie (ze slaan de hele dataset niet op).
+    if (live && role === "chauffeur") driverAddReport(r).catch((e) => console.error("Melding opslaan mislukt:", e?.message || e));
+  };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
   // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.
   const uploadMedia = async (reportId, items) => {

@@ -260,20 +260,43 @@ export async function loadState(companyId) {
   return data.data || emptyDataset();
 }
 
+// Werkplaats (garage) leest de dataset via een rol-gescheiden functie die de
+// kosten weglaat; chauffeurs gebruiken driverBootstrap. Beheerders lezen direct.
+export async function loadCompanyStateScoped() {
+  const { data, error } = await supabase.rpc("load_company_state");
+  if (error) throw error;
+  return data || {};
+}
+
+// Chauffeur: minimale gegevens (voertuigen om te kiezen + eigen meldingen).
+export async function driverBootstrap() {
+  const { data, error } = await supabase.rpc("driver_bootstrap");
+  if (error) throw error;
+  return data || { vehicles: [], reports: [] };
+}
+
+// Chauffeur voegt een melding toe (server bepaalt de chauffeur-identiteit).
+export async function driverAddReport(report) {
+  const { error } = await supabase.rpc("driver_add_report", { p_report: report });
+  if (error) throw error;
+}
+
 // Debounce-timer PER bedrijf, zodat een save voor bedrijf A niet wordt gewist
 // als (de superadmin) net bedrijf B bewerkt.
 const saveTimers = {};
 // Slaat de dataset op met een status-callback zodat de UI kan tonen of het echt
-// bewaard is: onStatus("pending" | "saving" | "saved" | "error").
-export function saveStateDebounced(companyId, dataset, onStatus) {
+// bewaard is: onStatus("pending" | "saving" | "saved" | "error"). Voor de
+// werkplaats (role="garage") loopt het via save_company_state, die de kosten
+// server-side samenvoegt zodat de werkplaats de financiële data niet wist.
+export function saveStateDebounced(companyId, dataset, onStatus, role) {
   clearTimeout(saveTimers[companyId]);
   onStatus?.("pending");
   saveTimers[companyId] = setTimeout(async () => {
     onStatus?.("saving");
     try {
-      const { error } = await supabase
-        .from("company_state")
-        .upsert({ company_id: companyId, data: dataset, updated_at: new Date().toISOString() });
+      const { error } = role === "garage"
+        ? await supabase.rpc("save_company_state", { p_data: dataset })
+        : await supabase.from("company_state").upsert({ company_id: companyId, data: dataset, updated_at: new Date().toISOString() });
       onStatus?.(error ? "error" : "saved");
       if (error) console.error("Opslaan mislukt:", error.message);
     } catch (e) {
