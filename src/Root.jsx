@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
-import { getSessionUser, getProfile, getCompany, loadState, signOut } from "./api.js";
+import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
 
 export default function Root() {
@@ -18,7 +18,12 @@ export default function Root() {
       const profile = await getProfile(user.id);
       const company = await getCompany(profile.company_id);
       const state = await loadState(profile.company_id);
-      setSession({ user, profile, company, state });
+      // Platformbeheerder: laad álle bedrijven + hun data zodat je alles kunt inzien.
+      let allCompanies = null;
+      if (profile.is_superadmin) {
+        try { allCompanies = await loadAllCompaniesWithState(); } catch (e) { console.warn("Kon niet alle bedrijven laden:", e?.message || e); }
+      }
+      setSession({ user, profile, company, state, allCompanies });
     } catch (e) {
       setLoadErr(e.message || String(e));
     } finally {

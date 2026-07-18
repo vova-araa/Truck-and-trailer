@@ -3807,44 +3807,70 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
 
-  const initFrom = (key, fallback) => (live ? { [liveCompanyId]: session.state[key] ?? fallback } : fallback);
+  // Superadmin? Dan is álle bedrijfsdata geladen (session.allCompanies) zodat je
+  // tussen bedrijven kunt wisselen. Anders alleen je eigen bedrijf.
+  const superList = live && Array.isArray(session.allCompanies) && session.allCompanies.length ? session.allCompanies : null;
+  const initSlice = (key, seed, emptyVal = []) => {
+    if (!live) return seed;
+    if (superList) {
+      const m = {};
+      superList.forEach((x) => { const v = x.state ? x.state[key] : undefined; m[x.company.id] = v != null ? v : emptyVal; });
+      m[liveCompanyId] = session.state[key] != null ? session.state[key] : emptyVal;
+      return m;
+    }
+    return { [liveCompanyId]: session.state[key] != null ? session.state[key] : emptyVal };
+  };
 
   const [companies, setCompanies] = useState(
-    live ? [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent, join_code: session.company.join_code }] : seedCompanies
+    !live ? seedCompanies
+      : superList
+        ? superList.map((x) => ({ id: x.company.id, name: x.company.name, slug: x.company.slug, accent: x.company.accent, join_code: x.company.join_code }))
+        : [{ id: session.company.id, name: session.company.name, slug: session.company.slug, accent: session.company.accent, join_code: session.company.join_code }]
   );
-  const [vehicles, setVehicles] = useState(() => initFrom("vehicles", seedVehicles));
-  const [trailers, setTrailers] = useState(() => initFrom("trailers", seedTrailers));
-  const [parts, setParts] = useState(() => initFrom("parts", seedParts));
-  const [maintenance, setMaintenance] = useState(() => initFrom("maintenance", seedMaintenance));
-  const [costs, setCosts] = useState(() => initFrom("costs", seedCosts));
-  const [reports, setReports] = useState(() => initFrom("reports", seedReports));
-  const [users, setUsers] = useState(() => (live ? { [liveCompanyId]: [session.profile, ...(session.state.users || [])] } : seedUsers));
-  const [planning, setPlanning] = useState(() => initFrom("planning", seedPlanning));
-  const [drivers, setDrivers] = useState(() => (live ? { [liveCompanyId]: session.state.drivers || [] } : seedDrivers));
-  const [availability, setAvailability] = useState(() => (live ? { [liveCompanyId]: session.state.availability || {} } : seedAvailability));
-  const [workshopHours, setWorkshopHours] = useState(() => (live ? { [liveCompanyId]: session.state.workshopHours || { van: "08:00", tot: "17:00" } } : seedWorkshopHours));
+  const [vehicles, setVehicles] = useState(() => initSlice("vehicles", seedVehicles));
+  const [trailers, setTrailers] = useState(() => initSlice("trailers", seedTrailers));
+  const [parts, setParts] = useState(() => initSlice("parts", seedParts));
+  const [maintenance, setMaintenance] = useState(() => initSlice("maintenance", seedMaintenance));
+  const [costs, setCosts] = useState(() => initSlice("costs", seedCosts));
+  const [reports, setReports] = useState(() => initSlice("reports", seedReports));
+  const [users, setUsers] = useState(() => {
+    if (!live) return seedUsers;
+    const base = initSlice("users", seedUsers, []);
+    base[liveCompanyId] = [session.profile, ...((base[liveCompanyId] || []).filter((u) => u.id !== session.profile.id))];
+    return base;
+  });
+  const [planning, setPlanning] = useState(() => initSlice("planning", seedPlanning));
+  const [drivers, setDrivers] = useState(() => initSlice("drivers", seedDrivers));
+  const [availability, setAvailability] = useState(() => initSlice("availability", seedAvailability, {}));
+  const [workshopHours, setWorkshopHours] = useState(() => initSlice("workshopHours", seedWorkshopHours, { van: "08:00", tot: "17:00" }));
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
   const firstSave = useRef(true);
+  const lastCid = useRef(liveCompanyId);
 
   useEffect(() => {
     if (!live) return;
     // Sla niet meteen op bij het laden — pas na een echte wijziging.
-    if (firstSave.current) { firstSave.current = false; return; }
+    if (firstSave.current) { firstSave.current = false; lastCid.current = companyId; return; }
+    // Alleen van bedrijf gewisseld (superadmin)? Dan niets opslaan.
+    if (lastCid.current !== companyId) { lastCid.current = companyId; return; }
+    // Sla het ACTIEF bekeken bedrijf op (voor een gewone beheerder is dat altijd
+    // zijn eigen bedrijf; voor de superadmin het bedrijf dat 'ie nu inziet).
+    const cid = companyId;
     const dataset = {
-      vehicles: vehicles[liveCompanyId] || [],
-      trailers: trailers[liveCompanyId] || [],
-      parts: parts[liveCompanyId] || [],
-      maintenance: maintenance[liveCompanyId] || [],
-      costs: costs[liveCompanyId] || [],
-      reports: reports[liveCompanyId] || [],
-      users: (users[liveCompanyId] || []).filter((u) => u.id !== session.profile.id),
-      planning: planning[liveCompanyId] || [],
-      drivers: drivers[liveCompanyId] || [],
-      availability: availability[liveCompanyId] || {},
-      workshopHours: workshopHours[liveCompanyId] || { van: "08:00", tot: "17:00" },
+      vehicles: vehicles[cid] || [],
+      trailers: trailers[cid] || [],
+      parts: parts[cid] || [],
+      maintenance: maintenance[cid] || [],
+      costs: costs[cid] || [],
+      reports: reports[cid] || [],
+      users: (users[cid] || []).filter((u) => u.id !== session.profile.id),
+      planning: planning[cid] || [],
+      drivers: drivers[cid] || [],
+      availability: availability[cid] || {},
+      workshopHours: workshopHours[cid] || { van: "08:00", tot: "17:00" },
     };
-    saveStateDebounced(liveCompanyId, dataset, setSaveStatus);
-  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, live, liveCompanyId, session]);
+    saveStateDebounced(cid, dataset, setSaveStatus);
+  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan.
   useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);

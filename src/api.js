@@ -158,6 +158,17 @@ export async function listCompanies() {
   return data;
 }
 
+// Super-admin only (RLS staat dit alleen toe voor is_superadmin): alle bedrijven
+// mét hun opgeslagen dataset, zodat de platformbeheerder alles kan inzien.
+export async function loadAllCompaniesWithState() {
+  const { data: comps, error } = await supabase.from("companies").select("*").order("created_at");
+  if (error) throw error;
+  const { data: states } = await supabase.from("company_state").select("company_id, data");
+  const stateMap = {};
+  (states || []).forEach((s) => { stateMap[s.company_id] = s.data || {}; });
+  return (comps || []).map((c) => ({ company: c, state: stateMap[c.id] || emptyDataset() }));
+}
+
 // ---------- STATE (per company jsonb) ----------
 
 export async function loadState(companyId) {

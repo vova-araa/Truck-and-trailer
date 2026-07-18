@@ -71,17 +71,47 @@ drop policy if exists "read profiles in my company" on public.profiles;
 create policy "read profiles in my company" on public.profiles
   for select using ( company_id = public.current_company_id() or public.is_superadmin() or id = auth.uid() );
 
+-- helper: is de huidige gebruiker BEHEERDER (van zijn eigen bedrijf)?
+create or replace function public.is_company_admin()
+returns boolean language sql stable security definer as $$
+  select exists(select 1 from public.profiles where id = auth.uid() and rol = 'admin')
+$$;
+
+-- Je mag alleen je EIGEN profiel-rij aanmaken (id = jij). Medewerker-accounts
+-- worden server-side (service_role) of via de join-code-functie aangemaakt.
 drop policy if exists "insert own profile" on public.profiles;
 create policy "insert own profile" on public.profiles
-  for insert with check ( id = auth.uid() or company_id = public.current_company_id() );
+  for insert with check ( id = auth.uid() );
 
+-- Profielen bijwerken mag alleen de BEHEERDER van hetzelfde bedrijf (of de
+-- platform-superadmin). Zo kan een chauffeur/werkplaats niemand aanpassen.
 drop policy if exists "update profiles in my company" on public.profiles;
-create policy "update profiles in my company" on public.profiles
-  for update using ( company_id = public.current_company_id() or public.is_superadmin() );
+drop policy if exists "admins update profiles in my company" on public.profiles;
+create policy "admins update profiles in my company" on public.profiles
+  for update using ( (company_id = public.current_company_id() and public.is_company_admin()) or public.is_superadmin() )
+  with check ( (company_id = public.current_company_id() and public.is_company_admin()) or public.is_superadmin() );
 
+-- Verwijderen mag alleen de beheerder (of superadmin), en nooit zichzelf.
 drop policy if exists "delete profiles in my company" on public.profiles;
-create policy "delete profiles in my company" on public.profiles
-  for delete using ( company_id = public.current_company_id() and id <> auth.uid() );
+drop policy if exists "admins delete profiles in my company" on public.profiles;
+create policy "admins delete profiles in my company" on public.profiles
+  for delete using ( ((company_id = public.current_company_id() and public.is_company_admin()) or public.is_superadmin()) and id <> auth.uid() );
+
+-- Extra slot: niemand kan zichzelf tot platform-superadmin promoveren via de
+-- app. Alleen jij, met de SQL Editor / service_role (auth.uid() is dan null).
+create or replace function public.guard_superadmin_flag()
+returns trigger language plpgsql security definer as $$
+begin
+  if (new.is_superadmin is distinct from old.is_superadmin)
+     and auth.uid() is not null
+     and not public.is_superadmin() then
+    raise exception 'Niet toegestaan: is_superadmin kan alleen door de platformbeheerder gezet worden.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_guard_superadmin on public.profiles;
+create trigger trg_guard_superadmin before update on public.profiles
+  for each row execute function public.guard_superadmin_flag();
 
 -- COMPANY STATE
 drop policy if exists "state of my company" on public.company_state;
