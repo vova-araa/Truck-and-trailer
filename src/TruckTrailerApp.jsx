@@ -2325,8 +2325,8 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
         </div>
         <div className="p-5 space-y-4">
           <div><FieldLabel>Uitgevoerd werk</FieldLabel><textarea className="tg-input w-full" rows={2} value={notities} onChange={(e) => setNotities(e.target.value)} /></div>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)" }}>
-            <div style={{ minWidth: 0 }}><FieldLabel>Monteur</FieldLabel>{mechanics.length > 0 ? <select className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)}>{mechanics.map((m) => <option key={m.id}>{m.naam}</option>)}</select> : <input className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)} />}</div>
+          <div><FieldLabel>Monteur</FieldLabel>{mechanics.length > 0 ? <select className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)}>{mechanics.map((m) => <option key={m.id}>{m.naam}</option>)}</select> : <input className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)} />}</div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
             <div style={{ minWidth: 0 }}><FieldLabel>Arbeid (uren)</FieldLabel><input type="number" step="0.5" className="tg-input w-full" value={uren} onChange={(e) => setUren(e.target.value)} /></div>
             <div style={{ minWidth: 0 }}><FieldLabel>Uurtarief €</FieldLabel><input type="number" className="tg-input w-full" value={tarief} onChange={(e) => setTarief(e.target.value)} /></div>
           </div>
@@ -2804,9 +2804,9 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
 
                       {day.on ? (
                         <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
-                          <input type="time" className="tg-input" style={{ padding: "6px 8px" }} value={day.van} onChange={(e) => updateDay(wd.key, { van: e.target.value })} />
-                          <span style={{ color: "#98A1B0" }}>–</span>
-                          <input type="time" className="tg-input" style={{ padding: "6px 8px" }} value={day.tot} onChange={(e) => updateDay(wd.key, { tot: e.target.value })} />
+                          <input type="time" className="tg-input" style={{ flex: 1, minWidth: 0, textAlign: "center", padding: "8px 6px" }} value={day.van} onChange={(e) => updateDay(wd.key, { van: e.target.value })} />
+                          <span style={{ color: "#98A1B0", flexShrink: 0 }}>–</span>
+                          <input type="time" className="tg-input" style={{ flex: 1, minWidth: 0, textAlign: "center", padding: "8px 6px" }} value={day.tot} onChange={(e) => updateDay(wd.key, { tot: e.target.value })} />
                         </div>
                       ) : (
                         <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", flex: 1 }}>Niet beschikbaar</span>
@@ -3638,6 +3638,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
    CHAUFFEURS — certificatenbeheer (rijbewijs, Code 95, ADR, medische keuring)
 --------------------------------------------------------------------- */
 function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
+  const isMobile = useIsMobile();
   const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "" });
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -3667,7 +3668,7 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
       {open && (
         <Card className="p-5">
           <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: "#E7ECF3", marginBottom: 12 }}>{editId ? "Chauffeur bewerken" : "Nieuwe chauffeur"}</div>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)" }}>
             <div style={{ minWidth: 0 }}><FieldLabel>Naam</FieldLabel><input className="tg-input w-full" placeholder="Bv. R. Postma" value={form.naam} onChange={(e) => setForm({ ...form, naam: e.target.value })} /></div>
             <div style={{ minWidth: 0 }}><FieldLabel>Telefoon (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="+31 6 ..." value={form.telefoon} onChange={(e) => setForm({ ...form, telefoon: e.target.value })} /></div>
             <div style={{ minWidth: 0 }}><FieldLabel>Rijbewijs C/CE geldig tot</FieldLabel><input type="date" className="tg-input w-full" value={form.rijbewijsTot} onChange={(e) => setForm({ ...form, rijbewijsTot: e.target.value })} /></div>
@@ -3942,10 +3943,19 @@ export default function TruckGarageApp({ session, onLogout }) {
         ::-webkit-scrollbar-thumb { background: #232B38; border-radius: 6px; border: 2px solid #0A0E14; }
         ::-webkit-scrollbar-thumb:hover { background: #2E3948; }
         * { scrollbar-width: thin; scrollbar-color: #232B38 transparent; }
+        /* Datum/tijd-velden: geef de waarde alle ruimte, klok-icoon compact zodat
+           "08:00" nooit wordt afgekapt tot "08:(" op smalle schermen. */
+        input[type="date"].tg-input::-webkit-calendar-picker-indicator,
+        input[type="time"].tg-input::-webkit-calendar-picker-indicator { margin-left: 2px; padding: 0; opacity: 0.55; cursor: pointer; }
         @media (min-width: 768px) { .tg-input { font-size: 13px; } }
         @media (max-width: 767px) {
           h1 { font-size: 22px !important; line-height: 1.15 !important; }
-          .tg-input { font-size: 16px; }
+          .tg-input { font-size: 16px; padding: 11px 10px; }
+          /* Op de telefoon nemen datum/tijd-velden hun eigen ruimte; verberg het
+             klok-icoon (de OS-picker opent toch bij tikken) zodat de tijd past. */
+          input[type="date"].tg-input::-webkit-calendar-picker-indicator,
+          input[type="time"].tg-input::-webkit-calendar-picker-indicator { display: none; }
+          input[type="date"].tg-input, input[type="time"].tg-input { min-height: 44px; }
         }
       `}</style>
 
