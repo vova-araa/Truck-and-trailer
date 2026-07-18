@@ -351,6 +351,30 @@ const COMMON_ISSUES = [
 --------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------
+   APPARAAT-MELDINGEN — browser/PWA-notificaties (werkt terwijl de app open of
+   op de achtergrond staat). Echte push als de app helemaal dicht is vereist
+   VAPID + serverkant; dat komt later.
+--------------------------------------------------------------------- */
+function notifySupported() {
+  return typeof window !== "undefined" && "Notification" in window;
+}
+async function enableDeviceNotifications() {
+  if (!notifySupported()) throw new Error("Dit apparaat/deze browser ondersteunt geen meldingen.");
+  if (Notification.permission === "granted") return "granted";
+  if (Notification.permission === "denied") throw new Error("Meldingen staan geblokkeerd. Zet ze aan in je browser-/telefooninstellingen.");
+  const perm = await Notification.requestPermission();
+  return perm;
+}
+function showDeviceNotification(title, body) {
+  try {
+    if (!notifySupported() || Notification.permission !== "granted") return;
+    // Alleen tonen als de gebruiker niet actief naar de app kijkt.
+    if (typeof document !== "undefined" && document.visibilityState === "visible") return;
+    new Notification(title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: "tt-" + title });
+  } catch {}
+}
+
+/* ---------------------------------------------------------------------
    AI HELPER — gedeelde Claude API call (tekst + beeld), robuuste parsing
 --------------------------------------------------------------------- */
 
@@ -944,6 +968,9 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                 browsers zwart blijft). */}
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             <input ref={videoRef} type="file" accept="video/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+            <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", lineHeight: 1.5 }}>
+              📱 <b style={{ color: "#B4BCC9" }}>iPhone-tip:</b> blijft de camera zwart? Kies in het menu dan <b style={{ color: "#B4BCC9" }}>"Fotobibliotheek"</b> — of maak eerst een foto met de Camera-app en voeg 'm hier toe.
+            </div>
             {media.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {media.map((m, i) => (
@@ -3159,6 +3186,38 @@ function CompanySupportCard() {
   );
 }
 
+function DeviceNotificationsCard() {
+  const [status, setStatus] = useState(() => (notifySupported() ? Notification.permission : "unsupported"));
+  const [err, setErr] = useState("");
+  const enable = async () => {
+    setErr("");
+    try {
+      const p = await enableDeviceNotifications();
+      setStatus(p);
+      if (p === "granted") { try { new Notification("Truck & Trailer", { body: "Meldingen staan aan op dit apparaat.", icon: "/icon-192.png" }); } catch {} }
+    } catch (e) { setErr(e.message || "Kon meldingen niet aanzetten."); }
+  };
+  return (
+    <Card className="p-5">
+      <Eyebrow><span className="inline-flex items-center gap-1.5"><Bell size={13} color="#3B82F6" /> Meldingen op dit apparaat</span></Eyebrow>
+      <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+        Krijg een melding op dit apparaat bij een nieuwe melding op de werkvloer (werkt terwijl de app open of op de achtergrond staat). Zet dit op elke telefoon/computer los aan.
+      </div>
+      {status === "unsupported" ? (
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>Dit apparaat/deze browser ondersteunt geen meldingen.</div>
+      ) : status === "granted" ? (
+        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "#12271C", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600 }}><Check size={14} /> Meldingen staan aan op dit apparaat.</div>
+      ) : status === "denied" ? (
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00" }}>Meldingen zijn geblokkeerd. Zet ze aan bij de site-instellingen van je browser/telefoon en probeer opnieuw.</div>
+      ) : (
+        <Button small icon={Bell} onClick={enable}>Meldingen aanzetten</Button>
+      )}
+      {err && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{err}</div>}
+      <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 10 }}>Meldingen wanneer de app helemaal gesloten is (echte push) volgen later.</div>
+    </Card>
+  );
+}
+
 function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial, subscription, onCancelSub, onReactivateSub }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
@@ -3272,6 +3331,10 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
           <span style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>Standaard: 1 maand.</span>
         </div>
       </Card>
+
+      {/* Meldingen op dit apparaat (browser/PWA) */}
+      <DeviceNotificationsCard />
+
 
       {/* Mechanic availability */}
       <Card className="p-5">
@@ -3676,7 +3739,7 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
                 <div className="mb-2 p-2.5 rounded-lg flex items-start gap-2" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
                   <Camera size={14} color="#8FB8FF" style={{ marginTop: 1, flexShrink: 0 }} />
                   <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA", lineHeight: 1.45 }}>
-                    Fotografeer <b style={{ color: "#E7ECF3" }}>{zoneLabel(activeZone)}</b> — houd het hele onderdeel in beeld, ga dichtbij genoeg om schade te zien en zorg voor goed licht.
+                    Fotografeer <b style={{ color: "#E7ECF3" }}>{zoneLabel(activeZone)}</b> — houd het hele onderdeel in beeld, ga dichtbij genoeg om schade te zien en zorg voor goed licht. <span style={{ color: "#98A1B0" }}>iPhone: blijft de camera zwart, kies dan "Fotobibliotheek".</span>
                   </span>
                 </div>
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
@@ -5275,6 +5338,22 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Waarschuwingstermijn toepassen op de compliance-berekeningen zodra die
   // instelling verandert (of bij het wisselen van bedrijf).
   useEffect(() => { setWarnMonths(cHours.warnMonths); }, [cHours.warnMonths]);
+
+  // Apparaat-melding bij een nieuwe melding op de werkvloer (voor werkplaats/
+  // beheerder). Werkt terwijl de app op de achtergrond staat, mits de gebruiker
+  // meldingen heeft aangezet in Instellingen.
+  const notifSeen = useRef(null);
+  useEffect(() => {
+    if (!live) return;
+    const openIds = cReports.filter((r) => r.status !== "klaar").map((r) => r.id);
+    if (notifSeen.current === null) { notifSeen.current = new Set(openIds); return; }
+    const fresh = openIds.filter((id) => !notifSeen.current.has(id));
+    notifSeen.current = new Set(openIds);
+    if (fresh.length && (currentUser.rol === "garage" || currentUser.rol === "admin")) {
+      showDeviceNotification("Nieuwe melding", fresh.length === 1 ? "Er is een nieuwe melding op de werkvloer." : `${fresh.length} nieuwe meldingen op de werkvloer.`);
+    }
+  }, [cReports, live]);
+
   const cModules = modules[companyId] || { ...DEFAULT_MODULES };
   const cOnboarded = onboarded[companyId] === true;
   const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
