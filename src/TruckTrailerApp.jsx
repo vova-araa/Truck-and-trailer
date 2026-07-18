@@ -983,6 +983,45 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Dashboard</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Overzicht van vloot en garage — {company.name}</p>
       </div>
+
+      {/* Planning van de dag — bovenaan, het eerste wat je ziet */}
+      <Card className="p-5" style={{ border: "1px solid #3B82F544", background: "linear-gradient(135deg,#12233E,#12171F)" }}>
+        <div className="flex items-start justify-between mb-3 gap-3">
+          <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+            <Calendar size={18} color="#3B82F6" style={{ flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "Oswald", fontSize: 17, fontWeight: 600, color: "#E7ECF3" }}>Planning vandaag</div>
+              <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", textTransform: "capitalize" }}>{todayLabel}</div>
+            </div>
+          </div>
+          <button onClick={() => go("planning")} style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>Naar planning →</button>
+        </div>
+        {todayItems.length === 0 ? (
+          <div className="flex items-center gap-2 py-3" style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>
+            <CheckCircle2 size={15} color="#34D399" /> Niets ingepland voor vandaag.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {todayItems.map((p) => (
+              <button key={p.id} onClick={() => go("planning")} className="w-full flex items-stretch gap-3 text-left rounded-lg overflow-hidden" style={{ background: "#141A23", border: "1px solid #232B38" }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#3B82F6")} onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#232B38")}>
+                <div className="flex flex-col items-center justify-center px-3 py-2.5" style={{ background: "#3B82F618", minWidth: 66, flexShrink: 0 }}>
+                  <span style={{ fontFamily: "JetBrains Mono", fontSize: 15, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
+                  <span style={{ fontFamily: "Inter", fontSize: 10, color: "#B4BCC9" }}>{p.duur} min</span>
+                </div>
+                <div className="flex items-center gap-3 py-2.5 pr-3" style={{ minWidth: 0, flex: 1 }}>
+                  <Kenteken value={p.vehicle} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taak}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11, color: "#B4BCC9" }}>Monteur: {p.monteur}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
       <div className="grid grid-cols-2 gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
         <ClickableKpi label="Voertuigen" value={vehicles.length} icon={Truck} accent="#22D3B0" onClick={() => go("vehicles")} />
         <ClickableKpi label="Open meldingen" value={openReports} icon={Wrench} accent="#3B82F6" onClick={() => go("workfloor")} />
@@ -1064,43 +1103,6 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
             </div>
           );
         })()}
-      </Card>
-
-      <Card className="p-5">
-        <div className="flex items-start justify-between mb-3 gap-3">
-          <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-            <Calendar size={16} color="#3B82F6" style={{ flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Planning vandaag</div>
-              <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", textTransform: "capitalize" }}>{todayLabel}</div>
-            </div>
-          </div>
-          <button onClick={() => go("planning")} style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>Naar planning →</button>
-        </div>
-        {todayItems.length === 0 ? (
-          <div className="flex items-center gap-2 py-3" style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13 }}>
-            <CheckCircle2 size={15} color="#34D399" /> Niets ingepland voor vandaag.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {todayItems.map((p) => (
-              <button key={p.id} onClick={() => go("planning")} className="w-full flex items-stretch gap-3 text-left rounded-lg overflow-hidden" style={{ background: "#1A2129", border: "1px solid #232B38" }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#3B82F6")} onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#232B38")}>
-                <div className="flex flex-col items-center justify-center px-3 py-2.5" style={{ background: "#3B82F618", minWidth: 62, flexShrink: 0 }}>
-                  <span style={{ fontFamily: "JetBrains Mono", fontSize: 14, color: "#3B82F6", fontWeight: 700 }}>{p.tijd}</span>
-                  <span style={{ fontFamily: "Inter", fontSize: 10, color: "#B4BCC9" }}>{p.duur} min</span>
-                </div>
-                <div className="flex items-center gap-3 py-2.5 pr-3" style={{ minWidth: 0, flex: 1 }}>
-                  <Kenteken value={p.vehicle} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taak}</div>
-                    <div style={{ fontFamily: "Inter", fontSize: 11, color: "#B4BCC9" }}>Monteur: {p.monteur}</div>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
       </Card>
 
       <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))" }}>
@@ -3024,7 +3026,10 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete }) {
           <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Calendar size={22} color="#3B82F6" /> Planning</h1>
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik een dag aan om de werkplaats-agenda te zien.</p>
         </div>
-        <Button icon={Plus} onClick={() => setOpen(true)}>Inplannen</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" small onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)); setSelectedDate(TODAY); }}>Vandaag</Button>
+          <Button icon={Plus} onClick={() => setOpen(true)}>Inplannen</Button>
+        </div>
       </div>
 
       <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "1.3fr 1fr" }}>

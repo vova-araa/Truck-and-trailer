@@ -5,8 +5,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 // Vite build voor de SPA. In productie serveert server/index.js de dist/ map
 // en de /api routes (AI-proxy). In dev proxy't Vite /api naar die server.
-// Twee pagina's: index.html (de echte app) en demo.html (publieke demo op
-// seed-data, zonder Supabase-login).
+// De productie-build bevat alleen de echte app (index.html). De losse
+// seed-data demo bouw je apart met vite.standalone.config.js (draagbaar bestand),
+// zodat de live site meteen de echte inlog toont.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -23,7 +24,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
-        demo: resolve(__dirname, "demo.html"),
       },
       output: {
         // Splits grote, stabiele libraries in eigen chunks zodat de browser ze
