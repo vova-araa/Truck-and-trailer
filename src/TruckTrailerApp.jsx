@@ -1091,7 +1091,7 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
   return (
     <div className="space-y-5">
       <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Dashboard</h1>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><LayoutDashboard size={22} color="#3B82F6" /> Dashboard</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Overzicht van vloot en garage — {company.name}</p>
       </div>
 
@@ -1310,7 +1310,7 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   return (
     <div className="space-y-5">
       <div>
-        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Werkplaats</h1>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Wrench size={22} color="#3B82F6" /> Werkplaats</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Goedendag{firstName ? `, ${firstName}` : ""} — {company.name}</p>
       </div>
 
@@ -1605,7 +1605,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>{title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <Boxes size={22} color="#3B82F6" /> : filterType === "Trailer" ? <Container size={22} color="#3B82F6" /> : <Truck size={22} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
@@ -2139,7 +2139,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Container size={22} color="#3B82F6" /> Trailers</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Beheer je trailers en aanhangwagens. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Trailer toevoegen</Button>
       </div>
       {open && (
@@ -2218,7 +2218,7 @@ function PartsView({ parts, onAdd, onUpdate, onDelete }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Voorraadwaarde: <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono" }}>€ {totalValue.toLocaleString("nl-NL")}</span></p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Package size={22} color="#3B82F6" /> Voorraad &amp; onderdelen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Voorraadwaarde: <span style={{ color: "#E7ECF3", fontFamily: "JetBrains Mono" }}>€ {totalValue.toLocaleString("nl-NL")}</span></p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Onderdeel toevoegen</Button>
       </div>
       {open && (
@@ -2330,7 +2330,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Wrench size={22} color="#3B82F6" /> Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Nieuw schema</Button>
       </div>
       {open && (
@@ -2614,7 +2614,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
     <div className="space-y-5">
       {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><KanbanSquare size={22} color="#3B82F6" /> Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
         {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
       </div>
       {reports.length === 0 ? <EmptyState icon={CheckCircle2} text="Niks meer te doen. Goed werk!" /> : (
@@ -2777,7 +2777,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
       {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Gebruikers</h1>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Users size={22} color="#3B82F6" /> Gebruikers</h1>
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{activeCount} actief · {invitedCount} uitgenodigd</p>
         </div>
         {!open && <Button icon={Plus} onClick={() => setOpen(true)}>Nieuwe gebruiker</Button>}
