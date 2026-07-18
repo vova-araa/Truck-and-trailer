@@ -1969,10 +1969,11 @@ ${JSON.stringify(ctx)}`;
   };
 
   return (
-    <div className="space-y-5" style={{ maxWidth: 720, margin: "0 auto" }}>
+    <div className="space-y-4">
       {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <button onClick={onBack} className="flex items-center gap-1.5" style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 13, fontWeight: 600 }}><ChevronLeft size={16} /> Terug naar voertuigen</button>
 
+      <div className="tg-cols">
       <Card className="p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
@@ -2322,6 +2323,7 @@ ${JSON.stringify(ctx)}`;
           )}
         </Card>
       )}
+      </div>
     </div>
   );
 }
@@ -3393,6 +3395,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
         )}
       </div>
 
+      <div className="tg-cols">
       {/* Abonnement — gestart/verlengt, gratis, en opzeggen (blijft tot verlengdatum). */}
       {live && subscription && <SubscriptionCard subscription={subscription} onCancel={onCancelSub} onReactivate={onReactivateSub} />}
 
@@ -3531,6 +3534,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
           </>
         )}
       </Card>
+      </div>
     </div>
   );
 }
@@ -5631,7 +5635,15 @@ export default function TruckGarageApp({ session, onLogout }) {
         .tg-page { animation: tg-fade-in .3s ease both; }
         /* Op groot scherm de content compact houden (niet edge-to-edge), zodat de
            balken niet het hele scherm beslaan en er ruimte naast overblijft. */
-        @media (min-width: 1100px) { .tg-page { max-width: 1040px; } }
+        @media (min-width: 1100px) { .tg-page { max-width: 1120px; } }
+        /* Gestapelde kaarten in 2 kolommen laten vloeien op laptop/tablet, zodat
+           er geen brede balken met loze ruimte meer zijn. Op de telefoon blijft
+           het één kolom. Elke kaart blijft heel (break-inside: avoid). */
+        .tg-cols > * { margin-bottom: 16px; }
+        @media (min-width: 900px) {
+          .tg-cols { column-count: 2; column-gap: 16px; }
+          .tg-cols > * { break-inside: avoid; -webkit-column-break-inside: avoid; }
+        }
         .tg-card { animation: tg-fade-in .35s ease both; }
         .tg-input { background: #161C25; border: 1px solid #2A3340; color: #E7ECF3; border-radius: 9px; padding: 10px 12px; font-family: Inter; font-size: 16px; outline: none; max-width: 100%; min-width: 0; width: 100%; transition: border-color .15s, box-shadow .15s; }
         input[type="date"].tg-input, input[type="time"].tg-input, input[type="number"].tg-input { min-width: 0; -webkit-appearance: none; appearance: none; }
