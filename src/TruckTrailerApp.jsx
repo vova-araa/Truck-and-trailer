@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -260,6 +260,7 @@ const PRIO_META = {
   gemiddeld: { label: "Gemiddeld", color: "#FF8A00" },
   kritiek: { label: "Kritiek", color: "#F0453F" },
 };
+const PRIO_RANK = { kritiek: 0, gemiddeld: 1, laag: 2 };
 
 const KANBAN_COLS = [
   { id: "nieuw", label: "Nieuw" },
@@ -295,9 +296,10 @@ const COMMON_ISSUES = [
 // Alle AI-verkeer loopt via onze eigen server (/api/ai) zodat de Anthropic-key
 // nooit in de browser staat. Zie server/index.js.
 async function callAIRaw({ messages, system, maxTokens = 800 }) {
+  const auth = await authHeader();
   const response = await fetch("/api/ai", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...auth },
     body: JSON.stringify({ messages, system, max_tokens: maxTokens }),
   });
   const data = await response.json().catch(() => ({}));
@@ -722,7 +724,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
   const submit = () => {
     if (!vehicle || !omschrijving.trim()) return;
     onSubmit({
-      id: "r" + Date.now(), vehicle, chauffeur: currentUser?.naam || "Onbekend", omschrijving,
+      id: "r" + Date.now(), vehicle, chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null, omschrijving,
       prioriteit: veilig === "Nee" ? "kritiek" : veilig === "Twijfel" ? "gemiddeld" : "laag",
       status: "nieuw", datum: toLocalKey(new Date()),
       zone, wanneer, hoelang, veilig, mediaCount: media.length,
@@ -1255,7 +1257,7 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
           </div>
           <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginBottom: 10 }}>Zojuist gemeld door chauffeurs — nog niet opgepakt.</div>
           <div className="space-y-2">
-            {newReports.sort((a, b) => (a.prioriteit === "kritiek" ? -1 : 1)).slice(0, 4).map((r) => (
+            {[...newReports].sort((a, b) => (PRIO_RANK[a.prioriteit] ?? 9) - (PRIO_RANK[b.prioriteit] ?? 9)).slice(0, 4).map((r) => (
               <div key={r.id} className="p-3 rounded-lg" style={{ background: "#12171F", border: `1px solid ${r.prioriteit === "kritiek" ? "#F0453F55" : "#232B38"}` }}>
                 <div className="flex items-start justify-between gap-2">
                   <div style={{ minWidth: 0, flex: "1 1 0%" }}>
@@ -2238,7 +2240,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
 /* ---------------------------------------------------------------------
    WERKBON — melding afronden met ondertekende PDF + kosten naar overzicht
 --------------------------------------------------------------------- */
-function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, onComplete }) {
+function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, onComplete, onUsePart }) {
   const [monteur, setMonteur] = useState(mechanics[0]?.naam || "");
   const [uren, setUren] = useState("1");
   const [tarief, setTarief] = useState("65");
@@ -2257,7 +2259,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
   const addLine = () => {
     const part = parts.find((p) => p.id === pick);
     if (!part) return;
-    setLines((l) => [...l, { key: part.id + "_" + l.length, naam: part.naam, prijs: Number(part.prijs) || 0, aantal: 1 }]);
+    setLines((l) => [...l, { key: part.id + "_" + l.length, partId: part.id, naam: part.naam, prijs: Number(part.prijs) || 0, aantal: 1 }]);
     setPick("");
   };
   const setAantal = (key, n) => setLines((l) => l.map((x) => (x.key === key ? { ...x, aantal: Math.max(1, Number(n) || 1) } : x)));
@@ -2315,6 +2317,8 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
       doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text("Handtekening klant", M, y + 27);
       doc.save(`werkbon-${(report?.vehicle || "voertuig").replace(/[^A-Za-z0-9-]/g, "")}-${TODAY}.pdf`);
 
+      // Gebruikte onderdelen van de voorraad afboeken.
+      if (onUsePart) lines.forEach((l) => { if (l.partId) onUsePart(l.partId, l.aantal); });
       onComplete({
         id: "c" + Date.now(),
         vehicle: report?.vehicle || "",
@@ -2401,7 +2405,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
   );
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost, onUsePart }) {
   const isMobile = useIsMobile();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
@@ -2513,7 +2517,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         </div>
       )}
       {werkbonFor && (
-        <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company}
+        <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} onUsePart={onUsePart}
           onClose={() => setWerkbonFor(null)}
           onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setWerkbonFor(null); setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
       )}
@@ -2525,7 +2529,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
    GEBRUIKERS (admin: invite / user management)
 --------------------------------------------------------------------- */
 
-function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName, onCreateAccount }) {
+function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, companyName, onCreateAccount, live }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -2663,7 +2667,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
               ) : (
                 <>
                   <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodiging sturen</button>
-                  <button onClick={() => setForm({ ...form, mode: "direct" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "direct" ? "#1A2129" : "transparent", color: form.mode === "direct" ? "#3B82F6" : "#B4BCC9" }}>Direct actief</button>
+                  {!live && <button onClick={() => setForm({ ...form, mode: "direct" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "direct" ? "#1A2129" : "transparent", color: form.mode === "direct" ? "#3B82F6" : "#B4BCC9" }}>Direct actief</button>}
                 </>
               )}
             </div>
@@ -2698,7 +2702,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
               <div className="flex items-center justify-between mt-2 pt-2 gap-2" style={{ borderTop: "1px solid #1A2129" }}>
                 <span className="text-xs px-2 py-0.5 rounded" style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 12, background: "#1A2129" }}>{ROLE_LABEL[u.rol]}</span>
                 <div className="flex items-center gap-3">
-                  {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(`Uitnodiging opnieuw verstuurd naar ${u.naam}.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Opnieuw versturen</button>}
+                  {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode  met  om mee te doen.` : `Herinner  eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
                   {u.id !== currentUserId && (
                     confirmDelId === u.id
                       ? <span className="flex items-center gap-2"><button onClick={() => { onDelete(u.id); setToast(`${u.naam} verwijderd.`); setConfirmDelId(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDelId(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -2727,7 +2731,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(`Uitnodiging opnieuw verstuurd naar ${u.naam}.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Opnieuw versturen</button>}
+                      {u.status !== "actief" && <button onClick={() => { onResend(u); setToast(joinCode ? `Deel de bedrijfscode  met  om mee te doen.` : `Herinner  eraan mee te doen.`); }} className="text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bedrijfscode delen</button>}
                       {u.id !== currentUserId && (
                         confirmDelId === u.id
                           ? <span className="flex items-center gap-2"><button onClick={() => { onDelete(u.id); setToast(`${u.naam} verwijderd.`); setConfirmDelId(null); }} className="text-xs" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDelId(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -3836,7 +3840,10 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [users, setUsers] = useState(() => {
     if (!live) return seedUsers;
     const base = initSlice("users", seedUsers, []);
-    base[liveCompanyId] = [session.profile, ...((base[liveCompanyId] || []).filter((u) => u.id !== session.profile.id))];
+    const email = (session.profile.email || "").toLowerCase();
+    // Ontdubbel: laat het eigen (echte) profiel niet ook nog als los JSON-record
+    // verschijnen (bv. na 'Inlogaccount aanmaken').
+    base[liveCompanyId] = [session.profile, ...((base[liveCompanyId] || []).filter((u) => u.id !== session.profile.id && (u.email || "").toLowerCase() !== email))];
     return base;
   });
   const [planning, setPlanning] = useState(() => initSlice("planning", seedPlanning));
@@ -3947,6 +3954,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const updateTrailer = (t) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === t.id ? t : x)) }));
   const deleteTrailer = (id) => setTrailers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPart = (p) => setParts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
+  const usePart = (partId, aantal) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).map((p) => (p.id === partId ? { ...p, voorraad: Math.max(0, (Number(p.voorraad) || 0) - (Number(aantal) || 0)) } : p)) }));
   const updatePart = (p) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === p.id ? p : x)) }));
   const deletePart = (id) => setParts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addMaintenance = (m) => setMaintenance((s) => ({ ...s, [companyId]: [...(s[companyId] || []), m] }));
@@ -3954,7 +3962,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deleteMaintenance = (id) => setMaintenance((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addCost = (c) => setCosts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), c] }));
   const deleteCost = (id) => setCosts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
-  const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...s[companyId]] }));
+  const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
@@ -4127,12 +4135,12 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />
+              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />}
+                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
                 {view === "vehicles" && selectedVehicleId && (() => {
@@ -4143,11 +4151,11 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} onUsePart={usePart} />}
                 {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
-                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
+                {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} />}
               </>

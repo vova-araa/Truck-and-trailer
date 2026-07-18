@@ -145,21 +145,36 @@ returns boolean language sql stable security definer as $$
 $$;
 grant execute on function public.activation_code_valid(text) to anon, authenticated;
 
--- Wissel een geldige code in: maak het bedrijf aan en markeer de code als gebruikt.
--- Atomair dankzij FOR UPDATE, zodat een code nooit dubbel gebruikt kan worden.
-create or replace function public.redeem_company_code(p_code text, p_name text, p_slug text, p_accent text)
-returns uuid language plpgsql security definer as $$
+-- Wissel een geldige code in: maak in ÉÉN transactie het bedrijf, het
+-- hoofd-admin-profiel én een lege state aan, en markeer de code als gebruikt.
+-- Atomair (FOR UPDATE): mislukt er iets, dan wordt niets bewaard en blijft de
+-- code bruikbaar — geen verweesde bedrijven of "verbrande" codes meer.
+create or replace function public.redeem_company_code(
+  p_code text, p_name text, p_slug text, p_accent text,
+  p_naam text default null, p_email text default null, p_telefoon text default null
+) returns uuid language plpgsql security definer as $$
 declare cid uuid; clean text;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   clean := regexp_replace(coalesce(p_code,''), '\D', '', 'g');
   perform 1 from public.activation_codes where code = clean and status = 'unused' for update;
   if not found then raise exception 'INVALID_CODE'; end if;
-  insert into public.companies (name, slug, accent) values (p_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+
+  insert into public.companies (name, slug, accent)
+    values (p_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+
+  -- Hoofd-admin-profiel koppelen (alleen als naam/e-mail zijn meegegeven).
+  if p_naam is not null and p_email is not null then
+    insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
+      values (auth.uid(), cid, p_naam, p_email, coalesce(p_telefoon, ''), 'admin', 'actief');
+    insert into public.company_state (company_id, data) values (cid, '{}'::jsonb)
+      on conflict (company_id) do nothing;
+  end if;
+
   update public.activation_codes set status = 'used', company_id = cid, used_at = now() where code = clean;
   return cid;
 end $$;
-grant execute on function public.redeem_company_code(text, text, text, text) to authenticated;
+grant execute on function public.redeem_company_code(text, text, text, text, text, text, text) to authenticated;
 
 -- Codes aanmaken doe je als platformbeheerder in de SQL Editor, bijvoorbeeld:
 --   insert into public.activation_codes (code, note)

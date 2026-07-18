@@ -114,6 +114,18 @@ app.post("/api/ai", async (req, res) => {
   if (rateLimited(req.ip || "onbekend")) {
     return res.status(429).json({ error: `Te veel AI-aanvragen (max ${RL_MAX}/min). Wacht even en probeer opnieuw.` });
   }
+  // Als we sessies kunnen verifiëren (service_role gezet), eisen we een geldig
+  // ingelogde gebruiker — zo kan niemand van buitenaf de AI-credits verbruiken.
+  if (supaAdmin) {
+    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return res.status(401).json({ error: "Log in om de AI te gebruiken." });
+    try {
+      const { data: who, error } = await supaAdmin.auth.getUser(token);
+      if (error || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+    } catch {
+      return res.status(401).json({ error: "Kon sessie niet verifiëren." });
+    }
+  }
   if (!anthropic) {
     return res.status(503).json({
       error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving.",

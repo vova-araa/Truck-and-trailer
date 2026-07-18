@@ -45,21 +45,14 @@ export async function signUpCompany({ code, bedrijfsnaam, naam, email, telefoon,
   if (!userId) throw new Error("Kon geen account aanmaken.");
   if (!signUp.session) throw new Error("EMAIL_CONFIRM_REQUIRED");
 
-  // 2. Code inwisselen -> bedrijf wordt aangemaakt en code op 'used' gezet
+  // 2. Code inwisselen -> bedrijf + admin-profiel + lege state in één transactie.
+  //    Mislukt dit, dan is de code NIET verbruikt (alles rolt terug).
   const slug = slugify(bedrijfsnaam);
   const { data: companyId, error: redErr } = await supabase.rpc("redeem_company_code", {
     p_code: clean, p_name: bedrijfsnaam, p_slug: slug, p_accent: accent,
+    p_naam: naam, p_email: email, p_telefoon: telefoon || "",
   });
   if (redErr) throw new Error(/INVALID_CODE/.test(redErr.message) ? "INVALID_CODE" : redErr.message);
-
-  // 3. Hoofd-admin profiel koppelen aan het nieuwe bedrijf
-  const { error: profErr } = await supabase.from("profiles").insert({
-    id: userId, company_id: companyId, naam, email, telefoon: telefoon || "", rol: "admin", status: "actief",
-  });
-  if (profErr) throw profErr;
-
-  // 4. Lege dataset klaarzetten
-  await supabase.from("company_state").insert({ company_id: companyId, data: emptyDataset() });
 
   return { userId, company: { id: companyId, name: bedrijfsnaam } };
 }
@@ -137,6 +130,19 @@ export async function getSessionUser() {
   return data.user || null;
 }
 
+// Authorization-header met het huidige sessietoken (voor beveiligde endpoints
+// zoals /api/ai). Geeft een leeg object als er geen sessie/Supabase is (demo).
+export async function authHeader() {
+  try {
+    if (!supabase) return {};
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 // ---------- PROFILE + COMPANY ----------
 
 export async function getProfile(userId) {
@@ -188,13 +194,15 @@ export async function loadState(companyId) {
   return data.data || emptyDataset();
 }
 
-let saveTimer = null;
+// Debounce-timer PER bedrijf, zodat een save voor bedrijf A niet wordt gewist
+// als (de superadmin) net bedrijf B bewerkt.
+const saveTimers = {};
 // Slaat de dataset op met een status-callback zodat de UI kan tonen of het echt
 // bewaard is: onStatus("pending" | "saving" | "saved" | "error").
 export function saveStateDebounced(companyId, dataset, onStatus) {
-  clearTimeout(saveTimer);
+  clearTimeout(saveTimers[companyId]);
   onStatus?.("pending");
-  saveTimer = setTimeout(async () => {
+  saveTimers[companyId] = setTimeout(async () => {
     onStatus?.("saving");
     try {
       const { error } = await supabase
