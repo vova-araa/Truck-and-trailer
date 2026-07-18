@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW } from "./api.js";
 
@@ -125,6 +125,16 @@ const seedPlanning = {
   vandijk: [],
 };
 
+// Chauffeurs met hun verplichte papieren (rijbewijs C/CE, Code 95, ADR, medische keuring)
+const seedDrivers = {
+  blex: [
+    { id: "d1", naam: "R. Postma", telefoon: "+31 6 22222222", rijbewijsTot: "2028-05-01", code95Tot: "2026-08-12", adrTot: "2027-03-01", medischTot: "2028-05-01" },
+    { id: "d2", naam: "J. Bakker", telefoon: "+31 6 33333333", rijbewijsTot: "2026-07-25", code95Tot: "2029-01-15", adrTot: "", medischTot: "2026-11-01" },
+    { id: "d3", naam: "M. de Wit", telefoon: "+31 6 44444444", rijbewijsTot: "2027-09-10", code95Tot: "2027-09-10", adrTot: "2026-07-30", medischTot: "2030-02-01" },
+  ],
+  vandijk: [],
+};
+
 const STATUS_META = {
   operational: { label: "Operationeel", color: "#34D399" },
   attention: { label: "Let op", color: "#FF8A00" },
@@ -228,6 +238,21 @@ function vehicleComplianceItems(v, today = TODAY) {
 function vehicleWorstCompliance(v, today = TODAY) {
   const order = { verlopen: 3, binnenkort: 2, ok: 1, onbekend: 0 };
   return vehicleComplianceItems(v, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
+}
+
+// ---- Chauffeur-compliance (rijbewijs C/CE, Code 95, ADR, medische keuring) ----
+function driverComplianceItems(d, today = TODAY) {
+  const items = [
+    { key: "rijbewijs", label: "Rijbewijs C/CE", datum: d.rijbewijsTot },
+    { key: "code95", label: "Code 95", datum: d.code95Tot },
+    { key: "medisch", label: "Medische keuring", datum: d.medischTot },
+  ];
+  if (d.adrTot) items.push({ key: "adr", label: "ADR-certificaat", datum: d.adrTot });
+  return items.filter((it) => it.datum).map((it) => ({ ...it, status: complianceStatus(it.datum, today), dagen: daysUntil(it.datum, today) }));
+}
+function driverWorstCompliance(d, today = TODAY) {
+  const order = { verlopen: 3, binnenkort: 2, ok: 1, onbekend: 0 };
+  return driverComplianceItems(d, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
 
 const PRIO_META = {
@@ -3434,6 +3459,91 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
    APP SHELL
 --------------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------------
+   CHAUFFEURS — certificatenbeheer (rijbewijs, Code 95, ADR, medische keuring)
+--------------------------------------------------------------------- */
+function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
+  const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "" });
+  const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(blank());
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const startAdd = () => { setForm(blank()); setEditId(null); setOpen(true); };
+  const startEdit = (d) => { setForm({ ...blank(), ...d }); setEditId(d.id); setOpen(true); };
+  const submit = () => {
+    if (!form.naam.trim()) return;
+    if (editId) onUpdate({ ...form, id: editId }); else onAdd({ ...form, id: "d" + Date.now() });
+    setOpen(false); setForm(blank()); setEditId(null);
+  };
+
+  const attention = drivers.filter((d) => { const w = driverWorstCompliance(d); return w === "verlopen" || w === "binnenkort"; }).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Contact size={22} color="#3B82F6" /> Chauffeurs</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{drivers.length} chauffeur(s){attention > 0 ? ` · ${attention} met aandacht nodig` : ""}. Papieren & certificaten.</p>
+        </div>
+        {!open && <Button icon={Plus} onClick={startAdd}>Chauffeur toevoegen</Button>}
+      </div>
+
+      {open && (
+        <Card className="p-5">
+          <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: "#E7ECF3", marginBottom: 12 }}>{editId ? "Chauffeur bewerken" : "Nieuwe chauffeur"}</div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
+            <div style={{ minWidth: 0 }}><FieldLabel>Naam</FieldLabel><input className="tg-input w-full" placeholder="Bv. R. Postma" value={form.naam} onChange={(e) => setForm({ ...form, naam: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Telefoon (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="+31 6 ..." value={form.telefoon} onChange={(e) => setForm({ ...form, telefoon: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Rijbewijs C/CE geldig tot</FieldLabel><input type="date" className="tg-input w-full" value={form.rijbewijsTot} onChange={(e) => setForm({ ...form, rijbewijsTot: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Code 95 geldig tot</FieldLabel><input type="date" className="tg-input w-full" value={form.code95Tot} onChange={(e) => setForm({ ...form, code95Tot: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>ADR-certificaat tot (optioneel)</FieldLabel><input type="date" className="tg-input w-full" value={form.adrTot} onChange={(e) => setForm({ ...form, adrTot: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}><FieldLabel>Medische keuring tot</FieldLabel><input type="date" className="tg-input w-full" value={form.medischTot} onChange={(e) => setForm({ ...form, medischTot: e.target.value })} /></div>
+          </div>
+          <div className="flex gap-2 mt-4"><Button onClick={submit} disabled={!form.naam.trim()}>{editId ? "Opslaan" : "Toevoegen"}</Button><Button variant="ghost" onClick={() => { setOpen(false); setEditId(null); }}>Annuleren</Button></div>
+        </Card>
+      )}
+
+      {drivers.length === 0 && !open ? <EmptyState icon={Contact} text="Nog geen chauffeurs. Voeg er een toe om papieren te bewaken." /> : (
+        <div className="space-y-3">
+          {drivers.map((d) => {
+            const items = driverComplianceItems(d);
+            return (
+              <Card key={d.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 15.5, fontWeight: 700, color: "#E7ECF3" }}>{d.naam}</div>
+                    {d.telefoon && <div className="flex items-center gap-1.5 mt-1" style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 12.5 }}><Phone size={12} /> {d.telefoon}</div>}
+                  </div>
+                  {(() => { const w = driverWorstCompliance(d); const m = COMPLIANCE_META[w]; return <span className="text-xs px-2 py-1 rounded" style={{ color: m.color, border: `1px solid ${m.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{w === "ok" ? "Papieren in orde" : m.label}</span>; })()}
+                </div>
+                {items.length > 0 && (
+                  <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
+                    {items.map((it) => { const m = COMPLIANCE_META[it.status]; return (
+                      <div key={it.key} className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38", minWidth: 0 }}>
+                        <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+                        <span className="rounded-full flex-shrink-0" style={{ width: 8, height: 8, background: m.color }} title={m.label} />
+                      </div>
+                    ); })}
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-3 mt-3 pt-3" style={{ borderTop: "1px solid #1A2129" }}>
+                  <button onClick={() => startEdit(d)} className="text-sm" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Bewerken</button>
+                  {confirmDel === d.id ? (
+                    <span className="flex items-center gap-2"><button onClick={() => { onDelete(d.id); setConfirmDel(null); }} className="text-sm" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDel(null)} className="text-sm" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                  ) : (
+                    <button onClick={() => setConfirmDel(d.id)} className="flex items-center gap-1.5 text-sm" style={{ color: "#F0453F", fontFamily: "Inter", fontWeight: 600 }}><Trash2 size={14} /> Verwijderen</button>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const NAV_GROUPS = [
   { group: "Chauffeur", roles: ["admin", "garage", "chauffeur"], items: [
     { id: "driver", label: "Melding maken", icon: AlertTriangle, badgeKey: "openCount" },
@@ -3451,6 +3561,7 @@ const NAV_GROUPS = [
   { group: "Vloot", roles: ["admin", "garage"], items: [
     { id: "vehicles", label: "Voertuigen", icon: Truck },
     { id: "trailers", label: "Trailers", icon: Container },
+    { id: "drivers", label: "Chauffeurs", icon: Contact },
     { id: "inspection", label: "360° Inspectie", icon: ScanEye },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
@@ -3488,6 +3599,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [reports, setReports] = useState(() => initFrom("reports", seedReports));
   const [users, setUsers] = useState(() => (live ? { [liveCompanyId]: [session.profile, ...(session.state.users || [])] } : seedUsers));
   const [planning, setPlanning] = useState(() => initFrom("planning", seedPlanning));
+  const [drivers, setDrivers] = useState(() => (live ? { [liveCompanyId]: session.state.drivers || [] } : seedDrivers));
   const [availability, setAvailability] = useState(() => (live ? { [liveCompanyId]: session.state.availability || {} } : seedAvailability));
   const [workshopHours, setWorkshopHours] = useState(() => (live ? { [liveCompanyId]: session.state.workshopHours || { van: "08:00", tot: "17:00" } } : seedWorkshopHours));
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
@@ -3506,11 +3618,12 @@ export default function TruckGarageApp({ session, onLogout }) {
       reports: reports[liveCompanyId] || [],
       users: (users[liveCompanyId] || []).filter((u) => u.id !== session.profile.id),
       planning: planning[liveCompanyId] || [],
+      drivers: drivers[liveCompanyId] || [],
       availability: availability[liveCompanyId] || {},
       workshopHours: workshopHours[liveCompanyId] || { van: "08:00", tot: "17:00" },
     };
     saveStateDebounced(liveCompanyId, dataset, setSaveStatus);
-  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, availability, workshopHours, live, liveCompanyId, session]);
+  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, live, liveCompanyId, session]);
 
   // Elke paginawissel begint bovenaan.
   useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);
@@ -3539,6 +3652,7 @@ export default function TruckGarageApp({ session, onLogout }) {
     setReports((s) => ({ ...s, [id]: [] }));
     setUsers((s) => ({ ...s, [id]: [adminUser] }));
     setPlanning((s) => ({ ...s, [id]: [] }));
+    setDrivers((s) => ({ ...s, [id]: [] }));
     setAvailability((s) => ({ ...s, [id]: {} }));
     setWorkshopHours((s) => ({ ...s, [id]: { van: "08:00", tot: "17:00" } }));
 
@@ -3568,6 +3682,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cReports = reports[companyId] || [];
   const cUsers = users[companyId] || [];
   const cPlanning = planning[companyId] || [];
+  const cDrivers = drivers[companyId] || [];
   const cAvailability = availability[companyId] || {};
   const cHours = workshopHours[companyId] || { van: "08:00", tot: "17:00" };
   const mechanics = cUsers.filter((u) => u.rol === "garage");
@@ -3597,6 +3712,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
   const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+  const addDriver = (d) => setDrivers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), d] }));
+  const updateDriver = (d) => setDrivers((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === d.id ? d : x)) }));
+  const deleteDriver = (id) => setDrivers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
 
   // Testomgeving: vul het huidige bedrijf met realistische voorbeelddata om
   // alles te kunnen uittesten, of wis alles weer voor echt gebruik.
@@ -3609,6 +3727,7 @@ export default function TruckGarageApp({ session, onLogout }) {
     setCosts((s) => ({ ...s, [companyId]: cloneSeed(seedCosts) }));
     setReports((s) => ({ ...s, [companyId]: cloneSeed(seedReports) }));
     setPlanning((s) => ({ ...s, [companyId]: cloneSeed(seedPlanning) }));
+    setDrivers((s) => ({ ...s, [companyId]: cloneSeed(seedDrivers) }));
   };
   const clearAllData = () => {
     setVehicles((s) => ({ ...s, [companyId]: [] }));
@@ -3618,6 +3737,7 @@ export default function TruckGarageApp({ session, onLogout }) {
     setCosts((s) => ({ ...s, [companyId]: [] }));
     setReports((s) => ({ ...s, [companyId]: [] }));
     setPlanning((s) => ({ ...s, [companyId]: [] }));
+    setDrivers((s) => ({ ...s, [companyId]: [] }));
   };
   const resendInvite = () => {};
   const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
@@ -3772,6 +3892,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} />}
+                {view === "drivers" && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} />}
               </>
             )}
