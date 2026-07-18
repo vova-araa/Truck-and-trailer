@@ -1243,7 +1243,7 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         )}
       </Card>
 
-      <div className="grid grid-cols-2 gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
         <ClickableKpi label="Voertuigen" value={vehicles.length} icon={Truck} accent="#22D3B0" onClick={() => go("vehicles")} />
         <ClickableKpi label="Open meldingen" value={openReports} icon={Wrench} accent="#3B82F6" onClick={() => go("workfloor")} />
         <ClickableKpi label="Kritiek open" value={critical} icon={AlertTriangle} accent="#F0453F" onClick={() => go("workfloor")} />
@@ -1473,7 +1473,7 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
       </Card>
 
       {/* KPI strip */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
         <button onClick={() => go("workfloor")} className="text-left">
           <Card className="p-4 h-full">
             <div className="flex items-center justify-between"><Eyebrow>Kritiek open</Eyebrow><AlertTriangle size={15} color="#F0453F" /></div>
@@ -1597,7 +1597,7 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
       {/* Snelacties */}
       <Card className="p-5">
         <Eyebrow>Snel naar</Eyebrow>
-        <div className="grid gap-2 mt-2" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+        <div className="grid gap-2 mt-2" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr) minmax(0, 1fr)" : "repeat(auto-fit, minmax(150px, 1fr))" }}>
           {[
             { v: "planning", label: "Planning", icon: Calendar },
             { v: "workfloor", label: "Werkvloer", icon: KanbanSquare },
@@ -1729,7 +1729,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
             {aiMsg && <div style={{ fontFamily: "Inter", fontSize: 12, color: aiMsg.startsWith("✓") ? "#34D399" : "#FF8A00", marginTop: 6 }}>{aiMsg}</div>}
           </div>
 
-          <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+          <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
             <div><FieldLabel>Merk/model</FieldLabel><input placeholder="Merk/model" value={form.merk} onChange={(e) => setForm({ ...form, merk: e.target.value })} className="tg-input" /></div>
             <div><FieldLabel>Type</FieldLabel><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input"><option>Truck</option><option>Trekker</option><option>Bakwagen</option><option>Bestelwagen</option></select></div>
             <div><FieldLabel>Bouwjaar</FieldLabel><input placeholder="Bouwjaar" value={form.bouwjaar} onChange={(e) => setForm({ ...form, bouwjaar: e.target.value })} className="tg-input" /></div>
@@ -1867,7 +1867,7 @@ ${JSON.stringify(ctx)}`;
         </div>
 
         {!editing ? (
-          <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))" }}>
+          <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(auto-fit, minmax(130px, 1fr))" }}>
             <div><Eyebrow>KM-stand</Eyebrow><div style={{ fontFamily: "JetBrains Mono", fontSize: 16, color: "#E7ECF3", fontWeight: 700 }}>{vehicle.km.toLocaleString("nl-NL")}</div></div>
             <div><Eyebrow>Chauffeur</Eyebrow><div style={{ fontFamily: "Inter", fontSize: 14, color: "#E7ECF3" }}>{vehicle.driver}</div></div>
             <div><Eyebrow>Gezondheid</Eyebrow><div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: vehicle.health > 75 ? "#34D399" : vehicle.health > 50 ? "#FF8A00" : "#F0453F" }}>{vehicle.health}%</div></div>
@@ -1990,7 +1990,7 @@ ${JSON.stringify(ctx)}`;
 
             {costForm.open && (
               <div className="p-3 rounded-lg mb-3 space-y-2" style={{ background: "#161C25", border: "1px solid #3B82F555" }}>
-                <div className="grid gap-2" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))" }}>
+                <div className="grid gap-2" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(auto-fit, minmax(150px, 1fr))" }}>
                   <div><FieldLabel>Categorie</FieldLabel><select className="tg-input" style={{ width: "100%", minWidth: 0 }} value={costForm.categorie} onChange={(e) => setCostForm({ ...costForm, categorie: e.target.value })}><option value="onderhoud">Onderhoud</option><option value="brandstof">Brandstof</option><option value="reparatie">Reparatie</option><option value="verzekering">Verzekering</option><option value="belasting">Belasting</option><option value="overig">Overig</option></select></div>
                   <div><FieldLabel>Bedrag (€)</FieldLabel><input type="number" className="tg-input" style={{ width: "100%", minWidth: 0 }} value={costForm.bedrag} onChange={(e) => setCostForm({ ...costForm, bedrag: e.target.value })} /></div>
                   <div><FieldLabel>Datum</FieldLabel><input type="date" className="tg-input" style={{ width: "100%", minWidth: 0 }} value={costForm.datum} onChange={(e) => setCostForm({ ...costForm, datum: e.target.value })} /></div>
@@ -2056,7 +2056,7 @@ ${JSON.stringify(ctx)}`;
         ) : (
           <div className="space-y-3">
             <div><Eyebrow>Taak</Eyebrow><input className="tg-input" style={{ width: "100%" }} placeholder="Bv. Grote beurt" value={sched.taak} onChange={(e) => setSched({ ...sched, taak: e.target.value })} /></div>
-            <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))" }}>
+            <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(auto-fit, minmax(140px, 1fr))" }}>
               <div><Eyebrow>Datum</Eyebrow><input type="date" className="tg-input" style={{ width: "100%" }} value={sched.datum} onChange={(e) => setSched({ ...sched, datum: e.target.value })} /></div>
               <div><Eyebrow>Tijd</Eyebrow><input type="time" className="tg-input" style={{ width: "100%" }} value={sched.tijd} onChange={(e) => setSched({ ...sched, tijd: e.target.value })} /></div>
               <div><Eyebrow>Duur (min)</Eyebrow><input type="number" className="tg-input" style={{ width: "100%" }} value={sched.duur} onChange={(e) => setSched({ ...sched, duur: e.target.value })} /></div>
@@ -2280,7 +2280,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
         </Card>
       )}
       {trailers.length === 0 ? <EmptyState icon={Container} text="Nog geen aanhangers." /> : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
           {trailers.map((t) => (
             <Card key={t.id} className="p-4">
               {editId === t.id ? (
@@ -2454,7 +2454,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
             {vehicles.length > 0 ? (
               <select className="tg-input" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
                 <option value="">Kies voertuig…</option>
@@ -4283,7 +4283,7 @@ function CodesView({ live, companies = [] }) {
       </div>
 
       {/* Overzicht lopende abonnementen */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))" }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fit, minmax(160px, 1fr))" }}>
         {[
           { label: "Lopende abonnementen", val: active.length, color: "#3B82F6" },
           { label: "Betaald", val: paidActive, color: "#F59E0B" },
