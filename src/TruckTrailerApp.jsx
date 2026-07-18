@@ -2858,7 +2858,7 @@ function CompanySupportCard() {
   );
 }
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live }) {
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
@@ -2885,6 +2885,11 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
       <div>
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><SlidersHorizontal size={22} color="#3B82F6" /> Instellingen</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Werkplaatstijden en beschikbaarheid van monteurs.</p>
+        {live && onReplayTutorial && (
+          <button onClick={onReplayTutorial} className="mt-2 inline-flex items-center gap-1.5 text-xs" style={{ color: "#8FB8FF", fontFamily: "Inter", fontWeight: 600 }}>
+            <LifeBuoy size={13} /> Uitleg opnieuw bekijken
+          </button>
+        )}
       </div>
 
       {/* Modules aan/uit — kies wat je bedrijf gebruikt. Uit = weg uit het menu. */}
@@ -4290,6 +4295,82 @@ function OnboardingWizard({ company, onDone }) {
   );
 }
 
+/* ---------------------------------------------------------------------
+   UITLEG PER ROL — de eerste keer krijgt elke gebruiker (chauffeur,
+   werkplaats, beheerder) een korte rondleiding voor zijn eigen rol.
+--------------------------------------------------------------------- */
+const TUTORIALS = {
+  chauffeur: {
+    title: "Welkom, chauffeur!",
+    intro: "Zo maak je met je telefoon snel een melding als er iets is met je wagen.",
+    steps: [
+      { icon: AlertTriangle, title: "Melding maken", text: "Tik op 'Melding maken', kies je voertuig en beschrijf kort wat er aan de hand is." },
+      { icon: Camera, title: "Foto erbij", text: "Maak een foto van het probleem. De app kan de schade zelfs automatisch herkennen." },
+      { icon: Mic, title: "Inspreken kan ook", text: "Geen zin om te typen? Spreek je melding gewoon in — de app zet het om in tekst." },
+      { icon: CheckCircle2, title: "Status volgen", text: "Onder 'Jouw meldingen' zie je of de werkplaats ermee bezig is: nieuw → in behandeling → klaar." },
+    ],
+  },
+  garage: {
+    title: "Welkom bij de werkplaats!",
+    intro: "Hier houd je de werkvloer en de planning bij.",
+    steps: [
+      { icon: KanbanSquare, title: "Werkvloer", text: "Binnengekomen meldingen zie je als kaarten. Verplaats ze van Nieuw → In behandeling → Klaar." },
+      { icon: Calendar, title: "Inplannen", text: "Plan een klus in de agenda: kies bovenaan een openstaande melding, daarna dag, tijd en monteur." },
+      { icon: Truck, title: "Vloot & onderhoud", text: "Bekijk voertuigen en trailers en houd APK- en onderhoudstermijnen in de gaten." },
+      { icon: Package, title: "Voorraad", text: "Houd je onderdelen bij; bij een klus boek je gebruikte onderdelen meteen af." },
+    ],
+  },
+  admin: {
+    title: "Welkom, beheerder!",
+    intro: "Jij beheert het hele bedrijf. Dit zijn de belangrijkste plekken:",
+    steps: [
+      { icon: LayoutDashboard, title: "Dashboard", text: "Begint met de planning van vandaag en de punten die aandacht nodig hebben." },
+      { icon: Truck, title: "Vloot & chauffeurs", text: "Beheer voertuigen, trailers en de papieren van chauffeurs (rijbewijs, Code 95, APK)." },
+      { icon: Euro, title: "Kosten", text: "Zie uitgaven per voertuig en categorie, en exporteer naar CSV." },
+      { icon: Users, title: "Gebruikers", text: "Nodig chauffeurs uit met de bedrijfscode. Werkplaats- en beheerder-accounts maak je hier aan." },
+      { icon: SlidersHorizontal, title: "Instellingen", text: "Zet onderdelen aan/uit die je wel of niet gebruikt, en meld problemen rechtstreeks bij ons." },
+    ],
+  },
+};
+
+function RoleTutorial({ role, onDone }) {
+  const t = TUTORIALS[role] || TUTORIALS.admin;
+  const [i, setI] = useState(0);
+  const step = t.steps[i];
+  const last = i === t.steps.length - 1;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 85, background: "#0A0E14", overflowY: "auto", padding: 16, display: "flex", flexDirection: "column" }}>
+      <div style={{ maxWidth: 480, margin: "0 auto", width: "100%", paddingTop: 22, paddingBottom: 30, flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ textAlign: "center", marginBottom: 6 }}>
+          <span style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</span>
+        </div>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3", textAlign: "center", marginTop: 6 }}>{t.title}</h1>
+        <p style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", textAlign: "center", lineHeight: 1.5, margin: "6px auto 10px", maxWidth: 400 }}>{t.intro}</p>
+
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", gap: 16, minHeight: 220 }}>
+          <div style={{ width: 76, height: 76, borderRadius: 20, background: "#12233E", border: "1px solid #3B82F6", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <step.icon size={34} color="#3B82F6" />
+          </div>
+          <div>
+            <div style={{ fontFamily: "Oswald", fontSize: 21, fontWeight: 600, color: "#E7ECF3" }}>{step.title}</div>
+            <p style={{ fontFamily: "Inter", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.55, marginTop: 8, maxWidth: 360 }}>{step.text}</p>
+          </div>
+          <div style={{ fontFamily: "Inter", fontSize: 12, color: "#6B7585" }}>Stap {i + 1} van {t.steps.length}</div>
+        </div>
+
+        <div className="flex items-center justify-center gap-2" style={{ margin: "18px 0" }}>
+          {t.steps.map((_, idx) => <span key={idx} onClick={() => setI(idx)} style={{ width: idx === i ? 22 : 8, height: 8, borderRadius: 4, background: idx === i ? "#3B82F6" : "#2A3340", cursor: "pointer", transition: "width .2s" }} />)}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Button onClick={() => (last ? onDone() : setI(i + 1))}>{last ? "Aan de slag →" : "Volgende"}</Button>
+          {!last && <button onClick={onDone} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6 }}>Overslaan</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
   const aiReady = useAiStatus();
@@ -4347,6 +4428,15 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [workshopHours, setWorkshopHours] = useState(() => initSlice("workshopHours", seedWorkshopHours, { van: "08:00", tot: "17:00" }));
   const [modules, setModules] = useState(() => initSlice("modules", { blex: { ...DEFAULT_MODULES }, vandijk: { ...DEFAULT_MODULES } }, { ...DEFAULT_MODULES }));
   const [onboarded, setOnboarded] = useState(() => initSlice("onboarded", { blex: true, vandijk: true }, false));
+  // Rol-uitleg: per gebruiker eenmalig (onthouden in de browser). Niet gevoelig,
+  // dus localStorage volstaat — geen databasewijziging nodig.
+  const tutKey = live ? "tt_tut_" + session.profile.id : "tt_tut_demo";
+  const [tutorialSeen, setTutorialSeen] = useState(() => {
+    if (!live) return true;
+    try { return localStorage.getItem(tutKey) === "1"; } catch { return true; }
+  });
+  const markTutorialSeen = () => { setTutorialSeen(true); try { localStorage.setItem(tutKey, "1"); } catch {} };
+  const replayTutorial = () => setTutorialSeen(false);
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
   const firstSave = useRef(true);
   const lastCid = useRef(liveCompanyId);
@@ -4471,6 +4561,13 @@ export default function TruckGarageApp({ session, onLogout }) {
   // platform-superadmin die tussen bedrijven kijkt): kies je onderdelen.
   if (live && currentUser.rol === "admin" && !(currentUser.superadmin || currentUser.is_superadmin) && !cOnboarded) {
     return <OnboardingWizard company={company} onDone={finishOnboarding} />;
+  }
+
+  // Korte rondleiding per rol, de eerste keer (chauffeur/werkplaats/beheerder).
+  // De platform-superadmin slaan we over. Voor de admin komt dit ná de
+  // module-keuze hierboven.
+  if (live && !tutorialSeen && !(currentUser.superadmin || currentUser.is_superadmin)) {
+    return <RoleTutorial role={currentUser.rol} onDone={markTutorialSeen} />;
   }
   const mechanics = cUsers.filter((u) => u.rol === "garage");
   const openCount = cReports.filter((r) => r.status !== "klaar").length;
@@ -4702,7 +4799,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
               </>
