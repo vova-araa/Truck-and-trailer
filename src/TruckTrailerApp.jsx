@@ -5340,6 +5340,27 @@ export default function TruckGarageApp({ session, onLogout }) {
     setView(user.rol === "chauffeur" ? "driver" : "dashboard");
   };
 
+  // --- Hooks die ALTIJD moeten draaien (vóór welke vroege return dan ook), zodat
+  // de hook-volgorde stabiel blijft tussen het inlogscherm en de ingelogde app. ---
+  const [refreshing, setRefreshing] = useState(false);
+  // Waarschuwingstermijn toepassen op de compliance-berekeningen zodra die
+  // instelling (of het actieve bedrijf) verandert.
+  useEffect(() => { setWarnMonths((workshopHours[companyId] || {}).warnMonths); }, [companyId, workshopHours]);
+  // Apparaat-melding bij een nieuwe melding op de werkvloer (werkplaats/beheerder).
+  const notifSeen = useRef(null);
+  useEffect(() => {
+    if (!live) { notifSeen.current = null; return; }
+    const openIds = (reports[companyId] || []).filter((r) => r.status !== "klaar").map((r) => r.id);
+    if (notifSeen.current === null) { notifSeen.current = new Set(openIds); return; }
+    const fresh = openIds.filter((id) => !notifSeen.current.has(id));
+    notifSeen.current = new Set(openIds);
+    const rol = currentUser?.rol;
+    if (fresh.length && (rol === "garage" || rol === "admin")) {
+      showDeviceNotification("Nieuwe melding", fresh.length === 1 ? "Er is een nieuwe melding op de werkvloer." : `${fresh.length} nieuwe meldingen op de werkvloer.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports, companyId, live]);
+
   if (!currentUser) return <LoginScreen allUsers={allUsersFlat} companies={companies} onLogin={handleLogin} onRegister={registerCompany} />;
 
   const company = companies.find((c) => c.id === companyId) || companies[0] || { id: companyId, name: "Onbekend", slug: "", accent: "#3B82F6" };
@@ -5354,25 +5375,6 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cDrivers = drivers[companyId] || [];
   const cAvailability = availability[companyId] || {};
   const cHours = workshopHours[companyId] || { van: "08:00", tot: "17:00" };
-  // Waarschuwingstermijn toepassen op de compliance-berekeningen zodra die
-  // instelling verandert (of bij het wisselen van bedrijf).
-  useEffect(() => { setWarnMonths(cHours.warnMonths); }, [cHours.warnMonths]);
-
-  // Apparaat-melding bij een nieuwe melding op de werkvloer (voor werkplaats/
-  // beheerder). Werkt terwijl de app op de achtergrond staat, mits de gebruiker
-  // meldingen heeft aangezet in Instellingen.
-  const notifSeen = useRef(null);
-  useEffect(() => {
-    if (!live) return;
-    const openIds = cReports.filter((r) => r.status !== "klaar").map((r) => r.id);
-    if (notifSeen.current === null) { notifSeen.current = new Set(openIds); return; }
-    const fresh = openIds.filter((id) => !notifSeen.current.has(id));
-    notifSeen.current = new Set(openIds);
-    if (fresh.length && (currentUser.rol === "garage" || currentUser.rol === "admin")) {
-      showDeviceNotification("Nieuwe melding", fresh.length === 1 ? "Er is een nieuwe melding op de werkvloer." : `${fresh.length} nieuwe meldingen op de werkvloer.`);
-    }
-  }, [cReports, live]);
-
   const cModules = modules[companyId] || { ...DEFAULT_MODULES };
   const cOnboarded = onboarded[companyId] === true;
   const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
@@ -5439,8 +5441,8 @@ export default function TruckGarageApp({ session, onLogout }) {
   };
   // Verversen: haalt de actuele serverdata op zodat nieuwe meldingen (bv. van
   // een chauffeur) en planning meteen zichtbaar worden — de app heeft nog geen
-  // live-sync, dus dit is de handmatige "ophalen".
-  const [refreshing, setRefreshing] = useState(false);
+  // live-sync, dus dit is de handmatige "ophalen". (refreshing-state staat bij
+  // de overige hooks bovenaan, vóór de vroege returns.)
   const refreshData = async () => {
     if (!live || refreshing) return;
     setRefreshing(true);
