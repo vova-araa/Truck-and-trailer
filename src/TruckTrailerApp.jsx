@@ -875,6 +875,15 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
               <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>Foto of video</div>
               <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>Handig voor de werkplaats — maar niet verplicht.</div>
             </div>
+            {/* Fotogids voor de chauffeur */}
+            <div className="p-3 rounded-lg" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
+              <div className="flex items-center gap-2 mb-1.5" style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, color: "#8FB8FF" }}><Camera size={14} /> Zo maak je een goede foto</div>
+              <ul style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA", lineHeight: 1.6, paddingLeft: 16, listStyle: "disc" }}>
+                <li>Fotografeer <b style={{ color: "#E7ECF3" }}>{zone ? (ZONES.find((z) => z.id === zone)?.label || "het onderdeel") : "het onderdeel waar het probleem zit"}</b>.</li>
+                <li>Houd eerst het hele onderdeel in beeld, maak daarna een foto van dichtbij.</li>
+                <li>Zorg voor goed licht en een scherp beeld (schade goed zichtbaar).</li>
+              </ul>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-7 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
                 <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500 }}>Foto toevoegen</span>
@@ -3564,6 +3573,13 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
             <div className="space-y-4">
               {/* AI foto-analyse */}
               <div>
+                {/* Fotogids: welk onderdeel en hoe fotograferen */}
+                <div className="mb-2 p-2.5 rounded-lg flex items-start gap-2" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
+                  <Camera size={14} color="#8FB8FF" style={{ marginTop: 1, flexShrink: 0 }} />
+                  <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA", lineHeight: 1.45 }}>
+                    Fotografeer <b style={{ color: "#E7ECF3" }}>{zoneLabel(activeZone)}</b> — houd het hele onderdeel in beeld, ga dichtbij genoeg om schade te zien en zorg voor goed licht.
+                  </span>
+                </div>
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ""; }} />
                 <button onClick={() => fileRef.current?.click()} disabled={busy} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg" style={{ background: busy ? "#1A2129" : "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13, boxShadow: "0 2px 10px rgba(59,130,246,0.3)" }}>
                   <Camera size={15} /> {busy ? "Analyseren…" : "Foto toevoegen & AI-check"}
