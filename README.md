@@ -29,7 +29,14 @@ staat.
    - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (build-time)
    - `ANTHROPIC_API_KEY` (server, optioneel — voor de AI-functies)
    - eventueel `AI_RATE_LIMIT` (max AI-aanvragen per minuut per gebruiker, standaard 30)
-4. Open de publieke URL → **Bedrijf aanmelden** → voertuigen toevoegen. Ga naar **Gebruikers** en deel de **bedrijfscode** met je chauffeurs en monteurs: zij kiezen op het inlogscherm **"Meedoen met een bedrijfscode"** en maken zo hun eigen login.
+4. **Abonnementscode aanmaken** (jij, als platformbeheerder) in Supabase → SQL Editor:
+   ```sql
+   insert into public.activation_codes (code, note)
+   values (lpad((floor(random()*1e12))::bigint::text, 12, '0'), 'Pilotbedrijf')
+   returning code;
+   ```
+   Geef die 12-cijferige code aan het bedrijf.
+5. Het bedrijf opent de URL → **Bedrijf activeren** → voert de **12-cijferige code** in → maakt het hoofd-admin-account aan. Daarna: **Gebruikers** → deel de **bedrijfscode** met chauffeurs/monteurs; zij kiezen **"Meedoen met een bedrijfscode"** en maken hun eigen login.
 5. Op de telefoon: **"Zet op beginscherm"** installeert de app met eigen icoon.
 6. Wil je meekijken over alle bedrijven heen? Zet jezelf als platformbeheerder (zie stap 5 onderaan).
 
@@ -156,8 +163,10 @@ niet vereist.
 
 ## 5. Eerste gebruik
 
-1. Open je Railway-URL → **Bedrijf aanmelden** → vul bedrijfsnaam + jouw
-   beheerdersaccount in. Je krijgt een lege, eigen omgeving en wordt direct ingelogd.
+1. Maak eerst een **abonnementscode** aan (SQL hierboven) en open dan de URL →
+   **Bedrijf activeren** → voer de 12-cijferige code in + bedrijfsnaam + jouw
+   beheerdersaccount. Je krijgt een lege, eigen omgeving en wordt direct ingelogd.
+   Nieuwe bedrijven kunnen dus alleen met een geldige code starten.
 2. Voeg voertuigen, monteurs (rol Werkplaats) en chauffeurs toe.
 3. Wil jij als platformbeheerder álle bedrijven kunnen zien? Draai in Supabase:
    ```sql

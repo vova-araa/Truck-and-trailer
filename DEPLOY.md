@@ -75,7 +75,7 @@ Houd het draaiend met **pm2** (`pm2 start npm --name truck -- start`) of een
 
 ## Na de eerste deploy
 
-1. Open de URL → **Bedrijf aanmelden** (jouw beheerdersaccount).
+1. Maak in Supabase een **abonnementscode** aan (`insert into public.activation_codes (code, note) values (lpad((floor(random()*1e12))::bigint::text,12,'0'),'note') returning code;`), open de URL → **Bedrijf activeren** → voer de 12-cijferige code in → jouw beheerdersaccount.
 2. Voeg voertuigen, monteurs (rol Werkplaats) en chauffeurs toe.
 3. Deel de [`HANDLEIDING.md`](./HANDLEIDING.md) met het pilotbedrijf.
 4. Platformbeheerder worden (alle bedrijven zien)? Draai in Supabase:

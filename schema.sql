@@ -61,9 +61,10 @@ drop policy if exists "own company or superadmin" on public.companies;
 create policy "own company or superadmin" on public.companies
   for select using ( id = public.current_company_id() or public.is_superadmin() );
 
+-- Bedrijven worden NIET meer vrij aangemaakt: alleen via een geldige
+-- 12-cijferige abonnementscode (zie redeem_company_code hieronder). Daarom
+-- géén open insert-policy meer voor clients.
 drop policy if exists "authenticated can create company" on public.companies;
-create policy "authenticated can create company" on public.companies
-  for insert with check ( auth.role() = 'authenticated' );
 
 -- PROFILES
 drop policy if exists "read profiles in my company" on public.profiles;
@@ -87,6 +88,55 @@ drop policy if exists "state of my company" on public.company_state;
 create policy "state of my company" on public.company_state
   for all using ( company_id = public.current_company_id() or public.is_superadmin() )
   with check ( company_id = public.current_company_id() or public.is_superadmin() );
+
+-- ---------- ABONNEMENTSCODE: een nieuw bedrijf activeren ----------
+-- Jij (platformbeheerder) geeft bij een abonnement een 12-cijferige code uit.
+-- Alleen met een geldige, ongebruikte code kan iemand een bedrijf + hoofd-admin
+-- aanmaken. Een code is eenmalig.
+
+create table if not exists public.activation_codes (
+  code text primary key,
+  status text not null default 'unused' check (status in ('unused','used')),
+  company_id uuid references public.companies(id) on delete set null,
+  note text default '',
+  created_at timestamptz not null default now(),
+  used_at timestamptz
+);
+alter table public.activation_codes enable row level security;
+-- Geen directe toegang voor clients; alles loopt via de functies hieronder.
+
+-- Snelle check of een code geldig/ongebruikt is (voor nette foutmeldingen vooraf).
+create or replace function public.activation_code_valid(p_code text)
+returns boolean language sql stable security definer as $$
+  select exists(
+    select 1 from public.activation_codes
+    where code = regexp_replace(coalesce(p_code,''), '\D', '', 'g') and status = 'unused'
+  )
+$$;
+grant execute on function public.activation_code_valid(text) to anon, authenticated;
+
+-- Wissel een geldige code in: maak het bedrijf aan en markeer de code als gebruikt.
+-- Atomair dankzij FOR UPDATE, zodat een code nooit dubbel gebruikt kan worden.
+create or replace function public.redeem_company_code(p_code text, p_name text, p_slug text, p_accent text)
+returns uuid language plpgsql security definer as $$
+declare cid uuid; clean text;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  clean := regexp_replace(coalesce(p_code,''), '\D', '', 'g');
+  perform 1 from public.activation_codes where code = clean and status = 'unused' for update;
+  if not found then raise exception 'INVALID_CODE'; end if;
+  insert into public.companies (name, slug, accent) values (p_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+  update public.activation_codes set status = 'used', company_id = cid, used_at = now() where code = clean;
+  return cid;
+end $$;
+grant execute on function public.redeem_company_code(text, text, text, text) to authenticated;
+
+-- Codes aanmaken doe je als platformbeheerder in de SQL Editor, bijvoorbeeld:
+--   insert into public.activation_codes (code, note)
+--   values (lpad((floor(random()*1e12))::bigint::text, 12, '0'), 'Bedrijf X - jaarabonnement')
+--   returning code;
+-- (of zet zelf een vaste 12-cijferige code neer). Bekijk uitgegeven codes met:
+--   select code, status, note, used_at from public.activation_codes order by created_at desc;
 
 -- ---------- JOIN-CODE: medewerkers laten meedoen ----------
 -- Een bedrijf deelt zijn 6-tekens code. Een medewerker maakt een account en

@@ -14,8 +14,27 @@ import { supabase } from "./supabaseClient.js";
 
 // ---------- AUTH ----------
 
-export async function signUpCompany({ bedrijfsnaam, naam, email, telefoon, wachtwoord, accent }) {
-  // 1. Create the auth user (real email + password)
+// Controleer vooraf of een 12-cijferige abonnementscode geldig en ongebruikt is.
+export async function activationCodeValid(code) {
+  const clean = (code || "").replace(/\D/g, "");
+  if (clean.length !== 12) return false;
+  const { data, error } = await supabase.rpc("activation_code_valid", { p_code: clean });
+  if (error) throw error;
+  return !!data;
+}
+
+// Bedrijf aanmelden kan alleen met een geldige abonnementscode. De code wordt
+// server-side (SECURITY DEFINER) ingewisseld: die maakt het bedrijf aan en
+// markeert de code als gebruikt. Zo kan niemand zonder code een bedrijf starten.
+export async function signUpCompany({ code, bedrijfsnaam, naam, email, telefoon, wachtwoord, accent }) {
+  const clean = (code || "").replace(/\D/g, "");
+  if (clean.length !== 12) throw new Error("INVALID_CODE_FORMAT");
+
+  // 0. Vooraf controleren (voorkomt een leeg account bij een foute code)
+  const ok = await activationCodeValid(clean);
+  if (!ok) throw new Error("INVALID_CODE");
+
+  // 1. Auth-account aanmaken (echt e-mail + wachtwoord)
   const { data: signUp, error: signErr } = await supabase.auth.signUp({
     email,
     password: wachtwoord,
@@ -24,32 +43,25 @@ export async function signUpCompany({ bedrijfsnaam, naam, email, telefoon, wacht
   if (signErr) throw signErr;
   const userId = signUp.user?.id;
   if (!userId) throw new Error("Kon geen account aanmaken.");
+  if (!signUp.session) throw new Error("EMAIL_CONFIRM_REQUIRED");
 
-  // 2. Create the company (RLS allows an authenticated user to insert a company)
+  // 2. Code inwisselen -> bedrijf wordt aangemaakt en code op 'used' gezet
   const slug = slugify(bedrijfsnaam);
-  const { data: company, error: compErr } = await supabase
-    .from("companies")
-    .insert({ name: bedrijfsnaam, slug, accent })
-    .select()
-    .single();
-  if (compErr) throw compErr;
+  const { data: companyId, error: redErr } = await supabase.rpc("redeem_company_code", {
+    p_code: clean, p_name: bedrijfsnaam, p_slug: slug, p_accent: accent,
+  });
+  if (redErr) throw new Error(/INVALID_CODE/.test(redErr.message) ? "INVALID_CODE" : redErr.message);
 
-  // 3. Create the admin profile linking the auth user to the company
+  // 3. Hoofd-admin profiel koppelen aan het nieuwe bedrijf
   const { error: profErr } = await supabase.from("profiles").insert({
-    id: userId,
-    company_id: company.id,
-    naam,
-    email,
-    telefoon: telefoon || "",
-    rol: "admin",
-    status: "actief",
+    id: userId, company_id: companyId, naam, email, telefoon: telefoon || "", rol: "admin", status: "actief",
   });
   if (profErr) throw profErr;
 
-  // 4. Seed an empty state document for the company
-  await supabase.from("company_state").insert({ company_id: company.id, data: emptyDataset() });
+  // 4. Lege dataset klaarzetten
+  await supabase.from("company_state").insert({ company_id: companyId, data: emptyDataset() });
 
-  return { userId, company };
+  return { userId, company: { id: companyId, name: bedrijfsnaam } };
 }
 
 // Kijk een bedrijf op via join-code (voor de "Meedoen"-flow: laat de naam zien

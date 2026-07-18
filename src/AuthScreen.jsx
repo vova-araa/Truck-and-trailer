@@ -12,7 +12,7 @@ export default function AuthScreen({ onAuthed }) {
   const [notice, setNotice] = useState("");
 
   const [login, setLogin] = useState({ email: "", wachtwoord: "" });
-  const [reg, setReg] = useState({ bedrijfsnaam: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "" });
+  const [reg, setReg] = useState({ code: "", bedrijfsnaam: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "" });
   const [join, setJoin] = useState({ code: "", naam: "", email: "", telefoon: "", wachtwoord: "", wachtwoord2: "", rol: "chauffeur" });
 
   const doReset = async () => {
@@ -46,6 +46,7 @@ export default function AuthScreen({ onAuthed }) {
 
   const doRegister = async () => {
     setErr("");
+    if ((reg.code || "").replace(/\D/g, "").length !== 12) return setErr("Vul de 12-cijferige abonnementscode in die je hebt ontvangen.");
     if (!reg.bedrijfsnaam.trim()) return setErr("Vul een bedrijfsnaam in.");
     if (!reg.naam.trim()) return setErr("Vul je naam in.");
     if (!validEmail(reg.email)) return setErr("Vul een geldig e-mailadres in.");
@@ -100,7 +101,7 @@ export default function AuthScreen({ onAuthed }) {
 
         <div style={toggleRow}>
           <button style={tab(mode === "login")} onClick={() => { setMode("login"); setErr(""); setNotice(""); }}>Inloggen</button>
-          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); }}>Bedrijf aanmelden</button>
+          <button style={tab(mode === "register")} onClick={() => { setMode("register"); setErr(""); setNotice(""); }}>Bedrijf activeren</button>
         </div>
 
         {mode === "join" ? (
@@ -152,7 +153,11 @@ export default function AuthScreen({ onAuthed }) {
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            <div style={sectionLabel}>Bedrijf</div>
+            <div style={sectionLabel}>Abonnementscode</div>
+            <input style={{ ...input, letterSpacing: 2, fontFamily: "'JetBrains Mono', monospace" }} inputMode="numeric" maxLength={14} placeholder="12-cijferige code" value={reg.code}
+              onChange={(e) => setReg({ ...reg, code: e.target.value.replace(/[^0-9]/g, "").slice(0, 12) })} />
+            <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren.</div>
+            <div style={{ ...sectionLabel, marginTop: 6 }}>Bedrijf</div>
             <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
             <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>
             <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />
@@ -162,9 +167,9 @@ export default function AuthScreen({ onAuthed }) {
             <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
               onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
             {err && <div style={errStyle}>{err}</div>}
-            <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Aanmaken..." : "Bedrijf aanmelden & starten"}</button>
+            <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Activeren..." : "Bedrijf activeren & starten"}</button>
             <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", textAlign: "center" }}>
-              Je krijgt een eigen, lege omgeving en wordt direct ingelogd als beheerder.
+              Je wordt direct ingelogd als beheerder. Daarna nodig je je medewerkers uit met de bedrijfscode (menu Gebruikers).
             </div>
           </div>
         )}
@@ -176,7 +181,8 @@ export default function AuthScreen({ onAuthed }) {
 
 function mapError(e) {
   const m = (e && e.message) || String(e);
-  if (/INVALID_CODE/i.test(m)) return "Deze bedrijfscode klopt niet. Vraag je werkgever om de juiste code.";
+  if (/INVALID_CODE_FORMAT/i.test(m)) return "De abonnementscode bestaat uit 12 cijfers.";
+  if (/INVALID_CODE/i.test(m)) return "Deze code is ongeldig of al gebruikt. Controleer je abonnementscode (of, als medewerker, je bedrijfscode).";
   if (/EMAIL_CONFIRM_REQUIRED/i.test(m)) return "Je account is aangemaakt — bevestig eerst je e-mail (check je inbox) en log daarna in.";
   if (/already registered|already exists|duplicate/i.test(m)) return "Dit e-mailadres of bedrijf bestaat al.";
   if (/invalid login credentials/i.test(m)) return "Onjuist e-mailadres of wachtwoord.";
