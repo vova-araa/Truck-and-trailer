@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader } from "./api.js";
 
@@ -1464,10 +1464,10 @@ function ComplianceBadge({ vehicle, showOk = true }) {
   );
 }
 
-function VehiclesView({ vehicles, onAdd, onSelect }) {
+function VehiclesView({ vehicles, onAdd, onSelect, filterType = null, title = "Voertuigen" }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "", apkTot: "" });
+  const [form, setForm] = useState({ kenteken: "", merk: "", type: filterType || "Truck", bouwjaar: "", km: "", apkTot: "" });
   const [aiLoading, setAiLoading] = useState(false);
   const [rdwLoading, setRdwLoading] = useState(false);
   const [aiMsg, setAiMsg] = useState("");
@@ -1512,15 +1512,17 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   const submit = () => {
     if (!form.kenteken || !form.merk) return;
     onAdd({ id: "v" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type, bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), km: Number(form.km) || 0, status: "operational", health: 100, driver: "—", apkTot: form.apkTot || "", tachoTot: "", tachoPlicht: form.type === "Truck", verzekeringTot: "" });
-    setForm({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "", apkTot: "" }); setAiMsg(""); setOpen(false);
+    setForm({ kenteken: "", merk: "", type: filterType || "Truck", bouwjaar: "", km: "", apkTot: "" }); setAiMsg(""); setOpen(false);
   };
 
   const q = query.trim().toLowerCase();
   const shown = vehicles.filter((v) => {
+    if (filterType && v.type !== filterType) return false;
     if (statusFilter !== "all" && v.status !== statusFilter) return false;
     if (!q) return true;
     return [v.kenteken, v.merk, v.type, v.driver].filter(Boolean).some((s) => String(s).toLowerCase().includes(q));
   });
+  const totalForType = filterType ? vehicles.filter((v) => v.type === filterType).length : vehicles.length;
 
   const exportCsv = () => {
     const label = { operational: "Operationeel", attention: "Let op", workshop: "In werkplaats" };
@@ -1531,7 +1533,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Voertuigen</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{vehicles.length} voertuig(en){shown.length !== vehicles.length ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>{title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {filterType ? "bakwagen(s)" : "voertuig(en)"}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
@@ -1565,7 +1567,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
 
           <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
             <div><FieldLabel>Merk/model</FieldLabel><input placeholder="Merk/model" value={form.merk} onChange={(e) => setForm({ ...form, merk: e.target.value })} className="tg-input" /></div>
-            <div><FieldLabel>Type</FieldLabel><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input"><option>Truck</option><option>Bestelwagen</option></select></div>
+            <div><FieldLabel>Type</FieldLabel><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input"><option>Truck</option><option>Trekker</option><option>Bakwagen</option><option>Bestelwagen</option></select></div>
             <div><FieldLabel>Bouwjaar</FieldLabel><input placeholder="Bouwjaar" value={form.bouwjaar} onChange={(e) => setForm({ ...form, bouwjaar: e.target.value })} className="tg-input" /></div>
             <div><FieldLabel>KM-stand</FieldLabel><input placeholder="KM-stand" value={form.km} onChange={(e) => setForm({ ...form, km: e.target.value })} className="tg-input" /></div>
             <div><FieldLabel>APK geldig tot</FieldLabel><input type="date" value={form.apkTot} onChange={(e) => setForm({ ...form, apkTot: e.target.value })} className="tg-input" /></div>
@@ -1710,7 +1712,7 @@ ${JSON.stringify(ctx)}`;
           <div className="mt-4 space-y-3">
             <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))" }}>
               <div><Eyebrow>Merk/model</Eyebrow><input className="tg-input" style={{ width: "100%" }} value={form.merk} onChange={(e) => setForm({ ...form, merk: e.target.value })} /></div>
-              <div><Eyebrow>Type</Eyebrow><select className="tg-input" style={{ width: "100%" }} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>Truck</option><option>Bestelwagen</option></select></div>
+              <div><Eyebrow>Type</Eyebrow><select className="tg-input" style={{ width: "100%" }} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>Truck</option><option>Trekker</option><option>Bakwagen</option><option>Bestelwagen</option></select></div>
               <div><Eyebrow>Bouwjaar</Eyebrow><input className="tg-input" style={{ width: "100%" }} value={form.bouwjaar} onChange={(e) => setForm({ ...form, bouwjaar: e.target.value })} /></div>
               <div><Eyebrow>KM-stand</Eyebrow><input className="tg-input" style={{ width: "100%" }} value={form.km} onChange={(e) => setForm({ ...form, km: e.target.value })} /></div>
               <div><Eyebrow>Chauffeur</Eyebrow><input className="tg-input" style={{ width: "100%" }} value={form.driver} onChange={(e) => setForm({ ...form, driver: e.target.value })} /></div>
@@ -2753,7 +2755,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
    INSTELLINGEN — werkplaatstijden + beschikbaarheid per monteur
 --------------------------------------------------------------------- */
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData }) {
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
@@ -2781,6 +2783,33 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><SlidersHorizontal size={22} color="#3B82F6" /> Instellingen</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Werkplaatstijden en beschikbaarheid van monteurs.</p>
       </div>
+
+      {/* Modules aan/uit — kies wat je bedrijf gebruikt. Uit = weg uit het menu. */}
+      {onSetModule && (
+        <Card className="p-5">
+          <Eyebrow>Onderdelen die je gebruikt</Eyebrow>
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+            Zet uit wat je niet nodig hebt — het verdwijnt dan uit je menu. Je kunt dit hier altijd weer aanzetten.
+          </div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)" }}>
+            {MODULE_DEFS.map((m) => {
+              const on = modOn(modules, m.key);
+              return (
+                <button key={m.key} onClick={() => onSetModule(m.key, !on)} className="flex items-center gap-3 p-3 rounded-lg text-left" style={{ background: "#161C25", border: `1px solid ${on ? "#3B82F655" : "#232B38"}`, opacity: on ? 1 : 0.7 }}>
+                  <span className="rounded-full flex items-center" style={{ width: 34, height: 20, background: on ? "#3B82F6" : "#2A3340", padding: 2, flexShrink: 0, transition: "background .2s" }}>
+                    <span className="rounded-full" style={{ width: 16, height: 16, background: "#fff", transform: on ? "translateX(14px)" : "translateX(0)", transition: "transform .2s" }} />
+                  </span>
+                  <span style={{ width: 30, height: 30, borderRadius: 8, background: "#12171F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><m.icon size={15} color={on ? "#3B82F6" : "#98A1B0"} /></span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3" }}>{m.label}</span>
+                    <span style={{ display: "block", fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.desc}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* Testomgeving — voorbeelddata laden of alles wissen (alleen beheerder) */}
       {(onLoadSample || onClearData) && (
@@ -3622,7 +3651,7 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
    SIDEBAR (grouped, matches Blex Fleet menu structure)
 --------------------------------------------------------------------- */
 
-function SidebarContent({ view, setView, openCount, company, currentUser, role, isSuperAdmin, onCompanyClick, onLogout, onClose }) {
+function SidebarContent({ view, setView, openCount, company, currentUser, role, isSuperAdmin, onCompanyClick, onLogout, onClose, modules }) {
   return (
     <div className="flex flex-col py-6 px-4" style={{ height: "100%", minHeight: 0 }}>
       <div className="flex items-center justify-between px-2 mb-6" style={{ flexShrink: 0 }}>
@@ -3633,11 +3662,14 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
       </div>
 
       <nav className="space-y-5 flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g, gi) => (
+        {NAV_GROUPS.filter((g) => g.roles.includes(role)).map((g, gi) => {
+          const items = g.items.filter((n) => (!n.roles || n.roles.includes(role)) && modOn(modules, n.module));
+          if (items.length === 0) return null;
+          return (
           <div key={g.group + gi}>
             <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>{g.group}</div>
             <div className="space-y-1">
-              {g.items.filter((n) => !n.roles || n.roles.includes(role)).map((n) => {
+              {items.map((n) => {
                 const active = view === n.id;
                 return (
                   <button key={n.id} onClick={() => { setView(n.id); onClose && onClose(); }}
@@ -3652,7 +3684,8 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="pt-4 space-y-3 mt-3" style={{ borderTop: "1px solid #1A2129", flexShrink: 0 }}>
@@ -3768,32 +3801,93 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
   );
 }
 
+// Aan/uit te zetten onderdelen. Een bedrijf kiest bij de start (of later in
+// Instellingen) welke het gebruikt; uitgezette modules verdwijnen uit het menu.
+const MODULE_DEFS = [
+  { key: "planning", label: "Planning", desc: "Werkplaats-agenda inplannen", icon: Calendar },
+  { key: "maintenance", label: "Voorspellend onderhoud", desc: "Onderhoud op km-stand & tijd", icon: Wrench },
+  { key: "parts", label: "Voorraad", desc: "Onderdelen & voorraadbeheer", icon: Package },
+  { key: "trailers", label: "Trailers", desc: "Aanhangers & opleggers", icon: Container },
+  { key: "bakwagens", label: "Bakwagens", desc: "Bakwagens apart bijhouden", icon: Boxes },
+  { key: "drivers", label: "Chauffeurs", desc: "Rijbewijs, Code 95, ADR, keuring", icon: Contact },
+  { key: "inspection", label: "360° Inspectie", desc: "AI-schadeherkenning op foto's", icon: ScanEye },
+  { key: "costs", label: "Kosten", desc: "Uitgaven per categorie & voertuig", icon: Euro },
+  { key: "ai", label: "AI Assistent", desc: "Slimme hulp die ook acties uitvoert", icon: Sparkles },
+];
+const DEFAULT_MODULES = MODULE_DEFS.reduce((a, m) => { a[m.key] = true; return a; }, {});
+// modules aan? (ontbrekende sleutel = aan, zodat bestaande bedrijven niks kwijtraken)
+const modOn = (modules, key) => !key || (modules ? modules[key] !== false : true);
+
 const NAV_GROUPS = [
   { group: "Chauffeur", roles: ["admin", "garage", "chauffeur"], items: [
     { id: "driver", label: "Melding maken", icon: AlertTriangle, badgeKey: "openCount" },
   ]},
   { group: "Overzicht", roles: ["admin", "garage"], items: [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "ai", label: "AI Assistent", icon: Sparkles },
+    { id: "ai", label: "AI Assistent", icon: Sparkles, module: "ai" },
   ]},
   { group: "Werkplaats", roles: ["admin", "garage"], items: [
     { id: "workfloor", label: "Werkvloer", icon: KanbanSquare },
-    { id: "planning", label: "Planning", icon: Calendar },
-    { id: "maintenance", label: "Onderhoud", icon: Wrench },
-    { id: "parts", label: "Voorraad", icon: Package },
+    { id: "planning", label: "Planning", icon: Calendar, module: "planning" },
+    { id: "maintenance", label: "Onderhoud", icon: Wrench, module: "maintenance" },
+    { id: "parts", label: "Voorraad", icon: Package, module: "parts" },
   ]},
   { group: "Vloot", roles: ["admin", "garage"], items: [
     { id: "vehicles", label: "Voertuigen", icon: Truck },
-    { id: "trailers", label: "Trailers", icon: Container },
-    { id: "drivers", label: "Chauffeurs", icon: Contact },
-    { id: "inspection", label: "360° Inspectie", icon: ScanEye },
+    { id: "bakwagens", label: "Bakwagens", icon: Boxes, module: "bakwagens" },
+    { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
+    { id: "drivers", label: "Chauffeurs", icon: Contact, module: "drivers" },
+    { id: "inspection", label: "360° Inspectie", icon: ScanEye, module: "inspection" },
   ]},
   { group: "Beheer", roles: ["admin", "garage"], items: [
-    { id: "costs", label: "Kosten", icon: Euro, roles: ["admin"] },
+    { id: "costs", label: "Kosten", icon: Euro, roles: ["admin"], module: "costs" },
     { id: "settings", label: "Instellingen", icon: SlidersHorizontal },
     { id: "users", label: "Gebruikers", icon: Users, roles: ["admin"] },
   ]},
 ];
+
+/* ---------------------------------------------------------------------
+   ONBOARDING — bij de eerste keer kiest het bedrijf welke onderdelen het gebruikt
+--------------------------------------------------------------------- */
+function OnboardingWizard({ company, onDone }) {
+  const isMobile = useIsMobile();
+  const [sel, setSel] = useState({ ...DEFAULT_MODULES });
+  const toggle = (k) => setSel((s) => ({ ...s, [k]: !s[k] }));
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "#0A0E14", overflowY: "auto", padding: 16 }}>
+      <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 22, paddingBottom: 40 }}>
+        <div style={{ textAlign: "center", marginBottom: 6 }}>
+          <span style={{ fontFamily: "Oswald", fontSize: 24, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</span>
+        </div>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3", textAlign: "center", marginTop: 8 }}>Welkom{company?.name ? `, ${company.name}` : ""}!</h1>
+        <p style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", textAlign: "center", lineHeight: 1.5, margin: "8px auto 20px", maxWidth: 440 }}>
+          Kies welke onderdelen je wilt gebruiken. Wat je uitzet zie je niet in het menu — je kunt het later altijd aanpassen bij <b>Instellingen</b>.
+        </p>
+        <div className="grid gap-2" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)" }}>
+          {MODULE_DEFS.map((m) => {
+            const on = sel[m.key] !== false;
+            return (
+              <button key={m.key} onClick={() => toggle(m.key)} className="flex items-center gap-3 p-3 rounded-xl text-left" style={{ background: on ? "#12233E" : "#12171F", border: `1px solid ${on ? "#3B82F6" : "#232B38"}` }}>
+                <span style={{ width: 34, height: 34, borderRadius: 9, background: on ? "#3B82F6" : "#1A2129", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><m.icon size={17} color={on ? "#fff" : "#98A1B0"} /></span>
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span style={{ display: "block", fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>{m.label}</span>
+                  <span style={{ display: "block", fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>{m.desc}</span>
+                </span>
+                <span className="rounded-full flex items-center" style={{ width: 34, height: 20, background: on ? "#3B82F6" : "#2A3340", padding: 2, flexShrink: 0 }}>
+                  <span className="rounded-full" style={{ width: 16, height: 16, background: "#fff", transform: on ? "translateX(14px)" : "translateX(0)", transition: "transform .2s" }} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-6 flex flex-col gap-2">
+          <Button onClick={() => onDone(sel)}>Aan de slag →</Button>
+          <button onClick={() => onDone({ ...DEFAULT_MODULES })} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6 }}>Alles gebruiken</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
@@ -3850,6 +3944,8 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [drivers, setDrivers] = useState(() => initSlice("drivers", seedDrivers));
   const [availability, setAvailability] = useState(() => initSlice("availability", seedAvailability, {}));
   const [workshopHours, setWorkshopHours] = useState(() => initSlice("workshopHours", seedWorkshopHours, { van: "08:00", tot: "17:00" }));
+  const [modules, setModules] = useState(() => initSlice("modules", { blex: { ...DEFAULT_MODULES }, vandijk: { ...DEFAULT_MODULES } }, { ...DEFAULT_MODULES }));
+  const [onboarded, setOnboarded] = useState(() => initSlice("onboarded", { blex: true, vandijk: true }, false));
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
   const firstSave = useRef(true);
   const lastCid = useRef(liveCompanyId);
@@ -3875,9 +3971,11 @@ export default function TruckGarageApp({ session, onLogout }) {
       drivers: drivers[cid] || [],
       availability: availability[cid] || {},
       workshopHours: workshopHours[cid] || { van: "08:00", tot: "17:00" },
+      modules: modules[cid] || { ...DEFAULT_MODULES },
+      onboarded: onboarded[cid] === true,
     };
     saveStateDebounced(cid, dataset, setSaveStatus);
-  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, live, companyId, session]);
+  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan.
   useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);
@@ -3939,6 +4037,16 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cDrivers = drivers[companyId] || [];
   const cAvailability = availability[companyId] || {};
   const cHours = workshopHours[companyId] || { van: "08:00", tot: "17:00" };
+  const cModules = modules[companyId] || { ...DEFAULT_MODULES };
+  const cOnboarded = onboarded[companyId] === true;
+  const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
+  const setAllModules = (obj) => setModules((s) => ({ ...s, [companyId]: { ...DEFAULT_MODULES, ...obj } }));
+  const finishOnboarding = (chosen) => { if (chosen) setAllModules(chosen); setOnboarded((s) => ({ ...s, [companyId]: true })); };
+
+  // Eerste keer voor een bedrijf (alleen de beheerder): kies je onderdelen.
+  if (live && currentUser.rol === "admin" && !cOnboarded) {
+    return <OnboardingWizard company={company} onDone={finishOnboarding} />;
+  }
   const mechanics = cUsers.filter((u) => u.rol === "garage");
   const openCount = cReports.filter((r) => r.status !== "klaar").length;
 
@@ -4042,7 +4150,7 @@ export default function TruckGarageApp({ session, onLogout }) {
         {/* Desktop persistent sidebar */}
         {!isMobile && (
           <aside style={{ width: 240, borderRight: "1px solid #1A2129", minHeight: "100vh" }} className="shrink-0">
-            <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin}
+            <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin} modules={cModules}
               onCompanyClick={() => setCompanyPicker((s) => !s)} onLogout={live ? onLogout : () => setCurrentUser(null)} />
           </aside>
         )}
@@ -4052,7 +4160,7 @@ export default function TruckGarageApp({ session, onLogout }) {
           <div className="fixed inset-0 z-40">
             <div className="absolute inset-0" style={{ background: "#000000AA" }} onClick={() => setMobileMenuOpen(false)} />
             <div className="absolute left-0 top-0" style={{ width: 284, maxWidth: "88vw", height: "100dvh", background: "#0A0E14", borderRight: "1px solid #1A2129" }}>
-              <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin}
+              <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin} modules={cModules}
                 onCompanyClick={() => setCompanyPicker((s) => !s)} onLogout={live ? onLogout : () => setCurrentUser(null)} onClose={() => setMobileMenuOpen(false)} />
             </div>
           </div>
@@ -4142,22 +4250,23 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
-                {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
+                {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} filterType="Bakwagen" title="Bakwagens" />}
+                {view === "costs" && isAdmin && modOn(cModules, "costs") && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
                   return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} onGoInspection={() => { setSelectedVehicleId(null); setView("inspection"); }} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} />;
                 })()}
-                {view === "trailers" && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
-                {view === "parts" && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
-                {view === "maintenance" && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
+                {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
+                {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
+                {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
                 {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} onUsePart={usePart} />}
-                {view === "planning" && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
-                {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
-                {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
+                {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} />}
+                {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
+                {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
-                {view === "drivers" && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} />}
+                {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} />}
               </>
             )}
             </div>

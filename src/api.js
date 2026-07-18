@@ -272,6 +272,8 @@ export function emptyDataset() {
     users: [], // extra invited users (chauffeurs/monteurs) live here; the admin lives in `profiles`
     planning: [],
     drivers: [], // chauffeurs met hun certificaten (rijbewijs, Code 95, ADR, medisch)
+    modules: null, // welke onderdelen het bedrijf gebruikt (null = alles aan)
+    onboarded: false, // heeft de beheerder de eerste keuze gemaakt?
     availability: {},
     workshopHours: { van: "08:00", tot: "17:00" },
   };
