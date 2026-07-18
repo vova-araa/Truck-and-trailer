@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription } from "./api.js";
 
@@ -4159,7 +4159,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
 
         {isSuperAdmin && (
           <div>
-            <div className="px-3 mb-1.5" style={{ color: "#98A1B0", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>Platform</div>
+            <div className="px-3 mb-1.5 flex items-center gap-1.5" style={{ color: "#F5B301", fontFamily: "Inter", fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}><Crown size={13} /> Platform (superadmin)</div>
             <div className="space-y-1">
               <button onClick={() => { setView("codes"); onClose && onClose(); }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left"
@@ -4185,12 +4185,15 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
           {isSuperAdmin && <ChevronDown size={14} color="#B4BCC9" style={{ flexShrink: 0 }} />}
         </button>
         <div className="flex items-center gap-2.5 px-1">
-          <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#3B82F633", border: "1px solid #3B82F655", flexShrink: 0 }} className="flex items-center justify-center">
-            <span style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 12 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
+          <div style={{ width: 34, height: 34, borderRadius: "50%", position: "relative", background: isSuperAdmin ? "#F5B30122" : "#3B82F633", border: `1px solid ${isSuperAdmin ? "#F5B30188" : "#3B82F655"}`, flexShrink: 0 }} className="flex items-center justify-center">
+            <span style={{ color: isSuperAdmin ? "#F5B301" : "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 12 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
+            {isSuperAdmin && <span style={{ position: "absolute", top: -6, right: -5, background: "#0A0E14", borderRadius: "50%", padding: 1, display: "flex" }}><Crown size={13} color="#F5B301" /></span>}
           </div>
           <div>
             <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 600 }}>{currentUser.naam}</div>
-            <span className="text-xs px-1.5 rounded" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>
+            {isSuperAdmin
+              ? <span className="text-xs px-1.5 rounded inline-flex items-center gap-1" style={{ color: "#F5B301", background: "#F5B30118" }}><Crown size={11} /> Superadmin</span>
+              : <span className="text-xs px-1.5 rounded" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>}
           </div>
         </div>
         <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg" style={{ color: "#B4BCC9" }}>
