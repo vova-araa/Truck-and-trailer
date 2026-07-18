@@ -245,9 +245,11 @@ function driverComplianceItems(d, today = TODAY) {
   const items = [
     { key: "rijbewijs", label: "Rijbewijs C/CE", datum: d.rijbewijsTot },
     { key: "code95", label: "Code 95", datum: d.code95Tot },
-    { key: "medisch", label: "Medische keuring", datum: d.medischTot },
   ];
-  if (d.adrTot) items.push({ key: "adr", label: "ADR-certificaat", datum: d.adrTot });
+  // Medische keuring en ADR kunnen op "niet van toepassing" staan; dan tellen ze
+  // niet mee voor de status.
+  if (!d.medischNvt) items.push({ key: "medisch", label: "Medische keuring", datum: d.medischTot });
+  if (!d.adrNvt && d.adrTot) items.push({ key: "adr", label: "ADR-certificaat", datum: d.adrTot });
   return items.filter((it) => it.datum).map((it) => ({ ...it, status: complianceStatus(it.datum, today), dagen: daysUntil(it.datum, today) }));
 }
 function driverWorstCompliance(d, today = TODAY) {
@@ -1504,7 +1506,7 @@ function ComplianceBadge({ vehicle, showOk = true }) {
   );
 }
 
-function VehiclesView({ vehicles, onAdd, onSelect, filterType = null, title = "Voertuigen" }) {
+function VehiclesView({ vehicles, onAdd, onSelect, filterType = null, title = "Vrachtwagens" }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ kenteken: "", merk: "", type: filterType || "Truck", bouwjaar: "", km: "", apkTot: "" });
@@ -2700,26 +2702,31 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
             <div><FieldLabel>Telefoon</FieldLabel><input placeholder="+31 6 ..." value={form.telefoon} onChange={(e) => setForm({ ...form, telefoon: e.target.value })} className="tg-input" style={{ width: "100%" }} /></div>
           </div>
 
-          {/* Toegang: echt account aanmaken (server) of uitnodigen */}
+          {/* Toegang: echt account aanmaken (server) of uitnodigen.
+             We tonen de keuzeknoppen alleen als er echt iets te kiezen valt —
+             anders stond er een losse "Uitnodiging sturen"-knop boven de
+             verstuurknop, wat als dubbel overkwam. */}
+          {(() => {
+            const opts = onCreateAccount
+              ? [{ v: "account", t: "Inlogaccount aanmaken" }, { v: "invite", t: "Uitnodigen via code" }]
+              : live
+                ? [{ v: "invite", t: "Uitnodigen via code" }]
+                : [{ v: "invite", t: "Uitnodiging sturen" }, { v: "direct", t: "Direct actief" }];
+            if (opts.length < 2) return null;
+            return (
           <div>
             <FieldLabel>Toegang</FieldLabel>
             <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid #232B38" }}>
-              {onCreateAccount ? (
-                <>
-                  <button onClick={() => setForm({ ...form, mode: "account" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "account" ? "#1A2129" : "transparent", color: form.mode === "account" ? "#3B82F6" : "#B4BCC9" }}>Inlogaccount aanmaken</button>
-                  <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodigen via code</button>
-                </>
-              ) : (
-                <>
-                  <button onClick={() => setForm({ ...form, mode: "invite" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "invite" ? "#1A2129" : "transparent", color: form.mode === "invite" ? "#3B82F6" : "#B4BCC9" }}>Uitnodiging sturen</button>
-                  {!live && <button onClick={() => setForm({ ...form, mode: "direct" })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === "direct" ? "#1A2129" : "transparent", color: form.mode === "direct" ? "#3B82F6" : "#B4BCC9" }}>Direct actief</button>}
-                </>
-              )}
+              {opts.map((o) => (
+                <button key={o.v} onClick={() => setForm({ ...form, mode: o.v })} className="flex-1 py-2.5 text-xs" style={{ fontFamily: "Inter", fontWeight: 600, background: form.mode === o.v ? "#1A2129" : "transparent", color: form.mode === o.v ? "#3B82F6" : "#B4BCC9" }}>{o.t}</button>
+              ))}
             </div>
             <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 6 }}>
               {form.mode === "account" ? "Je maakt nu een echt inlogaccount aan. De medewerker logt direct in met dit e-mailadres en wachtwoord." : form.mode === "invite" ? "De medewerker maakt zelf een login met de bedrijfscode (hierboven)." : "Je stelt nu een wachtwoord in; de gebruiker kan meteen inloggen."}
             </div>
           </div>
+            );
+          })()}
 
           {(form.mode === "direct" || form.mode === "account") && (
             <div><FieldLabel>Wachtwoord *</FieldLabel><input type="password" placeholder={form.mode === "account" ? "Minstens 6 tekens" : "Minstens 4 tekens"} value={form.wachtwoord} onChange={(e) => setForm({ ...form, wachtwoord: e.target.value })} className="tg-input" style={{ width: isMobile ? "100%" : "50%" }} /></div>
@@ -3068,7 +3075,6 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
                     </div>
                   );
                 })}
-                <button onClick={applyToAllWeekdays} className="text-xs mt-1" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>Maandag-tijden toepassen op ma t/m vr</button>
               </div>
             )}
           </>
@@ -3320,7 +3326,7 @@ function InspectionView({ vehicles, reports, onUpdate, aiReady }) {
           <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><ScanEye size={22} color="#22D3B0" /> 360° Inspectie</h1>
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Laat de AI schade op foto's beoordelen, per onderdeel.</p>
         </div>
-        <EmptyState icon={Truck} text="Voeg eerst een voertuig toe onder 'Voertuigen' om te kunnen inspecteren." />
+        <EmptyState icon={Truck} text="Voeg eerst een voertuig toe onder 'Vrachtwagens' om te kunnen inspecteren." />
       </div>
     );
   }
@@ -4263,6 +4269,11 @@ function SupportInboxView({ live }) {
 --------------------------------------------------------------------- */
 
 function SidebarContent({ view, setView, openCount, company, currentUser, role, isSuperAdmin, onCompanyClick, onLogout, onClose, modules }) {
+  // Onderste blok inklapbaar: zo hou je meer ruimte over voor het menu zelf.
+  const [footOpen, setFootOpen] = useState(() => {
+    try { return localStorage.getItem("tt_sidebar_foot") !== "0"; } catch { return true; }
+  });
+  const toggleFoot = () => setFootOpen((v) => { const nv = !v; try { localStorage.setItem("tt_sidebar_foot", nv ? "1" : "0"); } catch {} return nv; });
   return (
     <div className="flex flex-col py-6 px-4" style={{ height: "100%", minHeight: 0 }}>
       <div className="flex items-center justify-between px-2 mb-6" style={{ flexShrink: 0 }}>
@@ -4325,25 +4336,36 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
         )}
       </nav>
 
-      <div className="pt-4 space-y-3 mt-3" style={{ borderTop: "1px solid #1A2129", flexShrink: 0 }}>
-        <button onClick={isSuperAdmin ? onCompanyClick : undefined} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-full" style={{ border: "1px solid #232B38", background: "#12171F", cursor: isSuperAdmin ? "pointer" : "default" }}>
-          <Building2 size={14} color={company.accent} style={{ flexShrink: 0 }} />
-          <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</span>
-          {isSuperAdmin && <ChevronDown size={14} color="#B4BCC9" style={{ flexShrink: 0 }} />}
+      <div className="pt-3 mt-3" style={{ borderTop: "1px solid #1A2129", flexShrink: 0 }}>
+        <button onClick={toggleFoot} className="w-full flex items-center gap-2 px-2 pb-2" aria-label={footOpen ? "Account inklappen" : "Account uitklappen"}>
+          <div style={{ width: 26, height: 26, borderRadius: "50%", position: "relative", background: isSuperAdmin ? "#F5B30122" : "#3B82F633", border: `1px solid ${isSuperAdmin ? "#F5B30188" : "#3B82F655"}`, flexShrink: 0 }} className="flex items-center justify-center">
+            <span style={{ color: isSuperAdmin ? "#F5B301" : "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 10 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
+          </div>
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", fontWeight: 600, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.naam}</span>
+          <ChevronDown size={15} color="#B4BCC9" style={{ flexShrink: 0, transform: footOpen ? "rotate(0deg)" : "rotate(180deg)", transition: "transform .15s" }} />
         </button>
-        <div className="flex items-center gap-2.5 px-1">
-          <div style={{ width: 34, height: 34, borderRadius: "50%", position: "relative", background: isSuperAdmin ? "#F5B30122" : "#3B82F633", border: `1px solid ${isSuperAdmin ? "#F5B30188" : "#3B82F655"}`, flexShrink: 0 }} className="flex items-center justify-center">
-            <span style={{ color: isSuperAdmin ? "#F5B301" : "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 12 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
-            {isSuperAdmin && <span style={{ position: "absolute", top: -6, right: -5, background: "#0A0E14", borderRadius: "50%", padding: 1, display: "flex" }}><Crown size={13} color="#F5B301" /></span>}
+        {footOpen && (
+          <div className="space-y-3">
+            <button onClick={isSuperAdmin ? onCompanyClick : undefined} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-full" style={{ border: "1px solid #232B38", background: "#12171F", cursor: isSuperAdmin ? "pointer" : "default" }}>
+              <Building2 size={14} color={company.accent} style={{ flexShrink: 0 }} />
+              <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", fontWeight: 500, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</span>
+              {isSuperAdmin && <ChevronDown size={14} color="#B4BCC9" style={{ flexShrink: 0 }} />}
+            </button>
+            <div className="flex items-center gap-2.5 px-1">
+              <div style={{ width: 34, height: 34, borderRadius: "50%", position: "relative", background: isSuperAdmin ? "#F5B30122" : "#3B82F633", border: `1px solid ${isSuperAdmin ? "#F5B30188" : "#3B82F655"}`, flexShrink: 0 }} className="flex items-center justify-center">
+                <span style={{ color: isSuperAdmin ? "#F5B301" : "#3B82F6", fontFamily: "Inter", fontWeight: 700, fontSize: 12 }}>{currentUser.naam.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
+                {isSuperAdmin && <span style={{ position: "absolute", top: -6, right: -5, background: "#0A0E14", borderRadius: "50%", padding: 1, display: "flex" }}><Crown size={13} color="#F5B301" /></span>}
+              </div>
+              <div>
+                <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 600 }}>{currentUser.naam}</div>
+                {isSuperAdmin
+                  ? <span className="text-xs px-1.5 rounded inline-flex items-center gap-1" style={{ color: "#F5B301", background: "#F5B30118" }}><Crown size={11} /> Superadmin</span>
+                  : <span className="text-xs px-1.5 rounded" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>}
+              </div>
+            </div>
           </div>
-          <div>
-            <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 600 }}>{currentUser.naam}</div>
-            {isSuperAdmin
-              ? <span className="text-xs px-1.5 rounded inline-flex items-center gap-1" style={{ color: "#F5B301", background: "#F5B30118" }}><Crown size={11} /> Superadmin</span>
-              : <span className="text-xs px-1.5 rounded" style={{ color: "#3B82F6", background: "#3B82F618" }}>{ROLE_LABEL[role]}</span>}
-          </div>
-        </div>
-        <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg" style={{ color: "#B4BCC9" }}>
+        )}
+        <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2 mt-2 rounded-lg" style={{ color: "#B4BCC9" }}>
           <LogOut size={15} /><span style={{ fontFamily: "Inter", fontSize: 13.5 }}>Uitloggen</span>
         </button>
       </div>
@@ -4360,11 +4382,19 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
 --------------------------------------------------------------------- */
 function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
-  const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "" });
+  const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "", adrNvt: false, medischNvt: false });
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(blank());
   const [confirmDel, setConfirmDel] = useState(null);
+  const [sort, setSort] = useState("naam"); // naam | nieuw | oud
+
+  // Sorteervolgorde. 'nieuw'/'oud' op basis van id (dat bevat de aanmaaktijd: "d"+Date.now()).
+  const idTime = (d) => Number(String(d.id || "").replace(/\D/g, "")) || 0;
+  const sortedDrivers = [...drivers].sort((a, b) =>
+    sort === "naam" ? (a.naam || "").localeCompare(b.naam || "")
+    : sort === "oud" ? idTime(a) - idTime(b)
+    : idTime(b) - idTime(a));
 
   const startAdd = () => { setForm(blank()); setEditId(null); setOpen(true); };
   const startEdit = (d) => { setForm({ ...blank(), ...d }); setEditId(d.id); setOpen(true); };
@@ -4383,7 +4413,16 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
           <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Contact size={22} color="#3B82F6" /> Chauffeurs</h1>
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{drivers.length} chauffeur(s){attention > 0 ? ` · ${attention} met aandacht nodig` : ""}. Papieren & certificaten.</p>
         </div>
-        {!open && <Button icon={Plus} onClick={startAdd}>Chauffeur toevoegen</Button>}
+        <div className="flex items-center gap-2 flex-wrap">
+          {drivers.length > 1 && (
+            <select className="tg-input" style={{ width: "auto" }} value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="naam">Sorteer: naam (A–Z)</option>
+              <option value="nieuw">Sorteer: nieuw → oud</option>
+              <option value="oud">Sorteer: oud → nieuw</option>
+            </select>
+          )}
+          {!open && <Button icon={Plus} onClick={startAdd}>Chauffeur toevoegen</Button>}
+        </div>
       </div>
 
       {open && (
@@ -4394,8 +4433,18 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
             <div style={{ minWidth: 0 }}><FieldLabel>Telefoon (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="+31 6 ..." value={form.telefoon} onChange={(e) => setForm({ ...form, telefoon: e.target.value })} /></div>
             <div style={{ minWidth: 0 }}><FieldLabel>Rijbewijs C/CE geldig tot</FieldLabel><input type="date" className="tg-input w-full" value={form.rijbewijsTot} onChange={(e) => setForm({ ...form, rijbewijsTot: e.target.value })} /></div>
             <div style={{ minWidth: 0 }}><FieldLabel>Code 95 geldig tot</FieldLabel><input type="date" className="tg-input w-full" value={form.code95Tot} onChange={(e) => setForm({ ...form, code95Tot: e.target.value })} /></div>
-            <div style={{ minWidth: 0 }}><FieldLabel>ADR-certificaat tot (optioneel)</FieldLabel><input type="date" className="tg-input w-full" value={form.adrTot} onChange={(e) => setForm({ ...form, adrTot: e.target.value })} /></div>
-            <div style={{ minWidth: 0 }}><FieldLabel>Medische keuring tot</FieldLabel><input type="date" className="tg-input w-full" value={form.medischTot} onChange={(e) => setForm({ ...form, medischTot: e.target.value })} /></div>
+            <div style={{ minWidth: 0 }}>
+              <div className="flex items-center justify-between"><FieldLabel>ADR-certificaat tot</FieldLabel>
+                <label className="flex items-center gap-1" style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", cursor: "pointer" }}><input type="checkbox" checked={!!form.adrNvt} onChange={(e) => setForm({ ...form, adrNvt: e.target.checked })} /> n.v.t.</label>
+              </div>
+              <input type="date" className="tg-input w-full" disabled={!!form.adrNvt} value={form.adrTot} onChange={(e) => setForm({ ...form, adrTot: e.target.value })} style={form.adrNvt ? { opacity: 0.4 } : undefined} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="flex items-center justify-between"><FieldLabel>Medische keuring tot</FieldLabel>
+                <label className="flex items-center gap-1" style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", cursor: "pointer" }}><input type="checkbox" checked={!!form.medischNvt} onChange={(e) => setForm({ ...form, medischNvt: e.target.checked })} /> n.v.t.</label>
+              </div>
+              <input type="date" className="tg-input w-full" disabled={!!form.medischNvt} value={form.medischTot} onChange={(e) => setForm({ ...form, medischTot: e.target.value })} style={form.medischNvt ? { opacity: 0.4 } : undefined} />
+            </div>
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit} disabled={!form.naam.trim()}>{editId ? "Opslaan" : "Toevoegen"}</Button><Button variant="ghost" onClick={() => { setOpen(false); setEditId(null); }}>Annuleren</Button></div>
         </Card>
@@ -4403,14 +4452,14 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
 
       {drivers.length === 0 && !open ? <EmptyState icon={Contact} text="Nog geen chauffeurs. Voeg er een toe om papieren te bewaken." /> : (
         <div className="space-y-3">
-          {drivers.map((d) => {
+          {sortedDrivers.map((d) => {
             const items = driverComplianceItems(d);
             return (
               <Card key={d.id} className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: "Inter", fontSize: 15.5, fontWeight: 700, color: "#E7ECF3" }}>{d.naam}</div>
-                    {d.telefoon && <div className="flex items-center gap-1.5 mt-1" style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 12.5 }}><Phone size={12} /> {d.telefoon}</div>}
+                    {d.telefoon && <a href={`tel:${(d.telefoon || "").replace(/[^\d+]/g, "")}`} className="inline-flex items-center gap-1.5 mt-1" style={{ color: "#8FB8FF", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600 }}><Phone size={12} /> {d.telefoon}</a>}
                   </div>
                   {(() => { const w = driverWorstCompliance(d); const m = COMPLIANCE_META[w]; return <span className="text-xs px-2 py-1 rounded" style={{ color: m.color, border: `1px solid ${m.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{w === "ok" ? "Papieren in orde" : m.label}</span>; })()}
                 </div>
@@ -4476,7 +4525,7 @@ const NAV_GROUPS = [
     { id: "parts", label: "Voorraad", icon: Package, module: "parts" },
   ]},
   { group: "Vloot", roles: ["admin", "garage"], items: [
-    { id: "vehicles", label: "Voertuigen", icon: Truck },
+    { id: "vehicles", label: "Vrachtwagens", icon: Truck },
     { id: "bakwagens", label: "Bakwagens", icon: Boxes, module: "bakwagens" },
     { id: "bestelwagens", label: "Bestelwagens", icon: Truck, module: "bestelwagens" },
     { id: "trailers", label: "Trailers", icon: Container, module: "trailers" },
