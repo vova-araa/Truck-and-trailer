@@ -2063,11 +2063,49 @@ const STATUS_CYCLE = ["operational", "attention", "workshop"];
 function TrailersView({ trailers, onAdd, onUpdate, onDelete }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ kenteken: "", merk: "", type: "" });
+  const [form, setForm] = useState({ kenteken: "", merk: "", type: "", bouwjaar: "", apkTot: "" });
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({ kenteken: "", merk: "", type: "" });
   const [confirmDel, setConfirmDel] = useState(null);
-  const submit = () => { if (!form.kenteken || !form.merk) return; onAdd({ id: "t" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type || "Trailer", bouwjaar: new Date().getFullYear(), status: "operational" }); setForm({ kenteken: "", merk: "", type: "" }); setOpen(false); };
+  const [aiLoading, setAiLoading] = useState(false);
+  const [rdwLoading, setRdwLoading] = useState(false);
+  const [aiMsg, setAiMsg] = useState("");
+
+  // RDW-opzoeken voor trailers, net als bij vrachtwagens.
+  const lookupRdwPlate = async () => {
+    const plate = form.kenteken.trim();
+    if (!plate) { setAiMsg("Vul eerst een kenteken in."); return; }
+    setRdwLoading(true); setAiMsg("");
+    try {
+      const d = await lookupRDW(plate);
+      setForm((f) => ({ ...f, merk: d.merk || f.merk, type: d.type || f.type, bouwjaar: d.bouwjaar ? String(d.bouwjaar) : f.bouwjaar, apkTot: d.apkTot || f.apkTot }));
+      setAiMsg(d.apkTot ? `✓ RDW: ${d.merk || "gevonden"} · APK tot ${d.apkTot}` : `✓ RDW-gegevens ingevuld — controleer even.`);
+    } catch (err) {
+      setAiMsg(`RDW: ${err.message || "kon niet ophalen"}. Probeer 'AI' of vul handmatig in.`);
+    } finally {
+      setRdwLoading(false);
+    }
+  };
+  const lookupPlate = async () => {
+    const plate = form.kenteken.trim().toUpperCase();
+    if (!plate) { setAiMsg("Vul eerst een kenteken in."); return; }
+    setAiLoading(true); setAiMsg("");
+    try {
+      const prompt = `Je bent een RDW-voertuigassistent. Geef voor het Nederlandse kenteken "${plate}" van een aanhanger/oplegger (trailer) je beste inschatting. Antwoord UITSLUITEND met JSON, geen uitleg, in dit formaat:
+{"merk":"<merk en model>","type":"<soort trailer, bv. Oplegger of Aanhanger>","bouwjaar":<jaartal>}
+Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het kentekenformaat. Geen extra tekst.`;
+      const out = await callAI({ text: prompt, maxTokens: 300 });
+      const parsed = parseAIJson(out);
+      setForm((f) => ({ ...f, merk: parsed.merk || f.merk, type: parsed.type || f.type, bouwjaar: parsed.bouwjaar ? String(parsed.bouwjaar) : f.bouwjaar }));
+      setAiMsg("✓ Gegevens ingevuld door AI — controleer en pas zo nodig aan.");
+    } catch (err) {
+      setAiMsg(`Kon gegevens niet ophalen (${err.message || "fout"}). Vul handmatig in.`);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const submit = () => { if (!form.kenteken || !form.merk) return; onAdd({ id: "t" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type || "Trailer", bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), apkTot: form.apkTot || "", status: "operational" }); setForm({ kenteken: "", merk: "", type: "", bouwjaar: "", apkTot: "" }); setAiMsg(""); setOpen(false); };
   const startEdit = (t) => { setEditId(t.id); setEditForm({ kenteken: t.kenteken, merk: t.merk, type: t.type }); };
   const saveEdit = (t) => { if (!editForm.kenteken || !editForm.merk) return; onUpdate({ ...t, kenteken: editForm.kenteken.toUpperCase(), merk: editForm.merk, type: editForm.type || "Trailer" }); setEditId(null); };
   const cycleStatus = (t) => { const i = STATUS_CYCLE.indexOf(t.status); onUpdate({ ...t, status: STATUS_CYCLE[(i + 1) % STATUS_CYCLE.length] }); };
@@ -2079,12 +2117,20 @@ function TrailersView({ trailers, onAdd, onUpdate, onDelete }) {
       </div>
       {open && (
         <Card className="p-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
-            <input placeholder="Kenteken" value={form.kenteken} onChange={(e) => setForm({ ...form, kenteken: e.target.value })} className="tg-input" />
-            <input placeholder="Merk" value={form.merk} onChange={(e) => setForm({ ...form, merk: e.target.value })} className="tg-input" />
-            <input placeholder="Type" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input" />
+          <FieldLabel>Kenteken</FieldLabel>
+          <div className="flex gap-2 flex-wrap">
+            <input placeholder="bv. OP-12-XY" value={form.kenteken} onChange={(e) => setForm({ ...form, kenteken: e.target.value })} className="tg-input" style={{ flex: 1, minWidth: 140 }} />
+            <Button icon={Search} onClick={lookupRdwPlate} disabled={rdwLoading || aiLoading} style={{ flexShrink: 0 }}>{rdwLoading ? "Zoeken..." : "RDW ophalen"}</Button>
+            <Button variant="ghost" icon={Sparkles} onClick={lookupPlate} disabled={aiLoading || rdwLoading} style={{ flexShrink: 0 }}>{aiLoading ? "Zoeken..." : "AI"}</Button>
           </div>
-          <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button></div>
+          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 5 }}>Tik het kenteken in en haal merk, type, bouwjaar én APK-datum automatisch op bij de RDW.</div>
+          {aiMsg && <div style={{ fontFamily: "Inter", fontSize: 12, color: aiMsg.startsWith("✓") ? "#34D399" : "#FF8A00", marginTop: 6 }}>{aiMsg}</div>}
+          <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))" }}>
+            <div><FieldLabel>Merk</FieldLabel><input placeholder="Merk" value={form.merk} onChange={(e) => setForm({ ...form, merk: e.target.value })} className="tg-input w-full" /></div>
+            <div><FieldLabel>Type</FieldLabel><input placeholder="Type" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input w-full" /></div>
+            <div><FieldLabel>APK tot (optioneel)</FieldLabel><input type="date" value={form.apkTot} onChange={(e) => setForm({ ...form, apkTot: e.target.value })} className="tg-input w-full" /></div>
+          </div>
+          <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
       )}
       {trailers.length === 0 ? <EmptyState icon={Container} text="Nog geen aanhangers." /> : (
