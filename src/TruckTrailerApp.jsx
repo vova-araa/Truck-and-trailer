@@ -451,6 +451,24 @@ function useIsMobile() {
   return isMobile;
 }
 
+// Apparaatklasse: 'phone' (<768), 'tablet' (768–1099) of 'desktop' (≥1100).
+// Zo kunnen schermen een eigen, functionele indeling per apparaat krijgen.
+function useDevice() {
+  const calc = () => {
+    if (typeof window === "undefined") return "desktop";
+    const w = window.innerWidth;
+    return w < 768 ? "phone" : w < 1100 ? "tablet" : "desktop";
+  };
+  const [device, setDevice] = useState(calc);
+  useEffect(() => {
+    const onResize = () => setDevice(calc());
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return device;
+}
+
 // Checkt eenmalig of de AI-proxy een key heeft (server /api/health -> { ai: bool }).
 // Zo kan de UI vooraf tonen of de AI-functies werken.
 function useAiStatus() {
@@ -2687,6 +2705,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
 
 function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost, onUsePart, onRefresh, refreshing }) {
   const isMobile = useIsMobile();
+  const device = useDevice();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
   const [schedFor, setSchedFor] = useState(null); // report id being scheduled
   const [schedForm, setSchedForm] = useState({ datum: TODAY, tijd: "09:00", duur: "60", monteurId: "", monteur: "" });
@@ -2719,7 +2738,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
       </div>
       {reports.length === 0 ? <EmptyState icon={CheckCircle2} text="Niks meer te doen. Goed werk!" /> : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "repeat(4, minmax(0, 1fr))" }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns: device === "phone" ? "minmax(0, 1fr)" : device === "tablet" ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))" }}>
           {KANBAN_COLS.map((col) => { const items = reports.filter((r) => r.status === col.id); return (
             <div key={col.id}>
               <Eyebrow>{col.label} ({items.length})</Eyebrow>
