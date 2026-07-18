@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound
 } from "lucide-react";
-import { saveStateDebounced } from "./api.js";
+import { saveStateDebounced, lookupRDW } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -959,7 +959,7 @@ function ClickableKpi({ label, value, icon: Icon, accent, onClick }) {
   );
 }
 
-function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle }) {
+function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle, onLoadSample }) {
   const isMobile = useIsMobile();
   const openReports = reports.filter((r) => r.status !== "klaar").length;
   const critical = reports.filter((r) => r.prioriteit === "kritiek" && r.status !== "klaar").length;
@@ -983,6 +983,24 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }}>Dashboard</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Overzicht van vloot en garage — {company.name}</p>
       </div>
+
+      {/* Verse omgeving? Bied voorbeelddata aan om alles te testen. */}
+      {onLoadSample && vehicles.length === 0 && reports.length === 0 && planning.length === 0 && (
+        <Card className="p-5" style={{ border: "1px dashed #3B82F566", background: "linear-gradient(135deg,#12233E,#12171F)" }}>
+          <div className="flex items-start gap-3">
+            <div style={{ width: 38, height: 38, borderRadius: 10, background: "#3B82F622", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Sparkles size={18} color="#3B82F6" /></div>
+            <div className="flex-1" style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "Oswald", fontSize: 16, fontWeight: 600, color: "#E7ECF3" }}>Welkom! Je omgeving is nog leeg</div>
+              <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 13, marginTop: 2, lineHeight: 1.5 }}>
+                Wil je de app eerst uitproberen? Laad voorbeeldvoertuigen, meldingen, planning en kosten. Je kunt alles later met één klik weer wissen (Instellingen → Testomgeving).
+              </p>
+              <button onClick={onLoadSample} className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg" style={{ background: "#3B82F6", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5 }}>
+                <Sparkles size={15} /> Voorbeelddata laden
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Planning van de dag — bovenaan, het eerste wat je ziet */}
       <Card className="p-5" style={{ border: "1px solid #3B82F544", background: "linear-gradient(135deg,#12233E,#12171F)" }}>
@@ -1408,9 +1426,25 @@ function ComplianceBadge({ vehicle, showOk = true }) {
 function VehiclesView({ vehicles, onAdd, onSelect }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "" });
+  const [form, setForm] = useState({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "", apkTot: "" });
   const [aiLoading, setAiLoading] = useState(false);
+  const [rdwLoading, setRdwLoading] = useState(false);
   const [aiMsg, setAiMsg] = useState("");
+
+  const lookupRdwPlate = async () => {
+    const plate = form.kenteken.trim();
+    if (!plate) { setAiMsg("Vul eerst een kenteken in."); return; }
+    setRdwLoading(true); setAiMsg("");
+    try {
+      const d = await lookupRDW(plate);
+      setForm((f) => ({ ...f, merk: d.merk || f.merk, type: d.type, bouwjaar: d.bouwjaar ? String(d.bouwjaar) : f.bouwjaar, apkTot: d.apkTot || f.apkTot }));
+      setAiMsg(d.apkTot ? `✓ RDW: ${d.merk || "gevonden"} · APK tot ${d.apkTot}` : `✓ RDW-gegevens ingevuld — controleer even.`);
+    } catch (err) {
+      setAiMsg(`RDW: ${err.message || "kon niet ophalen"}. Probeer 'AI invullen' of vul handmatig in.`);
+    } finally {
+      setRdwLoading(false);
+    }
+  };
 
   const lookupPlate = async () => {
     const plate = form.kenteken.trim().toUpperCase();
@@ -1436,8 +1470,8 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
 
   const submit = () => {
     if (!form.kenteken || !form.merk) return;
-    onAdd({ id: "v" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type, bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), km: Number(form.km) || 0, status: "operational", health: 100, driver: "—", apkTot: "", tachoTot: "", tachoPlicht: form.type === "Truck", verzekeringTot: "" });
-    setForm({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "" }); setAiMsg(""); setOpen(false);
+    onAdd({ id: "v" + Date.now(), kenteken: form.kenteken.toUpperCase(), merk: form.merk, type: form.type, bouwjaar: Number(form.bouwjaar) || new Date().getFullYear(), km: Number(form.km) || 0, status: "operational", health: 100, driver: "—", apkTot: form.apkTot || "", tachoTot: "", tachoPlicht: form.type === "Truck", verzekeringTot: "" });
+    setForm({ kenteken: "", merk: "", type: "Truck", bouwjaar: "", km: "", apkTot: "" }); setAiMsg(""); setOpen(false);
   };
 
   const q = query.trim().toLowerCase();
@@ -1479,10 +1513,12 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           {/* Kenteken + AI lookup */}
           <div>
             <FieldLabel>Kenteken</FieldLabel>
-            <div className="flex gap-2" style={{ flexWrap: isMobile ? "wrap" : "nowrap" }}>
-              <input placeholder="Bv. 84-BSX-2" value={form.kenteken} onChange={(e) => setForm({ ...form, kenteken: e.target.value })} className="tg-input" style={{ flex: 1, minWidth: 0 }} />
-              <Button icon={Sparkles} onClick={lookupPlate} disabled={aiLoading} style={{ flexShrink: 0 }}>{aiLoading ? "Zoeken..." : "AI invullen"}</Button>
+            <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+              <input placeholder="Bv. 84-BSX-2" value={form.kenteken} onChange={(e) => setForm({ ...form, kenteken: e.target.value })} className="tg-input" style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }} />
+              <Button icon={Search} onClick={lookupRdwPlate} disabled={rdwLoading || aiLoading} style={{ flexShrink: 0 }}>{rdwLoading ? "Zoeken..." : "RDW ophalen"}</Button>
+              <Button variant="ghost" icon={Sparkles} onClick={lookupPlate} disabled={aiLoading || rdwLoading} style={{ flexShrink: 0 }}>{aiLoading ? "Zoeken..." : "AI"}</Button>
             </div>
+            <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 5 }}>Tik het kenteken in en haal merk, type, bouwjaar én APK-datum automatisch op bij de RDW.</div>
             {aiMsg && <div style={{ fontFamily: "Inter", fontSize: 12, color: aiMsg.startsWith("✓") ? "#34D399" : "#FF8A00", marginTop: 6 }}>{aiMsg}</div>}
           </div>
 
@@ -1491,6 +1527,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
             <div><FieldLabel>Type</FieldLabel><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="tg-input"><option>Truck</option><option>Bestelwagen</option></select></div>
             <div><FieldLabel>Bouwjaar</FieldLabel><input placeholder="Bouwjaar" value={form.bouwjaar} onChange={(e) => setForm({ ...form, bouwjaar: e.target.value })} className="tg-input" /></div>
             <div><FieldLabel>KM-stand</FieldLabel><input placeholder="KM-stand" value={form.km} onChange={(e) => setForm({ ...form, km: e.target.value })} className="tg-input" /></div>
+            <div><FieldLabel>APK geldig tot</FieldLabel><input type="date" value={form.apkTot} onChange={(e) => setForm({ ...form, apkTot: e.target.value })} className="tg-input" /></div>
           </div>
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
@@ -2468,10 +2505,11 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
    INSTELLINGEN — werkplaatstijden + beschikbaarheid per monteur
 --------------------------------------------------------------------- */
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours }) {
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const selected = mechanics.find((m) => m.id === selectedId);
   const week = (availability[selectedId]) || defaultWeek();
@@ -2495,6 +2533,27 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><SlidersHorizontal size={22} color="#3B82F6" /> Instellingen</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Werkplaatstijden en beschikbaarheid van monteurs.</p>
       </div>
+
+      {/* Testomgeving — voorbeelddata laden of alles wissen (alleen beheerder) */}
+      {(onLoadSample || onClearData) && (
+        <Card className="p-5" style={{ border: "1px solid #232B38" }}>
+          <Eyebrow>Testomgeving</Eyebrow>
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+            Vul de omgeving met voorbeelddata om alles uit te proberen, of wis alle data weer voordat je echt van start gaat. Dit raakt alleen voertuigen, meldingen, planning, onderhoud, voorraad en kosten — je gebruikers en instellingen blijven staan.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onLoadSample && <Button icon={Sparkles} onClick={() => { onLoadSample(); setToast("Voorbeelddata geladen."); }}>Voorbeelddata laden</Button>}
+            {onClearData && hasData && (confirmClear ? (
+              <span className="flex items-center gap-2">
+                <Button variant="danger" onClick={() => { onClearData(); setConfirmClear(false); setToast("Alle data gewist."); }}>Ja, alles wissen</Button>
+                <Button variant="ghost" onClick={() => setConfirmClear(false)}>Annuleren</Button>
+              </span>
+            ) : (
+              <Button variant="ghost" icon={Trash2} onClick={() => setConfirmClear(true)}>Alle data wissen</Button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Workshop hours */}
       <Card className="p-5">
@@ -3538,6 +3597,28 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
   const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+
+  // Testomgeving: vul het huidige bedrijf met realistische voorbeelddata om
+  // alles te kunnen uittesten, of wis alles weer voor echt gebruik.
+  const cloneSeed = (x) => JSON.parse(JSON.stringify((x && x.blex) || []));
+  const loadSampleData = () => {
+    setVehicles((s) => ({ ...s, [companyId]: cloneSeed(seedVehicles) }));
+    setTrailers((s) => ({ ...s, [companyId]: cloneSeed(seedTrailers) }));
+    setParts((s) => ({ ...s, [companyId]: cloneSeed(seedParts) }));
+    setMaintenance((s) => ({ ...s, [companyId]: cloneSeed(seedMaintenance) }));
+    setCosts((s) => ({ ...s, [companyId]: cloneSeed(seedCosts) }));
+    setReports((s) => ({ ...s, [companyId]: cloneSeed(seedReports) }));
+    setPlanning((s) => ({ ...s, [companyId]: cloneSeed(seedPlanning) }));
+  };
+  const clearAllData = () => {
+    setVehicles((s) => ({ ...s, [companyId]: [] }));
+    setTrailers((s) => ({ ...s, [companyId]: [] }));
+    setParts((s) => ({ ...s, [companyId]: [] }));
+    setMaintenance((s) => ({ ...s, [companyId]: [] }));
+    setCosts((s) => ({ ...s, [companyId]: [] }));
+    setReports((s) => ({ ...s, [companyId]: [] }));
+    setPlanning((s) => ({ ...s, [companyId]: [] }));
+  };
   const resendInvite = () => {};
   const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
   const deleteReport = (id) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((r) => r.id !== id) }));
@@ -3674,7 +3755,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
-                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
+                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => r.chauffeur === currentUser.naam)} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "costs" && isAdmin && <CostsView costs={cCosts} vehicles={cVehicles} onAdd={addCost} onDelete={deleteCost} />}
@@ -3691,7 +3772,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "inspection" && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} />}
               </>
             )}
             </div>

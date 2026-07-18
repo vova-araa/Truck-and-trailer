@@ -170,6 +170,37 @@ export function saveStateDebounced(companyId, dataset, onStatus) {
   }, 600);
 }
 
+// ---------- RDW KENTEKEN-LOOKUP (gratis open data, geen key nodig) ----------
+// Haalt echte voertuiggegevens op bij de RDW: merk/model, type, bouwjaar en
+// APK-vervaldatum. Werkt rechtstreeks vanuit de browser (RDW staat CORS toe).
+export async function lookupRDW(kenteken) {
+  const plate = (kenteken || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!plate) throw new Error("Vul eerst een kenteken in.");
+  const url = `https://opendata.rdw.nl/resource/m9d7-ebf2.json?kenteken=${encodeURIComponent(plate)}`;
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch {
+    throw new Error("RDW niet bereikbaar. Controleer je internet.");
+  }
+  if (!res.ok) throw new Error("RDW gaf een fout (" + res.status + ").");
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("Kenteken niet gevonden bij de RDW.");
+  const r = rows[0];
+  const ymd = (s) => (s && s.length >= 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : "");
+  const maxMassa = Number(r.toegestane_maximum_massa_voertuig) || Number(r.massa_rijklaar) || 0;
+  const merk = [r.merk, r.handelsbenaming].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  return {
+    merk: merk || r.merk || "",
+    // >3500 kg = zwaar bedrijfsvoertuig (truck); daaronder bestelwagen
+    type: maxMassa > 3500 ? "Truck" : "Bestelwagen",
+    bouwjaar: r.datum_eerste_toelating ? Number(r.datum_eerste_toelating.slice(0, 4)) : null,
+    apkTot: ymd(r.vervaldatum_apk),
+    massa: maxMassa || null,
+    voertuigsoort: r.voertuigsoort || "",
+  };
+}
+
 // ---------- HELPERS ----------
 
 export function slugify(name) {
