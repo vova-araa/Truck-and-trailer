@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -2798,6 +2798,68 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
    INSTELLINGEN — werkplaatstijden + beschikbaarheid per monteur
 --------------------------------------------------------------------- */
 
+// Abonnementskaart: toont wanneer het abonnement is gestart en verlengt, of het
+// gratis is, en laat de beheerder opzeggen (blijft werken tot de verlengdatum).
+function SubscriptionCard({ subscription, onCancel, onReactivate }) {
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [err, setErr] = useState("");
+  const s = subscription || {};
+  const fmt = (d) => (d ? new Date(d).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "—");
+  const free = s.plan_paid === false;
+  const cancelled = !!s.cancelled;
+  const run = async (fn) => { setErr(""); setBusy(true); try { await fn(); setConfirm(false); } catch (e) { setErr(e?.message || "Er ging iets mis."); } finally { setBusy(false); } };
+  const badge = (txt, c) => <span className="text-xs px-2 py-0.5 rounded" style={{ color: c, border: `1px solid ${c}55`, fontWeight: 600 }}>{txt}</span>;
+  const row = (k, v) => <div className="flex items-center justify-between" style={{ fontFamily: "Inter", fontSize: 13, padding: "5px 0" }}><span style={{ color: "#98A1B0" }}>{k}</span><span style={{ color: "#E7ECF3", fontWeight: 600 }}>{v}</span></div>;
+
+  return (
+    <Card className="p-5" style={{ border: "1px solid #232B38" }}>
+      <div className="flex items-center justify-between">
+        <Eyebrow>Abonnement</Eyebrow>
+        {free ? badge("Gratis", "#34D399") : cancelled ? badge("Opgezegd", "#F59E0B") : badge("Actief", "#3B82F6")}
+      </div>
+
+      {free ? (
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginTop: 10, lineHeight: 1.5 }}>
+          Dit is een <b style={{ color: "#E7ECF3" }}>gratis account</b>, geactiveerd door Truck &amp; Trailer. Je betaalt niets voor de app.
+          {s.sub_created_at && <div style={{ marginTop: 8 }}>{row("Gestart op", fmt(s.sub_created_at))}</div>}
+        </div>
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          {row("Gestart op", fmt(s.sub_created_at))}
+          {cancelled
+            ? row("Toegang tot", fmt(s.cancel_at))
+            : row("Verlengt automatisch op", fmt(s.renews_at))}
+          {cancelled ? (
+            <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F59E0B", marginTop: 8, lineHeight: 1.5 }}>
+              Opgezegd. Je kunt de app nog gebruiken tot <b>{fmt(s.cancel_at)}</b>; daarna stopt de toegang.
+            </div>
+          ) : null}
+          {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5, marginTop: 8 }}>{err}</div>}
+
+          {/* Alleen de beheerder kan op-/heractiveren (onCancel/onReactivate gezet). */}
+          {cancelled && onReactivate && (
+            <div style={{ marginTop: 12 }}><Button variant="ghost" onClick={() => run(onReactivate)} disabled={busy}>{busy ? "Bezig…" : "Toch doorgaan (heractiveren)"}</Button></div>
+          )}
+          {!cancelled && onCancel && (
+            <div style={{ marginTop: 12 }}>
+              {confirm ? (
+                <span className="flex items-center gap-2 flex-wrap">
+                  <Button variant="danger" onClick={() => run(onCancel)} disabled={busy}>{busy ? "Bezig…" : "Ja, opzeggen"}</Button>
+                  <Button variant="ghost" onClick={() => setConfirm(false)}>Annuleren</Button>
+                  <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>Je houdt toegang tot {fmt(s.renews_at)}.</span>
+                </span>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirm(true)}>Abonnement opzeggen</Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // Bedrijf meldt een probleem bij de platformbeheerder en ziet zijn eigen
 // eerdere meldingen met status. Werkt alleen live (Supabase gekoppeld).
 function CompanySupportCard() {
@@ -2858,7 +2920,7 @@ function CompanySupportCard() {
   );
 }
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial }) {
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial, subscription, onCancelSub, onReactivateSub }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
@@ -2891,6 +2953,9 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
           </button>
         )}
       </div>
+
+      {/* Abonnement — gestart/verlengt, gratis, en opzeggen (blijft tot verlengdatum). */}
+      {live && subscription && <SubscriptionCard subscription={subscription} onCancel={onCancelSub} onReactivate={onReactivateSub} />}
 
       {/* Modules aan/uit — kies wat je bedrijf gebruikt. Uit = weg uit het menu. */}
       {onSetModule && (
@@ -3795,7 +3860,7 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
 --------------------------------------------------------------------- */
 function CodesView({ live, companies = [] }) {
   const isMobile = useIsMobile();
-  const blank = () => ({ companyName: "", adminNaam: "", adminEmail: "", adminTelefoon: "", note: "", paid: false });
+  const blank = () => ({ companyName: "", adminNaam: "", adminEmail: "", adminTelefoon: "", note: "", paid: false, periodMonths: 1 });
   const [form, setForm] = useState(blank());
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -3870,16 +3935,27 @@ function CodesView({ live, companies = [] }) {
         <Card className="overflow-x-auto">
           <div style={{ padding: "12px 16px 0", fontFamily: "Inter", fontSize: 12, fontWeight: 700, color: "#98A1B0", textTransform: "uppercase", letterSpacing: 0.5 }}>Lopende abonnementen</div>
           <table className="w-full" style={{ fontFamily: "Inter", fontSize: 13 }}>
-            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Bedrijf", "Type", "Sinds", "Code"].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <thead><tr style={{ borderBottom: "1px solid #232B38" }}>{["Bedrijf", "Type", "Sinds", "Verlengt / status", "Code"].map((h) => <th key={h} className="text-left px-4 py-3" style={{ color: "#B4BCC9", fontWeight: 600, fontSize: 12, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
-              {active.map((c) => (
+              {active.map((c) => {
+                const comp = companies.find((x) => x.id === c.company_id) || {};
+                const sub = c.paid === false
+                  ? { txt: "Gratis — geen verlenging", col: "#34D399" }
+                  : comp.cancelled
+                    ? { txt: `Opgezegd — tot ${(comp.cancel_at || "").slice(0, 10) || "?"}`, col: "#F59E0B" }
+                    : comp.renews_at
+                      ? { txt: (comp.renews_at || "").slice(0, 10), col: "#B4BCC9" }
+                      : { txt: "—", col: "#6B7585" };
+                return (
                 <tr key={c.code} style={{ borderBottom: "1px solid #1A2129" }}>
                   <td className="px-4 py-3" style={{ color: "#E7ECF3", fontWeight: 600 }}>{compName(c)}</td>
                   <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded" style={{ color: c.paid ? "#F59E0B" : "#34D399", border: `1px solid ${(c.paid ? "#F59E0B" : "#34D399")}55`, fontWeight: 600 }}>{c.paid ? "Betaald" : "Gratis"}</span></td>
                   <td className="px-4 py-3" style={{ color: "#B4BCC9", fontFamily: "JetBrains Mono" }}>{(c.used_at || "").slice(0, 10) || "—"}</td>
+                  <td className="px-4 py-3" style={{ color: sub.col, fontFamily: "JetBrains Mono", fontSize: 12 }}>{sub.txt}</td>
                   <td className="px-4 py-3" style={{ color: "#6B7585", fontFamily: "JetBrains Mono" }}>{fmtCode(c.code)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>
@@ -3902,7 +3978,18 @@ function CodesView({ live, companies = [] }) {
               </span>
               <span style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3" }}>{form.paid ? "Betaald abonnement" : "Gratis (door jou uitgegeven)"}</span>
             </button>
-            <Button icon={Plus} onClick={submit} disabled={busy}>{busy ? "Aanmaken…" : "Code aanmaken"}</Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {form.paid && (
+                <label className="flex items-center gap-2" style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>
+                  Verlengt per
+                  <select className="tg-input" style={{ width: "auto" }} value={form.periodMonths} onChange={(e) => setForm({ ...form, periodMonths: Number(e.target.value) })}>
+                    <option value={1}>maand</option>
+                    <option value={12}>jaar</option>
+                  </select>
+                </label>
+              )}
+              <Button icon={Plus} onClick={submit} disabled={busy}>{busy ? "Aanmaken…" : "Code aanmaken"}</Button>
+            </div>
           </div>
           {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
         </div>
@@ -4504,6 +4591,31 @@ function RoleTutorial({ role, onDone }) {
   );
 }
 
+// Blokkeerscherm wanneer een opgezegd abonnement voorbij de einddatum is.
+function SubscriptionEnded({ company, isAdmin, onReactivate, onLogout }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fmt = (d) => (d ? new Date(d).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "");
+  const react = async () => { setErr(""); setBusy(true); try { await onReactivate(); } catch (e) { setErr(e?.message || "Er ging iets mis."); setBusy(false); } };
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#0A0E14", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ maxWidth: 420, width: "100%", textAlign: "center" }}>
+        <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5, marginBottom: 18 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</div>
+        <div style={{ width: 64, height: 64, borderRadius: 18, background: "#F59E0B22", border: "1px solid #F59E0B", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><KeyRound size={30} color="#F59E0B" /></div>
+        <h1 style={{ fontFamily: "Oswald", fontSize: 24, fontWeight: 600, color: "#E7ECF3" }}>Abonnement verlopen</h1>
+        <p style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", lineHeight: 1.55, margin: "10px auto 20px", maxWidth: 360 }}>
+          Het abonnement van <b style={{ color: "#E7ECF3" }}>{company?.name || "dit bedrijf"}</b> is opgezegd en liep af op {fmt(company?.cancel_at)}. {isAdmin ? "Je kunt het hieronder weer heractiveren." : "Vraag je beheerder om het abonnement te heractiveren."}
+        </p>
+        {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+        <div className="flex flex-col" style={{ gap: 8 }}>
+          {isAdmin && <button onClick={react} disabled={busy} style={{ padding: 13, borderRadius: 12, border: "none", background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{busy ? "Bezig…" : "Abonnement heractiveren"}</button>}
+          <button onClick={onLogout} style={{ padding: 10, borderRadius: 10, border: "1px solid #232B38", background: "transparent", color: "#B4BCC9", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Uitloggen</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TruckGarageApp({ session, onLogout }) {
   const isMobile = useIsMobile();
   const aiReady = useAiStatus();
@@ -4689,6 +4801,18 @@ export default function TruckGarageApp({ session, onLogout }) {
   const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
   const setAllModules = (obj) => setModules((s) => ({ ...s, [companyId]: { ...DEFAULT_MODULES, ...obj } }));
   const finishOnboarding = (chosen) => { if (chosen) setAllModules(chosen); setOnboarded((s) => ({ ...s, [companyId]: true })); };
+
+  // Abonnement: houd het bedrijf-object in de lijst bij na op-/heractiveren.
+  const patchCompany = (patch) => setCompanies((cs) => cs.map((c) => (c.id === companyId ? { ...c, ...patch } : c)));
+  const cancelSub = async () => { const ca = await cancelSubscription(); patchCompany({ cancelled: true, cancel_at: ca }); };
+  const reactivateSub = async () => { await reactivateSubscription(); patchCompany({ cancelled: false, cancel_at: null }); };
+  // Betaald abonnement opgezegd én de einddatum voorbij? Dan is de toegang
+  // verlopen (gratis accounts en de superadmin nooit).
+  const isSuper = !!(currentUser.superadmin || currentUser.is_superadmin);
+  const subEnded = live && !isSuper && company.cancelled && company.cancel_at && new Date(company.cancel_at).getTime() < Date.now();
+  if (subEnded) {
+    return <SubscriptionEnded company={company} isAdmin={currentUser.rol === "admin"} onReactivate={reactivateSub} onLogout={live ? onLogout : () => setCurrentUser(null)} />;
+  }
 
   // Eerste keer voor een bedrijf (alleen de eigen beheerder, niet de
   // platform-superadmin die tussen bedrijven kijkt): kies je onderdelen.
@@ -4932,7 +5056,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
               </>

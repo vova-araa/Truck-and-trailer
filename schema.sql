@@ -20,6 +20,17 @@ alter table public.companies
   add column if not exists join_code text not null default upper(substr(md5(random()::text), 1, 6));
 create unique index if not exists companies_join_code_key on public.companies (upper(join_code));
 
+-- Abonnement-velden per bedrijf. plan_paid = betaalt het bedrijf (true) of is het
+-- een gratis account dat de platformbeheerder heeft geactiveerd (false).
+-- renews_at = wanneer het (automatisch) verlengt/betaald wordt. Bij opzeggen zet
+-- cancelled=true en cancel_at op de verlengdatum: tot die datum blijft alles werken.
+alter table public.companies
+  add column if not exists plan_paid boolean not null default true,
+  add column if not exists sub_created_at timestamptz,
+  add column if not exists renews_at timestamptz,
+  add column if not exists cancelled boolean not null default false,
+  add column if not exists cancel_at timestamptz;
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   company_id uuid not null references public.companies(id) on delete cascade,
@@ -287,6 +298,7 @@ alter table public.activation_codes
   add column if not exists admin_email text default '',
   add column if not exists admin_telefoon text default '',
   add column if not exists paid boolean not null default true,
+  add column if not exists period_months int not null default 1,
   add column if not exists created_by uuid references auth.users(id) on delete set null;
 
 -- Snelle check of een code geldig/ongebruikt is (voor nette foutmeldingen vooraf).
@@ -344,8 +356,13 @@ begin
   -- (geen verweesd bedrijf, code blijft bruikbaar).
   if v_naam is null or v_email is null then raise exception 'MISSING_ADMIN'; end if;
 
-  insert into public.companies (name, slug, accent)
-    values (v_name, p_slug, coalesce(p_accent, '#3B82F6')) returning id into cid;
+  insert into public.companies (name, slug, accent, plan_paid, sub_created_at, renews_at)
+    values (v_name, p_slug, coalesce(p_accent, '#3B82F6'),
+            coalesce(rec.paid, true), now(),
+            case when coalesce(rec.paid, true)
+                 then now() + (coalesce(rec.period_months, 1) || ' months')::interval
+                 else null end)
+    returning id into cid;
 
   insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
     values (auth.uid(), cid, v_naam, v_email, coalesce(v_telefoon, ''), 'admin', 'actief');
@@ -364,7 +381,7 @@ grant execute on function public.redeem_company_code(text, text, text, text, tex
 create or replace function public.create_activation_code(
   p_company_name text default '', p_admin_naam text default '',
   p_admin_email text default '', p_admin_telefoon text default '',
-  p_note text default '', p_paid boolean default true
+  p_note text default '', p_paid boolean default true, p_period_months int default 1
 ) returns text language plpgsql security definer as $$
 declare new_code text; tries int := 0;
 begin
@@ -376,13 +393,40 @@ begin
     if tries > 10 then raise exception 'CODE_GEN_FAILED'; end if;
   end loop;
   insert into public.activation_codes
-    (code, company_name, admin_naam, admin_email, admin_telefoon, note, paid, created_by)
+    (code, company_name, admin_naam, admin_email, admin_telefoon, note, paid, period_months, created_by)
     values (new_code, coalesce(p_company_name,''), coalesce(p_admin_naam,''),
             coalesce(p_admin_email,''), coalesce(p_admin_telefoon,''),
-            coalesce(p_note,''), coalesce(p_paid, true), auth.uid());
+            coalesce(p_note,''), coalesce(p_paid, true),
+            greatest(1, coalesce(p_period_months, 1)), auth.uid());
   return new_code;
 end $$;
-grant execute on function public.create_activation_code(text, text, text, text, text, boolean) to authenticated;
+grant execute on function public.create_activation_code(text, text, text, text, text, boolean, int) to authenticated;
+
+-- ---------- ABONNEMENT OPZEGGEN / HERACTIVEREN (beheerder van het bedrijf) ----------
+-- Opzeggen stopt niet meteen: cancel_at wordt de eerstvolgende verlengdatum, dus
+-- tot die datum blijft alles gewoon werken. Heractiveren draait het weer terug.
+create or replace function public.cancel_subscription()
+returns timestamptz language plpgsql security definer as $$
+declare cid uuid; ca timestamptz;
+begin
+  if not public.is_company_admin() then raise exception 'NOT_ALLOWED'; end if;
+  cid := public.current_company_id();
+  update public.companies
+    set cancelled = true, cancel_at = coalesce(renews_at, now())
+    where id = cid
+    returning cancel_at into ca;
+  return ca;
+end $$;
+grant execute on function public.cancel_subscription() to authenticated;
+
+create or replace function public.reactivate_subscription()
+returns void language plpgsql security definer as $$
+begin
+  if not public.is_company_admin() then raise exception 'NOT_ALLOWED'; end if;
+  update public.companies set cancelled = false, cancel_at = null
+    where id = public.current_company_id();
+end $$;
+grant execute on function public.reactivate_subscription() to authenticated;
 
 -- Alle uitgegeven codes bekijken (alleen superadmin). Retourneert de volledige rij.
 create or replace function public.list_activation_codes()

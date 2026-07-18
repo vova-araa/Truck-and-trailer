@@ -36,7 +36,7 @@ export async function activationCodeInfo(code) {
 
 // Superadmin: maak een nieuwe abonnementscode aan. Codes die jij zelf aanmaakt
 // zijn gratis (paid = false). Geeft de 12-cijferige code terug.
-export async function createActivationCode({ companyName, adminNaam, adminEmail, adminTelefoon, note, paid } = {}) {
+export async function createActivationCode({ companyName, adminNaam, adminEmail, adminTelefoon, note, paid, periodMonths } = {}) {
   const { data, error } = await supabase.rpc("create_activation_code", {
     p_company_name: companyName || "",
     p_admin_naam: adminNaam || "",
@@ -44,9 +44,22 @@ export async function createActivationCode({ companyName, adminNaam, adminEmail,
     p_admin_telefoon: adminTelefoon || "",
     p_note: note || "",
     p_paid: paid !== false,
+    p_period_months: Math.max(1, Number(periodMonths) || 1),
   });
   if (error) throw error;
   return data; // de code (string)
+}
+
+// Beheerder zegt het abonnement op (blijft werken tot de verlengdatum) of
+// heractiveert het weer.
+export async function cancelSubscription() {
+  const { data, error } = await supabase.rpc("cancel_subscription");
+  if (error) throw error;
+  return data; // cancel_at (timestamptz)
+}
+export async function reactivateSubscription() {
+  const { error } = await supabase.rpc("reactivate_subscription");
+  if (error) throw error;
 }
 
 // Superadmin: alle uitgegeven abonnementscodes ophalen.
