@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls } from "./api.js";
 
 /* ---------------------------------------------------------------------
    DESIGN TOKENS — ink #0A0E14 · panel #12171F · raised #1A2129
@@ -637,7 +637,31 @@ function LoginScreen({ allUsers, companies, onLogin, onRegister }) {
    MELDING MAKEN (driver report flow)
 --------------------------------------------------------------------- */
 
-function MeldingMaken({ vehicles, onSubmit, currentUser }) {
+// Toont de foto's/video's van een melding. Haalt tijdelijke (signed) links op
+// voor opgeslagen paden; werkt ook met directe objectURLs (demo).
+function ReportMedia({ media }) {
+  const [urls, setUrls] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (!media || !media.length) { setUrls([]); return; }
+    signedMediaUrls(media).then((u) => { if (alive) setUrls(u); }).catch(() => { if (alive) setUrls([]); });
+    return () => { alive = false; };
+  }, [media]);
+  if (!urls.length) return null;
+  return (
+    <div className="flex gap-2 flex-wrap mb-2">
+      {urls.map((m, i) => m.type === "video" ? (
+        <video key={i} src={m.url} controls playsInline style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", background: "#000" }} />
+      ) : (
+        <a key={i} href={m.url} target="_blank" rel="noreferrer" title="Foto openen">
+          <img src={m.url} alt="foto bij melding" loading="lazy" style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #232B38", display: "block" }} />
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   const [step, setStep] = useState(0);
   const [vehicle, setVehicle] = useState("");
   const [omschrijving, setOmschrijving] = useState("");
@@ -649,6 +673,8 @@ function MeldingMaken({ vehicles, onSubmit, currentUser }) {
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState("");
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadWarn, setUploadWarn] = useState("");
   const recognitionRef = useRef(null);
   const fileRef = useRef(null);
   const videoRef = useRef(null);
@@ -723,14 +749,25 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
 
   const selectedVehicle = vehicles.find((v) => v.kenteken === vehicle);
 
-  const submit = () => {
-    if (!vehicle || !omschrijving.trim()) return;
+  const submit = async () => {
+    if (!vehicle || !omschrijving.trim() || submitting) return;
+    const id = "r" + Date.now();
+    setSubmitting(true); setUploadWarn("");
+    // Foto's/video's eerst uploaden (best effort). Lukt dat niet, dan sturen we
+    // de melding alsnog door — met alleen het aantal — zodat er niets verloren gaat.
+    let mediaOut = [];
+    try {
+      if (onUploadMedia && media.length) mediaOut = await onUploadMedia(id, media);
+    } catch (e) {
+      setUploadWarn("Melding is verstuurd, maar de foto's konden niet worden opgeslagen.");
+    }
     onSubmit({
-      id: "r" + Date.now(), vehicle, chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null, omschrijving,
+      id, vehicle, chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null, omschrijving,
       prioriteit: veilig === "Nee" ? "kritiek" : veilig === "Twijfel" ? "gemiddeld" : "laag",
       status: "nieuw", datum: toLocalKey(new Date()),
-      zone, wanneer, hoelang, veilig, mediaCount: media.length,
+      zone, wanneer, hoelang, veilig, media: mediaOut, mediaCount: mediaOut.length || media.length,
     });
+    setSubmitting(false);
     setOmschrijving(""); setZone(""); setWanneer(""); setHoelang(""); setVeilig(""); setMedia([]); setVehicle(""); setStep(0);
     setSent(true);
     setTimeout(() => setSent(false), 4000);
@@ -743,7 +780,8 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
           <div className="flex items-center justify-center rounded-full mb-4" style={{ width: 64, height: 64, background: "#34D39918" }}><CheckCircle2 size={34} color="#34D399" /></div>
           <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3" }}>Melding verstuurd!</div>
           <div style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>De werkplaats gaat ermee aan de slag. Je ziet de status onder "Jouw meldingen".</div>
-          <Button style={{ marginTop: 20 }} icon={Plus} onClick={() => setSent(false)}>Nieuwe melding</Button>
+          {uploadWarn && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00", marginTop: 8 }}>{uploadWarn}</div>}
+          <Button style={{ marginTop: 20 }} icon={Plus} onClick={() => { setSent(false); setUploadWarn(""); }}>Nieuwe melding</Button>
         </Card>
       </div>
     );
@@ -918,8 +956,8 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
             </Button>
           )}
           {step === 3 && (
-            <Button icon={AlertTriangle} style={{ flex: 1, justifyContent: "center", background: veilig === "Nee" ? "#F0453F" : "#3B82F6" }} onClick={submit} disabled={!vehicle || !omschrijving.trim()}>
-              Melding versturen
+            <Button icon={AlertTriangle} style={{ flex: 1, justifyContent: "center", background: veilig === "Nee" ? "#F0453F" : "#3B82F6" }} onClick={submit} disabled={!vehicle || !omschrijving.trim() || submitting}>
+              {submitting ? (media.length ? "Foto's opslaan…" : "Versturen…") : "Melding versturen"}
             </Button>
           )}
         </div>
@@ -928,7 +966,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia }) {
   const firstName = currentUser?.naam?.split(" ")[0] || "";
   const openCount = myReports.filter((r) => r.status !== "klaar").length;
   const doneCount = myReports.filter((r) => r.status === "klaar").length;
@@ -952,7 +990,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports }) {
         )}
       </div>
 
-      <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} />
+      <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
 
       <div className="max-w-xl mx-auto">
         <Eyebrow>Jouw meldingen</Eyebrow>
@@ -2455,6 +2493,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
                     </div>
                     <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontSize: 13 }} className="mb-1">{r.omschrijving}</div>
                     <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 11 }} className="mb-2">{r.chauffeur} · {r.datum}{r.mediaCount ? ` · ${r.mediaCount} bijlage(n)` : ""}</div>
+                    <ReportMedia media={r.media} />
 
                     {schedFor === r.id ? (
                       <div className="mt-2 p-2.5 rounded-lg space-y-2" style={{ background: "#1A2129", border: "1px solid #3B82F555" }}>
@@ -4441,6 +4480,12 @@ export default function TruckGarageApp({ session, onLogout }) {
   const addCost = (c) => setCosts((s) => ({ ...s, [companyId]: [...(s[companyId] || []), c] }));
   const deleteCost = (id) => setCosts((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addReport = (r) => setReports((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+  // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
+  // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.
+  const uploadMedia = async (reportId, items) => {
+    if (live) return await uploadReportMedia(companyId, reportId, items);
+    return (items || []).map((m) => ({ url: m.url, type: m.type }));
+  };
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
@@ -4618,7 +4663,7 @@ export default function TruckGarageApp({ session, onLogout }) {
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
                 {view === "bestelwagens" && modOn(cModules, "bestelwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bestelwagen" title="Bestelwagens" />}

@@ -303,7 +303,10 @@ begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   select id into cid from public.companies where upper(join_code) = upper(trim(code)) limit 1;
   if cid is null then raise exception 'INVALID_CODE'; end if;
-  if p_rol is null or p_rol not in ('chauffeur','garage') then p_rol := 'chauffeur'; end if;
+  -- Een bedrijfscode geeft ALTIJD de chauffeur-rol. Werkplaats-/beheerders-
+  -- accounts worden door de beheerder aangemaakt (server-side, service_role),
+  -- zodat niemand zich via de gedeelde code werkplaats-toegang kan geven.
+  p_rol := 'chauffeur';
   -- Al lid van een bedrijf? Dan niet stilzwijgend overzetten naar een ander
   -- bedrijf (met andermans join-code). Eén account = één bedrijf.
   if exists (select 1 from public.profiles where id = auth.uid()) then
@@ -384,6 +387,43 @@ begin
     where id = p_id;
 end $$;
 grant execute on function public.set_support_ticket_status(uuid, text) to authenticated;
+
+-- ---------- MELDINGSFOTO'S: privé-bucket in Supabase Storage ----------
+-- Chauffeurs kunnen bij een melding foto's uploaden. Die gaan naar een privé
+-- bucket 'meldingen', in een map per bedrijf (eerste padsegment = company_id).
+-- Alleen leden van hetzelfde bedrijf kunnen uploaden en bekijken; niets is
+-- publiek. We tonen ze via tijdelijke (signed) links.
+
+insert into storage.buckets (id, name, public)
+  values ('meldingen', 'meldingen', false)
+  on conflict (id) do nothing;
+
+-- Uploaden mag alleen in de map van je eigen bedrijf.
+drop policy if exists "meldingen upload eigen bedrijf" on storage.objects;
+create policy "meldingen upload eigen bedrijf" on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'meldingen'
+    and (storage.foldername(name))[1] = public.current_company_id()::text
+  );
+
+-- Bekijken mag alleen binnen je eigen bedrijf (of als platform-superadmin).
+drop policy if exists "meldingen lezen eigen bedrijf" on storage.objects;
+create policy "meldingen lezen eigen bedrijf" on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'meldingen'
+    and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
+  );
+
+-- Verwijderen mag alleen de beheerder van hetzelfde bedrijf (of superadmin).
+drop policy if exists "meldingen verwijderen beheerder" on storage.objects;
+create policy "meldingen verwijderen beheerder" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'meldingen'
+    and ( ((storage.foldername(name))[1] = public.current_company_id()::text and public.is_company_admin()) or public.is_superadmin() )
+  );
 
 -- ---------- OPTIONAL: mark a platform super-admin ----------
 -- After you have signed up your own account, run this once with your email:

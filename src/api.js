@@ -131,8 +131,9 @@ export async function previewCompanyByCode(code) {
 }
 
 // Medewerker maakt een echt account en koppelt zich via de code aan het bedrijf.
-// De rol wordt server-side afgedwongen op 'chauffeur' of 'garage'.
-export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code, rol }) {
+// De rol wordt server-side ALTIJD 'chauffeur' (werkplaats-accounts maakt de
+// beheerder aan); de meegegeven rol wordt genegeerd.
+export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code }) {
   const preview = await previewCompanyByCode(code);
   if (!preview) throw new Error("INVALID_CODE");
 
@@ -280,6 +281,42 @@ export function saveStateDebounced(companyId, dataset, onStatus) {
       console.error("Opslaan mislukt:", e?.message || e);
     }
   }, 600);
+}
+
+// ---------- MELDINGSFOTO'S (Supabase Storage, privé-bucket 'meldingen') ----------
+
+// Upload de bijlagen van een melding naar de privé-bucket, in een map per
+// bedrijf/melding. Geeft een lijst {path, type} terug die we op de melding
+// bewaren (geen publieke URL: we halen bij het tonen een tijdelijke link op).
+export async function uploadReportMedia(companyId, reportId, items) {
+  if (!supabase || !companyId || !Array.isArray(items)) return [];
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const m = items[i];
+    if (!m || !m.file) continue;
+    const ext = ((m.file.name || "").split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
+    const path = `${companyId}/${reportId}/${i}-${Math.round(Math.random() * 1e9)}.${ext}`;
+    const { error } = await supabase.storage.from("meldingen").upload(path, m.file, { contentType: m.file.type || undefined, upsert: false });
+    if (error) throw error;
+    out.push({ path, type: m.type === "video" ? "video" : "foto" });
+  }
+  return out;
+}
+
+// Zet opgeslagen paden om naar tijdelijke (1 uur) links om te tonen. Onbekende
+// of oudere meldingen (met alleen een count, geen paden) geven een lege lijst.
+export async function signedMediaUrls(media) {
+  if (!Array.isArray(media) || media.length === 0) return [];
+  const out = [];
+  for (const m of media) {
+    if (!m) continue;
+    if (m.url) { out.push({ url: m.url, type: m.type || "foto" }); continue; } // demo/objectURL
+    if (m.path && supabase) {
+      const { data } = await supabase.storage.from("meldingen").createSignedUrl(m.path, 3600);
+      if (data?.signedUrl) out.push({ url: data.signedUrl, type: m.type || "foto" });
+    }
+  }
+  return out;
 }
 
 // ---------- RDW KENTEKEN-LOOKUP (gratis open data, geen key nodig) ----------

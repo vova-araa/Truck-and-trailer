@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Building2, ShieldCheck, LogIn, KeyRound, AlertTriangle, Wrench } from "lucide-react";
+import { Building2, ShieldCheck, LogIn, KeyRound, AlertTriangle } from "lucide-react";
 import { signIn, signUpCompany, signUpWithCode, requestPasswordReset, activationCodeInfo } from "./api.js";
 
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
@@ -115,11 +115,6 @@ export default function AuthScreen({ onAuthed }) {
     }
   };
 
-  const joinRoles = [
-    { id: "chauffeur", label: "Chauffeur", desc: "Meldingen maken", icon: AlertTriangle },
-    { id: "garage", label: "Werkplaats", desc: "Werkvloer & planning", icon: Wrench },
-  ];
-
   return (
     <div style={wrap}>
       <div style={{ width: "100%", maxWidth: 380 }}>
@@ -139,20 +134,11 @@ export default function AuthScreen({ onAuthed }) {
             <div style={sectionLabel}>Bedrijfscode</div>
             <input style={{ ...input, letterSpacing: 3, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }} placeholder="Bv. 7K2Q90" value={join.code}
               onChange={(e) => setJoin({ ...join, code: e.target.value.toUpperCase() })} />
-            <div style={{ ...sectionLabel, marginTop: 6 }}>Ik ben</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {joinRoles.map((r) => {
-                const active = join.rol === r.id;
-                return (
-                  <button key={r.id} type="button" onClick={() => setJoin({ ...join, rol: r.id })}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "10px 12px", borderRadius: 10, cursor: "pointer",
-                      border: `1px solid ${active ? "#3B82F6" : "#2A3340"}`, background: active ? "#3B82F618" : "#161C25", textAlign: "left" }}>
-                    <r.icon size={16} color={active ? "#3B82F6" : "#98A1B0"} />
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, fontWeight: 600, color: active ? "#3B82F6" : "#E7ECF3" }}>{r.label}</span>
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: "#98A1B0" }}>{r.desc}</span>
-                  </button>
-                );
-              })}
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, border: "1px solid #2A3340", background: "#161C25" }}>
+              <AlertTriangle size={16} color="#3B82F6" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#B4BCC9", lineHeight: 1.5 }}>
+                Met een bedrijfscode meld je je aan als <b style={{ color: "#E7ECF3" }}>chauffeur</b> (meldingen maken). Werkplaats-accounts worden door de beheerder aangemaakt.
+              </span>
             </div>
             <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw account</div>
             <input style={input} placeholder="Jouw naam" value={join.naam} onChange={(e) => setJoin({ ...join, naam: e.target.value })} />
