@@ -250,6 +250,53 @@ function vehicleWorstCompliance(v, today = TODAY) {
   return vehicleComplianceItems(v, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
 
+// Regelgebaseerd voorspellend onderhoud — werkt altijd, ook zonder AI.
+// Kijkt naar APK/verzekering/tacho-datums, kilometerstand, leeftijd,
+// gezondheidsscore en terugkerende meldingen.
+function rulePredictMaintenance(v, reports = [], today = TODAY) {
+  if (!v) return { items: [] };
+  const items = [];
+  const push = (taak, urgentie, binnen, reden) => items.push({ taak, urgentie, binnen, reden });
+
+  // APK
+  const apkD = daysUntil(v.apkTot, today);
+  if (apkD !== null) {
+    if (apkD < 0) push("APK is verlopen", "hoog", `${Math.abs(apkD)} dagen te laat`, "Het voertuig mag zo niet de weg op — plan direct een APK.");
+    else if (apkD <= 30) push("APK-keuring plannen", "hoog", `binnen ${apkD} dagen`, "De APK verloopt bijna.");
+    else if (apkD <= 60) push("APK-keuring plannen", "gemiddeld", `binnen ${apkD} dagen`, "De APK verloopt binnen twee maanden.");
+  }
+  // Verzekering
+  const verzD = daysUntil(v.verzekeringTot, today);
+  if (verzD !== null && verzD <= 30) push("Verzekering verloopt", verzD < 0 ? "hoog" : "gemiddeld", verzD < 0 ? `${Math.abs(verzD)} dagen te laat` : `binnen ${verzD} dagen`, "Controleer of de verzekering wordt verlengd.");
+  // Tachograaf (SMT2)
+  if (v.tachoPlicht) {
+    const tD = daysUntil(v.tachoTot, today);
+    if (tD !== null && tD <= 45) push("Tachograaf-keuring (SMT2)", tD < 0 ? "hoog" : "gemiddeld", tD < 0 ? `${Math.abs(tD)} dagen te laat` : `binnen ${tD} dagen`, "De tweejaarlijkse tachograafkeuring is bijna nodig.");
+  }
+  // Kilometer-interval: grote beurt elke ~40.000 km.
+  const km = Number(v.km) || 0;
+  if (km > 0) {
+    const interval = 40000;
+    const naVolgende = interval - (km % interval);
+    if (naVolgende <= 5000) push("Grote beurt (km-interval)", naVolgende <= 1500 ? "hoog" : "gemiddeld", `binnen ~${naVolgende.toLocaleString("nl-NL")} km`, `Op ${km.toLocaleString("nl-NL")} km nadert de volgende onderhoudsbeurt.`);
+  }
+  // Leeftijd
+  const jaar = Number(v.bouwjaar) || null;
+  const nu = Number((today || "").slice(0, 4)) || null;
+  if (jaar && nu && nu - jaar >= 8) push("Extra controle door leeftijd", "laag", `${nu - jaar} jaar oud`, "Ouder voertuig: let extra op remmen, ophanging en roest.");
+  // Gezondheidsscore
+  if (typeof v.health === "number" && v.health < 60) push("Lage gezondheidsscore nakijken", v.health < 45 ? "hoog" : "gemiddeld", `score ${v.health}/100`, "De gezondheidsscore is laag — plan een controle.");
+  // Terugkerende meldingen (zelfde onderdeel/omschrijving ≥2x, nog niet klaar).
+  const open = (reports || []).filter((r) => r.vehicle === v.kenteken && r.status !== "klaar");
+  const byKey = {};
+  open.forEach((r) => { const k = (r.zone || r.omschrijving || "").toLowerCase().slice(0, 24); if (k) byKey[k] = (byKey[k] || 0) + 1; });
+  Object.entries(byKey).filter(([, n]) => n >= 2).forEach(([k, n]) => push("Terugkerende melding onderzoeken", "gemiddeld", `${n}× gemeld`, `"${k}" is meerdere keren gemeld — mogelijk een structureel probleem.`));
+
+  const rank = { hoog: 0, gemiddeld: 1, laag: 2 };
+  items.sort((a, b) => (rank[a.urgentie] ?? 3) - (rank[b.urgentie] ?? 3));
+  return { items };
+}
+
 // ---- Chauffeur-compliance (rijbewijs C/CE, Code 95, ADR, medische keuring) ----
 function driverComplianceItems(d, today = TODAY) {
   const items = [
@@ -1975,19 +2022,46 @@ ${JSON.stringify(ctx)}`;
         )}
       </Card>
 
-      {/* AI voorspellend onderhoud */}
+      {/* Voorspellend onderhoud — automatisch (regels), AI optioneel als extra */}
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
           <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#3B82F618" }}><Sparkles size={15} color="#3B82F6" /></div>
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#3B82F618" }}><Wrench size={15} color="#3B82F6" /></div>
             <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Voorspellend onderhoud</span>
           </div>
-          <Button small icon={Sparkles} onClick={runPrediction} disabled={predLoading}>{predLoading ? "Analyseren..." : prediction ? "Opnieuw" : "Analyseer"}</Button>
+          {aiReady && <Button small icon={Sparkles} variant="ghost" onClick={runPrediction} disabled={predLoading}>{predLoading ? "AI denkt na..." : prediction ? "AI opnieuw" : "AI-analyse"}</Button>}
         </div>
-        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginBottom: prediction || predError ? 12 : 0 }}>AI schat op basis van km-stand, leeftijd en meldingen in wat er binnenkort aandacht nodig heeft.</div>
-        {predError && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00" }}>{predError}</div>}
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginBottom: 12 }}>Automatisch berekend uit APK, km-stand, leeftijd, gezondheidsscore en terugkerende meldingen.{aiReady ? " Klik op AI-analyse voor een extra inschatting." : ""}</div>
+        {predError && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00", marginBottom: 8 }}>{predError}</div>}
+        {/* Regelgebaseerde items (altijd zichtbaar) */}
+        {(() => {
+          const local = rulePredictMaintenance(vehicle, vReports, TODAY);
+          if (local.items.length === 0) return <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#34D399", marginBottom: prediction ? 12 : 0 }}>✓ Geen aandachtspunten gevonden op basis van de bekende gegevens.</div>;
+          return (
+          <div className="space-y-2" style={{ marginBottom: prediction ? 12 : 0 }}>
+            {local.items.map((it, i) => {
+              const col = it.urgentie === "hoog" ? "#F0453F" : it.urgentie === "gemiddeld" ? "#FF8A00" : "#34D399";
+              return (
+                <div key={i} className="p-3 rounded-lg" style={{ background: "#161C25", border: `1px solid #232B38`, borderLeft: `3px solid ${col}` }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", minWidth: 0, flex: "1 1 0%" }}>{it.taak}</span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{it.urgentie}</span>
+                  </div>
+                  {it.binnen && <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: col, marginTop: 2 }}>⏱ {it.binnen}</div>}
+                  {it.reden && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{it.reden}</div>}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
+                    <Calendar size={12} /> Inplannen
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          );
+        })()}
         {prediction && prediction.items && (
           <div className="space-y-2">
+            <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: "#8FB8FF", textTransform: "uppercase", letterSpacing: 0.5 }}>AI-inschatting</div>
             {prediction.items.map((it, i) => {
               const col = it.urgentie === "hoog" ? "#F0453F" : it.urgentie === "gemiddeld" ? "#FF8A00" : "#34D399";
               return (
