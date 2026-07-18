@@ -153,7 +153,7 @@ export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code }
     p_naam: naam,
     p_email: email,
     p_telefoon: telefoon || "",
-    p_rol: rol === "garage" ? "garage" : "chauffeur",
+    p_rol: "chauffeur", // server dwingt dit sowieso af; werkplaats maakt de beheerder aan
   });
   if (joinErr) throw joinErr;
   return preview;
@@ -288,14 +288,20 @@ const saveTimers = {};
 // bewaard is: onStatus("pending" | "saving" | "saved" | "error"). Voor de
 // werkplaats (role="garage") loopt het via save_company_state, die de kosten
 // server-side samenvoegt zodat de werkplaats de financiële data niet wist.
-export function saveStateDebounced(companyId, dataset, onStatus, role) {
+export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
+  const { role, isSuperadmin = false, baseReportIds = [], baseCostIds = [] } = opts;
   clearTimeout(saveTimers[companyId]);
   onStatus?.("pending");
   saveTimers[companyId] = setTimeout(async () => {
     onStatus?.("saving");
     try {
-      const { error } = role === "garage"
-        ? await supabase.rpc("save_company_state", { p_data: dataset })
+      // Een gewone beheerder én de werkplaats slaan op via save_company_state,
+      // die meldingen/kosten samenvoegt (geen dataverlies bij gelijktijdig werk).
+      // De superadmin bewerkt mogelijk een ánder bedrijf en gaat daarom direct
+      // naar de juiste company_state-rij (de RPC schrijft altijd naar je eigen bedrijf).
+      const viaRpc = !isSuperadmin && (role === "admin" || role === "garage");
+      const { error } = viaRpc
+        ? await supabase.rpc("save_company_state", { p_data: dataset, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds })
         : await supabase.from("company_state").upsert({ company_id: companyId, data: dataset, updated_at: new Date().toISOString() });
       onStatus?.(error ? "error" : "saved");
       if (error) console.error("Opslaan mislukt:", error.message);

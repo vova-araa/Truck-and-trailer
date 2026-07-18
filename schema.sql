@@ -156,6 +156,9 @@ begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   select company_id, rol into cid, v_rol from public.profiles where id = auth.uid();
   if cid is null then raise exception 'NO_COMPANY'; end if;
+  -- Chauffeurs mogen deze functie NIET gebruiken (zij hebben driver_bootstrap);
+  -- anders zouden ze via een directe RPC-aanroep alsnog de hele dataset zien.
+  if v_rol not in ('admin','garage') then raise exception 'NOT_ALLOWED'; end if;
   select data into d from public.company_state where company_id = cid;
   d := coalesce(d, '{}'::jsonb);
   if v_rol = 'garage' then d := d - 'costs'; end if; -- werkplaats ziet geen kosten
@@ -163,32 +166,56 @@ begin
 end $$;
 grant execute on function public.load_company_state() to authenticated;
 
--- Werkplaats slaat op; bestaande (voor haar verborgen) kosten blijven behouden,
--- nieuwe kosten (bv. bij een afgeronde klus) worden toegevoegd. Zo kan de
--- werkplaats de financiële data niet per ongeluk wissen.
-create or replace function public.save_company_state(p_data jsonb)
-returns void language plpgsql security definer as $$
-declare cid uuid; v_rol text; existing jsonb; ex_costs jsonb; in_costs jsonb; final jsonb;
+-- Werkplaats/beheerder slaat op. Om te voorkomen dat gelijktijdig toegevoegde
+-- gegevens verloren gaan (bv. een chauffeur die net een melding maakt terwijl de
+-- werkplaats iets sleept), worden MELDINGEN en KOSTEN samengevoegd i.p.v. blind
+-- overschreven: server-rijen die de client niet meestuurt én die 'ie bij het
+-- laden niet kende (dus nieuw sinds dan), blijven behouden. Verwijderen werkt nog
+-- steeds: een rij die de client wél kende (base) maar niet meestuurt, verdwijnt.
+-- Zo blijft financiële data ook voor de werkplaats bewaard (die kreeg 'm niet).
+create or replace function public.save_company_state(
+  p_data jsonb, p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}'
+) returns void language plpgsql security definer as $$
+declare cid uuid; v_rol text; existing jsonb;
+        ex_reports jsonb; ex_costs jsonb; in_reports jsonb; in_costs jsonb;
+        cli_report_ids text[]; cli_cost_ids text[]; final jsonb;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   select company_id, rol into cid, v_rol from public.profiles where id = auth.uid();
   if cid is null then raise exception 'NO_COMPANY'; end if;
   if v_rol not in ('admin','garage') then raise exception 'NOT_ALLOWED'; end if;
+
+  select data into existing from public.company_state where company_id = cid for update;
+  existing := coalesce(existing, '{}'::jsonb);
   final := coalesce(p_data, '{}'::jsonb);
-  if v_rol = 'garage' then
-    select data into existing from public.company_state where company_id = cid for update;
-    ex_costs := coalesce(existing -> 'costs', '[]'::jsonb);
-    in_costs := coalesce(p_data -> 'costs', '[]'::jsonb);
-    final := final || jsonb_build_object('costs', ex_costs || coalesce((
-      select jsonb_agg(e) from jsonb_array_elements(in_costs) e
-      where (e ->> 'id') is not null
-        and not exists (select 1 from jsonb_array_elements(ex_costs) x where x ->> 'id' = e ->> 'id')
-    ), '[]'::jsonb));
-  end if;
+
+  -- Normaliseer alle arrays (vang jsonb 'null' / scalair netjes af).
+  ex_reports := case when jsonb_typeof(existing -> 'reports') = 'array' then existing -> 'reports' else '[]'::jsonb end;
+  ex_costs   := case when jsonb_typeof(existing -> 'costs')   = 'array' then existing -> 'costs'   else '[]'::jsonb end;
+  in_reports := case when jsonb_typeof(final -> 'reports') = 'array' then final -> 'reports' else '[]'::jsonb end;
+  in_costs   := case when jsonb_typeof(final -> 'costs')   = 'array' then final -> 'costs'   else '[]'::jsonb end;
+
+  select coalesce(array_agg(e ->> 'id'), '{}') into cli_report_ids from jsonb_array_elements(in_reports) e where (e ->> 'id') is not null;
+  select coalesce(array_agg(e ->> 'id'), '{}') into cli_cost_ids   from jsonb_array_elements(in_costs)   e where (e ->> 'id') is not null;
+
+  final := final
+    || jsonb_build_object('reports', in_reports || coalesce((
+         select jsonb_agg(r) from jsonb_array_elements(ex_reports) r
+         where (r ->> 'id') is not null
+           and not (r ->> 'id' = any(cli_report_ids))
+           and not (r ->> 'id' = any(p_base_report_ids))
+       ), '[]'::jsonb))
+    || jsonb_build_object('costs', in_costs || coalesce((
+         select jsonb_agg(c) from jsonb_array_elements(ex_costs) c
+         where (c ->> 'id') is not null
+           and not (c ->> 'id' = any(cli_cost_ids))
+           and not (c ->> 'id' = any(p_base_cost_ids))
+       ), '[]'::jsonb));
+
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
-grant execute on function public.save_company_state(jsonb) to authenticated;
+grant execute on function public.save_company_state(jsonb, text[], text[]) to authenticated;
 
 -- Chauffeur: alleen minimale voertuiggegevens (om uit te kiezen) + eigen meldingen.
 create or replace function public.driver_bootstrap()

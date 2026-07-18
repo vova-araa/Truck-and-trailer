@@ -4350,6 +4350,13 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
   const firstSave = useRef(true);
   const lastCid = useRef(liveCompanyId);
+  // Meldingen/kosten die bij het laden al bestonden. Bij het opslaan mogen
+  // server-rijen die hier NIET in staan (dus nieuw sinds het laden, bv. een
+  // chauffeursmelding) niet worden weggegooid — dat regelt save_company_state.
+  const baseIds = useRef({
+    reports: live && Array.isArray(session.state?.reports) ? session.state.reports.map((r) => r && r.id).filter(Boolean) : [],
+    costs: live && Array.isArray(session.state?.costs) ? session.state.costs.map((c) => c && c.id).filter(Boolean) : [],
+  });
 
   useEffect(() => {
     if (!live) return;
@@ -4379,7 +4386,12 @@ export default function TruckGarageApp({ session, onLogout }) {
       modules: modules[cid] || { ...DEFAULT_MODULES },
       onboarded: onboarded[cid] === true,
     };
-    saveStateDebounced(cid, dataset, setSaveStatus, session.profile.rol);
+    saveStateDebounced(cid, dataset, setSaveStatus, {
+      role: session.profile.rol,
+      isSuperadmin: !!session.profile.is_superadmin,
+      baseReportIds: baseIds.current.reports,
+      baseCostIds: baseIds.current.costs,
+    });
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan.
