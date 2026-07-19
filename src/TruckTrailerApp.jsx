@@ -2781,7 +2781,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
 /* ---------------------------------------------------------------------
    WERKBON — melding afronden met ondertekende PDF + kosten naar overzicht
 --------------------------------------------------------------------- */
-function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, onComplete, onUsePart }) {
+function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {}, onClose, onComplete, onUsePart }) {
   const [monteur, setMonteur] = useState(mechanics[0]?.naam || "");
   const [uren, setUren] = useState("1");
   const [tarief, setTarief] = useState("65");
@@ -2842,10 +2842,35 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
     try {
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF({ unit: "mm", format: "a4" });
-      const M = 16; let y = 20;
+      const M = 16; const R = 210 - M; let y = 18;
+      const naam = profiel.bedrijfsnaam || company?.name || "";
+
+      // Kop: logo links (indien aanwezig) + bedrijfsgegevens rechts.
+      let headBottom = y;
+      if (profiel.logo) {
+        try {
+          const props = doc.getImageProperties(profiel.logo);
+          const w = 34, h = Math.min(24, (props.height / props.width) * w);
+          doc.addImage(profiel.logo, "PNG", M, y, w, h);
+          headBottom = Math.max(headBottom, y + h);
+        } catch { /* ongeldig logo: overslaan */ }
+      }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text(naam, R, y + 4, { align: "right" });
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+      let hy = y + 9;
+      const rl = (t) => { if (t) { doc.text(String(t), R, hy, { align: "right" }); hy += 4; } };
+      rl(profiel.adres);
+      rl([profiel.postcode, profiel.plaats].filter(Boolean).join("  "));
+      rl(profiel.telefoon);
+      rl(profiel.email);
+      if (profiel.kvk) rl("KvK " + profiel.kvk);
+      if (profiel.btw) rl("BTW " + profiel.btw);
+      doc.setTextColor(0);
+      headBottom = Math.max(headBottom, hy);
+
+      y = headBottom + 4;
       doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("WERKBON", M, y);
-      doc.setFontSize(12); doc.setFont("helvetica", "normal"); doc.text(company?.name || "", 210 - M, y, { align: "right" });
-      y += 4; doc.setDrawColor(200); doc.line(M, y, 210 - M, y); y += 8;
+      y += 3; doc.setDrawColor(200); doc.line(M, y, R, y); y += 8;
       doc.setFontSize(10);
       const row = (label, val) => { doc.setFont("helvetica", "bold"); doc.text(label, M, y); doc.setFont("helvetica", "normal"); doc.text(String(val || "-"), M + 40, y); y += 6; };
       row("Datum", TODAY);
@@ -2854,21 +2879,38 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
       row("Monteur", monteur);
       y += 3; doc.setFont("helvetica", "bold"); doc.text("Uitgevoerd werk", M, y); y += 6;
       doc.setFont("helvetica", "normal");
-      doc.text(doc.splitTextToSize(notities, 210 - 2 * M), M, y); y += 6 * Math.max(1, doc.splitTextToSize(notities, 210 - 2 * M).length) + 2;
+      doc.text(doc.splitTextToSize(notities, R - M), M, y); y += 6 * Math.max(1, doc.splitTextToSize(notities, R - M).length) + 2;
       // Kostenregels
-      doc.setFont("helvetica", "bold"); doc.text("Omschrijving", M, y); doc.text("Aantal", 120, y); doc.text("Prijs", 150, y); doc.text("Totaal", 210 - M, y, { align: "right" }); y += 2;
-      doc.line(M, y, 210 - M, y); y += 6; doc.setFont("helvetica", "normal");
-      const line = (oms, aantal, prijs, tot) => { doc.text(String(oms), M, y); doc.text(String(aantal), 120, y); doc.text(euro(prijs), 150, y); doc.text(euro(tot), 210 - M, y, { align: "right" }); y += 6; };
+      doc.setFont("helvetica", "bold"); doc.text("Omschrijving", M, y); doc.text("Aantal", 120, y); doc.text("Prijs", 150, y); doc.text("Totaal", R, y, { align: "right" }); y += 2;
+      doc.line(M, y, R, y); y += 6; doc.setFont("helvetica", "normal");
+      const line = (oms, aantal, prijs, tot) => { doc.text(String(oms), M, y); doc.text(String(aantal), 120, y); doc.text(euro(prijs), 150, y); doc.text(euro(tot), R, y, { align: "right" }); y += 6; };
       line(`Arbeid (${uren} u × ${euro(Number(tarief) || 0)})`, uren, Number(tarief) || 0, arbeid);
       lines.forEach((l) => line(l.naam, l.aantal, l.prijs, l.prijs * l.aantal));
       if (extra > 0) line(extraOms || "Overig", 1, extra, extra);
-      y += 1; doc.line(M, y, 210 - M, y); y += 7;
-      doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Totaal (excl. btw)", 150, y); doc.text(euro(total), 210 - M, y, { align: "right" }); y += 14;
+      y += 1; doc.line(M, y, R, y); y += 7;
+      // Totalen met BTW.
+      const btwPct = profiel.btwPercentage != null ? Number(profiel.btwPercentage) : 21;
+      const btwBedrag = total * (btwPct / 100);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+      doc.text("Subtotaal", 150, y); doc.text(euro(total), R, y, { align: "right" }); y += 6;
+      doc.text(`BTW ${btwPct}%`, 150, y); doc.text(euro(btwBedrag), R, y, { align: "right" }); y += 2;
+      doc.line(150, y, R, y); y += 6;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+      doc.text("Totaal incl. btw", 150, y); doc.text(euro(total + btwBedrag), R, y, { align: "right" }); y += 14;
       // Handtekening
       if (signedRef.current && canvasRef.current) {
         try { doc.addImage(canvasRef.current.toDataURL("image/png"), "PNG", M, y, 60, 22); } catch {}
       }
       doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text("Handtekening klant", M, y + 27);
+      // Voettekst: betaalgegevens.
+      if (profiel.iban || profiel.btw || profiel.kvk) {
+        const fy = 285;
+        doc.setDrawColor(220); doc.line(M, fy - 4, R, fy - 4);
+        doc.setFontSize(8); doc.setTextColor(120);
+        const foot = [profiel.iban ? "IBAN " + profiel.iban : "", profiel.kvk ? "KvK " + profiel.kvk : "", profiel.btw ? "BTW " + profiel.btw : ""].filter(Boolean).join("   •   ");
+        doc.text(foot, 105, fy, { align: "center" });
+        doc.setTextColor(0);
+      }
       // Niet automatisch downloaden: we maken een download-link en tonen een
       // knop, zodat de gebruiker zelf kiest wanneer/of hij de PDF bewaart.
       const blob = doc.output("blob");
@@ -2987,7 +3029,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, onClose, on
   );
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, onAddCost, onUsePart, onRefresh, refreshing }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, profiel = {}, onAddCost, onUsePart, onRefresh, refreshing }) {
   const isMobile = useIsMobile();
   const device = useDevice();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
@@ -3104,7 +3146,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         </div>
       )}
       {werkbonFor && (
-        <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} onUsePart={onUsePart}
+        <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} profiel={profiel} onUsePart={onUsePart}
           onClose={() => setWerkbonFor(null)}
           onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
       )}
@@ -3561,7 +3603,106 @@ function DeviceNotificationsCard() {
   );
 }
 
-function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial, subscription, onCancelSub, onReactivateSub }) {
+// Bedrijfsgegevens + logo. Deze verschijnen op de werkbon/factuur zodat elk
+// bedrijf op zijn eigen naam factureert. Het logo wordt verkleind naar een
+// compacte data-URI en meebewaard in de dataset (geen aparte opslag nodig).
+function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast }) {
+  const isMobile = useIsMobile();
+  const [form, setForm] = useState({
+    bedrijfsnaam: profiel.bedrijfsnaam || companyName || "",
+    adres: profiel.adres || "", postcode: profiel.postcode || "", plaats: profiel.plaats || "",
+    telefoon: profiel.telefoon || "", email: profiel.email || "", website: profiel.website || "",
+    kvk: profiel.kvk || "", btw: profiel.btw || "", iban: profiel.iban || "",
+    btwPercentage: profiel.btwPercentage != null ? String(profiel.btwPercentage) : "21",
+    logo: profiel.logo || "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Logo inlezen en verkleinen (max 320px breed) tot een lichte PNG data-URI.
+  const pickLogo = (files) => {
+    const file = files && files[0];
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setErr("Kies een afbeelding (PNG of JPG)."); return; }
+    setErr("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxW = 320;
+        const scale = Math.min(1, maxW / img.width);
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        try { set("logo", canvas.toDataURL("image/png")); } catch { setErr("Kon het logo niet verwerken."); }
+      };
+      img.onerror = () => setErr("Kon de afbeelding niet laden.");
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const save = () => {
+    setBusy(true);
+    const clean = { ...form, btwPercentage: Math.max(0, Math.min(100, Number(form.btwPercentage) || 0)) };
+    onSave(clean);
+    setBusy(false);
+    onToast && onToast("Bedrijfsgegevens opgeslagen.");
+  };
+
+  // Let op: dit is een gewone render-helper (géén component), zodat de inputs
+  // niet remounten en de focus niet verliezen bij elke toetsaanslag.
+  const f = (label, k, { placeholder = "", type = "text", full = false } = {}) => (
+    <div key={k} style={full ? { gridColumn: "1 / -1" } : undefined}>
+      <FieldLabel>{label}</FieldLabel>
+      <input className="tg-input" type={type} value={form[k]} placeholder={placeholder} onChange={(e) => set(k, e.target.value)} />
+    </div>
+  );
+
+  return (
+    <Card className="p-5">
+      <Eyebrow><span className="inline-flex items-center gap-1.5"><Building2 size={13} color="#3B82F6" /> Bedrijfsgegevens & logo</span></Eyebrow>
+      <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", margin: "6px 0 12px", lineHeight: 1.5 }}>
+        Deze gegevens komen bovenaan je werkbon/factuur te staan — op je eigen naam en met je eigen logo.
+      </div>
+
+      <div className="flex items-center gap-4 mb-4 flex-wrap">
+        <div className="flex items-center justify-center rounded-lg" style={{ width: 88, height: 88, background: "#12171F", border: "1px solid #232B38", overflow: "hidden", flexShrink: 0 }}>
+          {form.logo ? <img src={form.logo} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} /> : <Building2 size={26} color="#3A4252" />}
+        </div>
+        <div className="flex flex-col gap-2">
+          <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => pickLogo(e.target.files)} />
+          <Button small icon={Plus} onClick={() => fileRef.current?.click()}>{form.logo ? "Logo vervangen" : "Logo uploaden"}</Button>
+          {form.logo && <button onClick={() => set("logo", "")} style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F" }}>Logo verwijderen</button>}
+        </div>
+      </div>
+
+      <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)" }}>
+        {f("Bedrijfsnaam", "bedrijfsnaam", { full: true })}
+        {f("Adres", "adres", { placeholder: "Straat en huisnummer", full: true })}
+        {f("Postcode", "postcode")}
+        {f("Plaats", "plaats")}
+        {f("Telefoon", "telefoon")}
+        {f("E-mail", "email", { type: "email" })}
+        {f("Website", "website", { placeholder: "www.jouwbedrijf.nl" })}
+        {f("KvK-nummer", "kvk")}
+        {f("BTW-nummer", "btw", { placeholder: "NL0000.00.000.B00" })}
+        {f("IBAN", "iban", { placeholder: "NL00 BANK 0000 0000 00" })}
+        <div>
+          <FieldLabel>BTW-percentage (%)</FieldLabel>
+          <input className="tg-input" type="number" value={form.btwPercentage} onChange={(e) => set("btwPercentage", e.target.value)} placeholder="21" />
+        </div>
+      </div>
+      {err && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{err}</div>}
+      <div className="mt-4"><Button icon={Check} onClick={save} disabled={busy}>Opslaan</Button></div>
+    </Card>
+  );
+}
+
+function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSetHours, onLoadSample, onClearData, hasData, modules, onSetModule, live, onReplayTutorial, subscription, onCancelSub, onReactivateSub, profiel = {}, onSaveProfiel = null, companyName = "" }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(mechanics[0]?.id || "");
   const [toast, setToast] = useState("");
@@ -3596,6 +3737,9 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
       </div>
 
       <div className="tg-cols">
+      {/* Bedrijfsgegevens & logo — komt terug op de werkbon/factuur (alleen beheerder). */}
+      {onSaveProfiel && <CompanyProfileCard profiel={profiel} onSave={onSaveProfiel} companyName={companyName} onToast={setToast} />}
+
       {/* Abonnement — gestart/verlengt, gratis, en opzeggen (blijft tot verlengdatum). */}
       {live && subscription && <SubscriptionCard subscription={subscription} onCancel={onCancelSub} onReactivate={onReactivateSub} />}
 
@@ -5650,6 +5794,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [drivers, setDrivers] = useState(() => initSlice("drivers", seedDrivers));
   const [availability, setAvailability] = useState(() => initSlice("availability", seedAvailability, {}));
   const [workshopHours, setWorkshopHours] = useState(() => initSlice("workshopHours", seedWorkshopHours, { van: "08:00", tot: "17:00" }));
+  // Bedrijfsprofiel: eigen logo + gegevens (adres/KvK/BTW/IBAN). Komt terug op de
+  // werkbon/factuur zodat elk bedrijf op zijn eigen naam en huisstijl factureert.
+  const [bedrijfsprofiel, setBedrijfsprofielState] = useState(() => initSlice("bedrijfsprofiel", {}, {}));
   const [modules, setModules] = useState(() => initSlice("modules", { blex: { ...DEFAULT_MODULES }, vandijk: { ...DEFAULT_MODULES } }, { ...DEFAULT_MODULES }));
   const [onboarded, setOnboarded] = useState(() => initSlice("onboarded", { blex: true, vandijk: true }, false));
   // Rol-uitleg: per gebruiker eenmalig (onthouden in de browser). Niet gevoelig,
@@ -5699,6 +5846,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       workshopHours: workshopHours[cid] || { van: "08:00", tot: "17:00" },
       modules: modules[cid] || { ...DEFAULT_MODULES },
       onboarded: onboarded[cid] === true,
+      bedrijfsprofiel: bedrijfsprofiel[cid] || {},
     };
     saveStateDebounced(cid, dataset, setSaveStatus, {
       role: session.profile.rol,
@@ -5706,7 +5854,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       baseReportIds: baseIds.current.reports,
       baseCostIds: baseIds.current.costs,
     });
-  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, live, companyId, session]);
+  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, bedrijfsprofiel, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan. Het scrollen gebeurt nu binnen <main>
   // (#tt-main), niet meer op het document.
@@ -5721,6 +5869,7 @@ export default function TruckGarageApp({ session, onLogout }) {
 
   const setMechanicWeek = (userId, week) => setAvailability((s) => ({ ...s, [companyId]: { ...(s[companyId] || {}), [userId]: week } }));
   const setCompanyHours = (hours) => setWorkshopHours((s) => ({ ...s, [companyId]: hours }));
+  const saveBedrijfsprofiel = (profiel) => setBedrijfsprofielState((s) => ({ ...s, [companyId]: profiel }));
 
   const allUsersFlat = Object.values(users).flat();
 
@@ -5798,6 +5947,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cAvailability = availability[companyId] || {};
   const cHours = workshopHours[companyId] || { van: "08:00", tot: "17:00" };
   const cModules = modules[companyId] || { ...DEFAULT_MODULES };
+  const cProfiel = bedrijfsprofiel[companyId] || {};
   const cOnboarded = onboarded[companyId] === true;
   const setModule = (key, val) => setModules((s) => ({ ...s, [companyId]: { ...(s[companyId] || DEFAULT_MODULES), [key]: val } }));
   const setAllModules = (obj) => setModules((s) => ({ ...s, [companyId]: { ...DEFAULT_MODULES, ...obj } }));
@@ -6116,13 +6266,13 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} onInviteEmail={live && canCreateAccounts ? inviteEmployeeByEmail : null} />}
                 {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
-                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} />}
+                {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} profiel={cProfiel} onSaveProfiel={isAdmin ? saveBedrijfsprofiel : null} companyName={company.name} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
                 {view === "admincompanies" && isSuperAdmin && <CompaniesAdminView live={live} companies={companies} currentUserId={currentUser.id} currentCompanyId={companyId} onRemoveCompany={(id) => setCompanies((cs) => cs.filter((c) => c.id !== id))} />}
