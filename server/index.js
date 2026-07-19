@@ -75,7 +75,7 @@ async function verifyUser(token) {
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured, push: pushConfigured, resend: Boolean(process.env.RESEND_API_KEY) });
+  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured, push: pushConfigured, resend: Boolean(process.env.RESEND_API_KEY), reminders: Boolean(process.env.CRON_SECRET) });
 });
 
 // Beheerder maakt een echt inlogaccount voor een medewerker aan. De service_role
@@ -301,6 +301,108 @@ app.post("/api/ai", async (req, res) => {
     }
     console.error("AI-proxy fout:", err);
     res.status(500).json({ error: "Onverwachte serverfout bij de AI-aanvraag." });
+  }
+});
+
+// ---------- HERINNERINGEN: APK / verzekering / tacho verloopt ----------
+// Een dagelijkse cron (bv. cron-job.org of een Render Cron Job) roept deze
+// endpoint aan met ?key=CRON_SECRET. We kijken per bedrijf welke voertuigen
+// binnenkort een verlopende keuring/verzekering hebben en mailen de beheerder.
+// Stateless: we mailen alleen op vaste mijlpalen (30/14/7/3/1/0 dagen) zodat er
+// niet elke dag een mail uitgaat.
+const REMINDER_MILESTONES = [30, 14, 7, 3, 1, 0];
+
+async function sendResendEmail(to, subject, html) {
+  const RESEND = process.env.RESEND_API_KEY || "";
+  if (!RESEND) return false;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: "Truck & Trailer <noreply@truckandtrailer.nl>", to: [to], subject, html }),
+  });
+  return r.ok;
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  const a = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const b = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((b - a) / 86400000);
+}
+
+app.all("/api/cron/reminders", async (req, res) => {
+  const secret = process.env.CRON_SECRET || "";
+  if (!secret) return res.status(503).json({ error: "CRON_SECRET niet ingesteld op de server." });
+  const given = req.query.key || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (given !== secret) return res.status(401).json({ error: "Ongeldige sleutel." });
+  if (!supaAdmin) return res.status(503).json({ error: "SUPABASE_SERVICE_ROLE_KEY ontbreekt." });
+  if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: "RESEND_API_KEY ontbreekt." });
+  try {
+    // Beheerder-e-mail per bedrijf (voorkeur: bedrijfsprofiel, anders admin-profiel).
+    const { data: admins } = await supaAdmin.from("profiles").select("company_id, email, naam, rol").eq("rol", "admin");
+    const adminByCompany = {};
+    (admins || []).forEach((a) => { if (a.company_id && a.email && !adminByCompany[a.company_id]) adminByCompany[a.company_id] = a; });
+
+    const { data: states } = await supaAdmin.from("company_state").select("company_id, data");
+    let companiesMailed = 0, itemsFound = 0;
+    const CHECKS = [
+      { veld: "apkTot", label: "APK" },
+      { veld: "verzekeringTot", label: "Verzekering" },
+      { veld: "tachoTot", label: "Tachograaf" },
+    ];
+    for (const row of (states || [])) {
+      const data = row.data || {};
+      const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+      const profiel = data.bedrijfsprofiel || {};
+      const to = (profiel.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profiel.email)) ? profiel.email : (adminByCompany[row.company_id]?.email || null);
+      if (!to) continue;
+      const items = [];
+      for (const v of vehicles) {
+        for (const c of CHECKS) {
+          if (c.veld === "tachoTot" && !v.tachoPlicht) continue;
+          const dl = daysUntil(v[c.veld]);
+          if (dl != null && REMINDER_MILESTONES.includes(dl)) {
+            items.push({ kenteken: v.kenteken, merk: v.merk || "", type: c.label, datum: v[c.veld], dagen: dl });
+          }
+        }
+      }
+      if (!items.length) continue;
+      itemsFound += items.length;
+      const bedrijf = profiel.bedrijfsnaam || adminByCompany[row.company_id]?.naam || "je vloot";
+      const rows = items.map((it) => `
+        <tr>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;font-weight:bold;color:#0A0E14">${it.kenteken}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${it.type}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${it.datum}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:${it.dagen <= 3 ? "#F0453F" : "#B54708"};font-weight:bold">${it.dagen === 0 ? "vandaag" : it.dagen + " dagen"}</td>
+        </tr>`).join("");
+      const appUrl = (process.env.APP_URL || "https://truckandtrailer.nl").replace(/\/+$/, "");
+      const html = `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a2129">
+  <h1 style="font-size:20px;margin:0 0 4px">TRUCK &amp; TRAILER</h1>
+  <p style="font-size:15px;line-height:1.5;margin:16px 0">Herinnering: bij <b>${bedrijf}</b> verlopen binnenkort keuringen of verzekeringen.</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;margin:12px 0">
+    <thead><tr>
+      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Voertuig</th>
+      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Type</th>
+      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Verloopt</th>
+      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Nog</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p style="margin:20px 0"><a href="${appUrl}/vrachtwagens" style="background:#3B82F6;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold;font-size:14px;display:inline-block">Bekijk je vloot</a></p>
+  <p style="font-size:12px;color:#98a1b0;margin-top:20px">Je krijgt deze mail omdat je beheerder bent in Truck &amp; Trailer.</p>
+</div>`;
+      const ok = await sendResendEmail(to, `Herinnering: keuring/verzekering verloopt (${items.length})`, html);
+      if (ok) companiesMailed++;
+    }
+    res.json({ ok: true, companiesMailed, itemsFound });
+  } catch (err) {
+    console.error("reminders-cron fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij herinneringen." });
   }
 });
 
