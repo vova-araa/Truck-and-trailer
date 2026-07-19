@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   Truck, AlertTriangle, KanbanSquare, Euro, Sparkles, FileText, ShieldCheck,
   BellRing, Globe, WifiOff, Check, ArrowRight, Mail, Phone as PhoneIcon, MessageCircle, LogIn, Ticket, Star,
+  Wrench, Users, ChevronDown, BarChart3,
 } from "lucide-react";
 import { sendContactRequest } from "./api.js";
 
@@ -41,6 +42,53 @@ const STATS = [
   { v: "24/7", l: "onderweg bereikbaar" },
   { v: "0", l: "installatie nodig" },
 ];
+
+const VOOR_WIE = [
+  { icon: Truck, titel: "Transportbedrijven", tekst: "Overzicht over de hele vloot, van APK tot kosten per kilometer. Meerdere chauffeurs en monteurs, netjes gescheiden per rol." },
+  { icon: Users, titel: "Eigen rijders & kleine vloten", tekst: "Simpel starten met een paar wagens. Geen dure software of installatie — je werkt meteen vanaf je telefoon." },
+  { icon: Wrench, titel: "Werkplaatsen", tekst: "Meldingen binnen op één bord, plan reparaties in en lever een nette werkbon met je eigen logo en BTW op." },
+];
+
+const TOUR = [
+  { src: "/landing/rapportage.webp", titel: "Rapportage", tekst: "Kosten per kilometer, duurste voertuigen en de meldingen-trend — in één oogopslag." },
+  { src: "/landing/kosten.webp", titel: "Kosten & werkbonnen", tekst: "Elke uitgave bij het juiste voertuig, met export en werkbonnen per periode." },
+];
+
+const FAQ = [
+  { q: "Wat kost het?", a: "Aanmelden gaat op dit moment op aanvraag. Laat je gegevens achter via het formulier, dan bespreken we samen wat past bij jouw vloot." },
+  { q: "Moet ik iets installeren?", a: "Nee. Truck & Trailer draait in de browser en werkt op telefoon, tablet en computer. Je kunt de app wel op je beginscherm zetten voor snelle toegang en meldingen." },
+  { q: "Kunnen chauffeurs in hun eigen taal werken?", a: "Ja. De chauffeursschermen zijn beschikbaar in 11 talen, waaronder Pools, Roemeens, Oekraïens, Turks en meer. Ze kiezen zelf hun taal." },
+  { q: "Werkt het ook zonder internet?", a: "Chauffeurs kunnen onderweg een melding maken zonder verbinding. Zodra ze weer online zijn, wordt de melding automatisch verstuurd." },
+  { q: "Zijn mijn gegevens veilig?", a: "Ja. Toegang is afgeschermd per rol en per bedrijf, foto's en documenten staan in afgeschermde opslag en alle verbindingen zijn versleuteld." },
+  { q: "Kan ik facturen op mijn eigen naam maken?", a: "Zeker. Je stelt je bedrijfsprofiel met logo, adres, KvK, BTW en IBAN in; werkbonnen en facturen komen automatisch op je eigen huisstijl." },
+];
+
+// FAQ-item met eigen open/dicht-state (module-level → geen remounts).
+function FaqItem({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ border: "1px solid #1E2733", borderRadius: 14, background: "rgba(255,255,255,.015)", overflow: "hidden" }}>
+      <button onClick={() => setOpen((o) => !o)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "16px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 15, fontWeight: 600, color: "#E7ECF3" }}>{q}</span>
+        <ChevronDown size={18} color="#8FB8FF" style={{ flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+      </button>
+      {open && <div style={{ padding: "0 18px 16px", fontFamily: "Inter, sans-serif", fontSize: 14, color: "#B4BCC9", lineHeight: 1.65 }}>{a}</div>}
+    </div>
+  );
+}
+
+function BrowserFrame({ src, alt }) {
+  return (
+    <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #1E2733", boxShadow: "0 30px 60px rgba(0,0,0,.4)", background: "#0d1119" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderBottom: "1px solid #1a2230" }}>
+        <span style={{ width: 10, height: 10, borderRadius: 999, background: "#FF5F57" }} />
+        <span style={{ width: 10, height: 10, borderRadius: 999, background: "#FEBC2E" }} />
+        <span style={{ width: 10, height: 10, borderRadius: 999, background: "#28C840" }} />
+      </div>
+      <img src={src} alt={alt} loading="lazy" style={{ width: "100%", display: "block" }} />
+    </div>
+  );
+}
 
 // Reveal-on-scroll wrapper (module-level component → geen remounts).
 function Reveal({ children, delay = 0, y = 26, style }) {
@@ -197,9 +245,9 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
           {/* Hero mockups */}
           <Reveal delay={200} y={34} style={{ position: "relative" }}>
             <div className="ln-hero-mock" style={{ position: "relative", paddingBottom: 40 }}>
-              <div className="ln-float"><Laptop src="/landing/dashboard.png" alt="Truck & Trailer dashboard op laptop" /></div>
+              <div className="ln-float"><Laptop src="/landing/dashboard.webp" alt="Truck & Trailer dashboard op laptop" /></div>
               <div className="ln-float2 ln-hide-sm" style={{ position: "absolute", right: -6, bottom: -6, zIndex: 2 }}>
-                <Phone src="/landing/driver.png" alt="Meldingen maken op telefoon" />
+                <Phone src="/landing/driver.webp" alt="Meldingen maken op telefoon" />
               </div>
             </div>
           </Reveal>
@@ -237,11 +285,30 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         </div>
       </div>
 
+      {/* Voor wie */}
+      <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
+        <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
+          <div className="ln-eyebrow">Voor wie</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>Of je nu 2 of 200 wagens hebt</h2>
+        </div></Reveal>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 16 }}>
+          {VOOR_WIE.map((w, i) => (
+            <Reveal key={w.titel} delay={i * 90}>
+              <div className="ln-card" style={{ height: "100%" }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: ACCENT + "1e", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}><w.icon size={22} color={ACCENT} /></div>
+                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, marginBottom: 7 }}>{w.titel}</div>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{w.tekst}</div>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+
       {/* Showcase: werkvloer + phone */}
       <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
         <div className="ln-showcase">
           <Reveal><div className="ln-float" style={{ borderRadius: 16, overflow: "hidden", border: "1px solid #1E2733", boxShadow: "0 40px 80px rgba(0,0,0,.5)" }}>
-            <img src="/landing/werkvloer.png" alt="Digitale werkvloer" loading="lazy" style={{ width: "100%", display: "block" }} />
+            <img src="/landing/werkvloer.webp" alt="Digitale werkvloer" loading="lazy" style={{ width: "100%", display: "block" }} />
           </div></Reveal>
           <Reveal delay={100}>
             <div className="ln-eyebrow">Werkvloer &amp; planning</div>
@@ -276,6 +343,38 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{s.tekst}</div>
               </div>
             </Reveal>
+          ))}
+        </div>
+      </div>
+
+      {/* Product-tour: extra schermen */}
+      <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
+        <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
+          <div className="ln-eyebrow"><span className="inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BarChart3 size={13} /> Zie het in actie</span></div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>Grip op kosten en cijfers</h2>
+        </div></Reveal>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 20 }}>
+          {TOUR.map((t, i) => (
+            <Reveal key={t.titel} delay={i * 100}>
+              <BrowserFrame src={t.src} alt={t.titel} />
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 17 }}>{t.titel}</div>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6, marginTop: 3 }}>{t.tekst}</div>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+
+      {/* FAQ */}
+      <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
+        <Reveal><div style={{ textAlign: "center", marginBottom: 30 }}>
+          <div className="ln-eyebrow">Veelgestelde vragen</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>Goed om te weten</h2>
+        </div></Reveal>
+        <div style={{ maxWidth: 760, margin: "0 auto", display: "grid", gap: 10 }}>
+          {FAQ.map((f, i) => (
+            <Reveal key={f.q} delay={Math.min(i, 4) * 50}><FaqItem q={f.q} a={f.a} /></Reveal>
           ))}
         </div>
       </div>
