@@ -6178,6 +6178,24 @@ export default function TruckGarageApp({ session, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reports, companyId, live]);
 
+  // Live-updates via Supabase Realtime. Deze hooks MOETEN vóór de vroege return
+  // staan, anders verandert de hook-volgorde tussen inlogscherm en app (demo).
+  // refreshData wordt hieronder pas gedefinieerd; we vullen de ref daar aan.
+  const refreshRef = useRef(null);
+  useEffect(() => {
+    if (!live || !supabase || (currentUser?.rol) === "chauffeur") return;
+    let timer = null;
+    const ch = supabase
+      .channel("company-live-" + companyId)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "companies", filter: "id=eq." + companyId }, () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { refreshRef.current && refreshRef.current(); }, 1500);
+      })
+      .subscribe();
+    return () => { if (timer) clearTimeout(timer); try { supabase.removeChannel(ch); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, live, currentUser]);
+
   if (!currentUser) return <LoginScreen allUsers={allUsersFlat} companies={companies} onLogin={handleLogin} onRegister={registerCompany} />;
 
   const company = companies.find((c) => c.id === companyId) || companies[0] || { id: companyId, name: "Onbekend", slug: "", accent: "#3B82F6" };
@@ -6287,24 +6305,9 @@ export default function TruckGarageApp({ session, onLogout }) {
       setRefreshing(false);
     }
   };
-  // Live-updates: houd de laatste refreshData in een ref, en abonneer op
-  // wijzigingen van de bedrijfsrij. Zodra een chauffeur een melding toevoegt
-  // (of iemand anders iets wijzigt), ververst de app vanzelf — geen handmatige
-  // "Ververs" meer nodig. Kort gedebounced zodat de eigen opslag geen storm geeft.
-  const refreshRef = useRef(refreshData);
+  // Houd de laatste refreshData in de ref die de realtime-hook (hierboven, vóór
+  // de vroege return) gebruikt. Dit is een gewone toewijzing, geen hook.
   refreshRef.current = refreshData;
-  useEffect(() => {
-    if (!live || !supabase || role === "chauffeur") return;
-    let timer = null;
-    const ch = supabase
-      .channel("company-live-" + companyId)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "companies", filter: "id=eq." + companyId }, () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => { refreshRef.current && refreshRef.current(); }, 1500);
-      })
-      .subscribe();
-    return () => { if (timer) clearTimeout(timer); try { supabase.removeChannel(ch); } catch {} };
-  }, [companyId, live, role]);
 
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
