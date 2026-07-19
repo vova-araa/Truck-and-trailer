@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument } from "./api.js";
 import { supabase } from "./supabaseClient.js";
@@ -1345,6 +1345,146 @@ function ClickableKpi({ label, value, icon: Icon, accent, onClick }) {
         <div style={{ fontFamily: "Oswald", fontSize: 34, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{value}</div>
       </Card>
     </button>
+  );
+}
+
+// Bazen-dashboard: vloot-brede rapportage voor de beheerder. Kosten per km,
+// duurste voertuigen, meldingen-trend en kosten per categorie — in één blik.
+function ReportingView({ vehicles = [], reports = [], costs = [], planning = [], onSelectVehicle }) {
+  const isMobile = useIsMobile();
+  const thisYear = String(new Date().getFullYear());
+  const fmt = (n) => "€ " + Math.round(n).toLocaleString("nl-NL");
+  const MONTH_LABELS = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+
+  const costsYear = costs.filter((c) => (c.datum || "").startsWith(thisYear));
+  const totalYear = costsYear.reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+  const totalKm = vehicles.reduce((a, v) => a + (Number(v.km) || 0), 0);
+  const totalAll = costs.reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+  const perKmFleet = totalKm > 0 ? totalAll / totalKm : 0;
+  const avgHealth = vehicles.length ? Math.round(vehicles.reduce((a, v) => a + (Number(v.health) || 0), 0) / vehicles.length) : 0;
+
+  // Per voertuig: kosten dit jaar + kosten/km (totaal). Top 5 duurste.
+  const perVehicle = vehicles.map((v) => {
+    const vCostsYear = costsYear.filter((c) => c.vehicle === v.kenteken).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+    const vCostsAll = costs.filter((c) => c.vehicle === v.kenteken).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+    const perKm = v.km > 0 ? vCostsAll / v.km : 0;
+    return { ...v, kostenJaar: vCostsYear, kostenTot: vCostsAll, perKm };
+  });
+  const topExpensive = [...perVehicle].sort((a, b) => b.kostenJaar - a.kostenJaar).filter((v) => v.kostenJaar > 0).slice(0, 5);
+  const maxTop = Math.max(1, ...topExpensive.map((v) => v.kostenJaar));
+
+  // Meldingen per maand (laatste 12 maanden).
+  const trend = (() => {
+    const acc = {};
+    reports.forEach((r) => { const k = (r.datum || "").slice(0, 7); if (/^\d{4}-\d{2}$/.test(k)) acc[k] = (acc[k] || 0) + 1; });
+    // Bouw de laatste 12 maanden op basis van 'nu' zodat ook lege maanden tellen.
+    const now = new Date();
+    const out = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      out.push({ key: k, label: `${MONTH_LABELS[d.getMonth()]}`, n: acc[k] || 0 });
+    }
+    return out;
+  })();
+  const trendMax = Math.max(1, ...trend.map((t) => t.n));
+
+  // Kosten per categorie (vlootbreed, dit jaar).
+  const byCat = COST_CATEGORIES.map((cat) => ({ ...cat, bedrag: costsYear.filter((c) => c.categorie === cat.id).reduce((a, c) => a + (Number(c.bedrag) || 0), 0) })).filter((c) => c.bedrag > 0).sort((a, b) => b.bedrag - a.bedrag);
+  const maxCat = Math.max(1, ...byCat.map((c) => c.bedrag));
+
+  const openReports = reports.filter((r) => r.status !== "klaar").length;
+  const doneReports = reports.filter((r) => r.status === "klaar").length;
+  const kritiek = reports.filter((r) => r.prioriteit === "kritiek").length;
+
+  const exportFleet = () => {
+    const rows = [...perVehicle].sort((a, b) => b.kostenJaar - a.kostenJaar).map((v) => [v.kenteken, v.merk || "", v.km || 0, Math.round(v.kostenJaar), Math.round(v.kostenTot), (Math.round(v.perKm * 100) / 100).toFixed(2), v.health]);
+    downloadCSV(`vlootrapport-${thisYear}.csv`, ["Kenteken", "Merk", "Km", `Kosten ${thisYear} (EUR)`, "Kosten totaal (EUR)", "EUR/km", "Gezondheid"], rows);
+  };
+
+  const kpi = (label, value, sub, color = "#3B82F6") => (
+    <Card className="p-5">
+      <Eyebrow>{label}</Eyebrow>
+      <div style={{ fontFamily: "Oswald", fontSize: 30, fontWeight: 600, color, lineHeight: 1.1, marginTop: 2 }}>{value}</div>
+      {sub && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{sub}</div>}
+    </Card>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><BarChart3 size={22} color="#3B82F6" /> Rapportage</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Vloot-breed overzicht: kosten, duurste voertuigen en meldingen-trend.</p>
+        </div>
+        <Button variant="ghost" icon={Download} onClick={exportFleet} disabled={vehicles.length === 0}>Vlootrapport CSV</Button>
+      </div>
+
+      {vehicles.length === 0 ? <EmptyState icon={BarChart3} text="Nog geen voertuigen — voeg voertuigen en kosten toe om rapportage te zien." /> : (
+      <>
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))" }}>
+        {kpi("Voertuigen", vehicles.length, `${openReports} meldingen open`)}
+        {kpi(`Kosten ${thisYear}`, fmt(totalYear), `${costsYear.length} posten`)}
+        {kpi("Gem. kosten/km", perKmFleet > 0 ? "€ " + (Math.round(perKmFleet * 100) / 100).toFixed(2) : "—", `${Math.round(totalKm).toLocaleString("nl-NL")} km totaal`, "#22D3B0")}
+        {kpi("Gem. gezondheid", avgHealth + "%", kritiek > 0 ? `${kritiek} kritieke meldingen` : "geen kritieke", avgHealth < 60 ? "#F0453F" : avgHealth < 80 ? "#FF8A00" : "#34D399")}
+      </div>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "1.3fr 1fr" }}>
+        {/* Top-5 duurste voertuigen */}
+        <Card className="p-5">
+          <Eyebrow>Duurste voertuigen ({thisYear})</Eyebrow>
+          {topExpensive.length === 0 ? <div style={{ fontFamily: "Inter", fontSize: 13, color: "#98A1B0", marginTop: 8 }}>Nog geen kosten dit jaar.</div> : (
+            <div className="space-y-2.5 mt-3">
+              {topExpensive.map((v) => (
+                <button key={v.id} onClick={() => onSelectVehicle && onSelectVehicle(v.id)} className="w-full flex items-center gap-3 text-left">
+                  <span style={{ width: 92, flexShrink: 0 }}><Kenteken value={v.kenteken} /></span>
+                  <div className="flex-1 h-3 rounded-full" style={{ background: "#1A2129", overflow: "hidden", minWidth: 0 }}><div className="h-full rounded-full" style={{ width: `${(v.kostenJaar / maxTop) * 100}%`, background: "linear-gradient(90deg,#3B82F6,#60A5FA)" }} /></div>
+                  <span style={{ width: 118, textAlign: "right", flexShrink: 0 }}>
+                    <span style={{ fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#E7ECF3", fontWeight: 700 }}>{fmt(v.kostenJaar)}</span>
+                    <span style={{ display: "block", fontFamily: "Inter", fontSize: 10.5, color: "#98A1B0" }}>{v.perKm > 0 ? `€ ${(Math.round(v.perKm * 100) / 100).toFixed(2)}/km` : "—"}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Kosten per categorie */}
+        <Card className="p-5">
+          <Eyebrow>Kosten per categorie ({thisYear})</Eyebrow>
+          {byCat.length === 0 ? <div style={{ fontFamily: "Inter", fontSize: 13, color: "#98A1B0", marginTop: 8 }}>Nog geen kosten dit jaar.</div> : (
+            <div className="space-y-2.5 mt-3">
+              {byCat.map((c) => (
+                <div key={c.id} className="flex items-center gap-3">
+                  <span style={{ width: 92, fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", flexShrink: 0 }}>{c.label}</span>
+                  <div className="flex-1 h-3 rounded-full" style={{ background: "#1A2129", overflow: "hidden", minWidth: 0 }}><div className="h-full rounded-full" style={{ width: `${(c.bedrag / maxCat) * 100}%`, background: c.color }} /></div>
+                  <span style={{ width: 78, textAlign: "right", fontFamily: "JetBrains Mono", fontSize: 12, color: "#E7ECF3", flexShrink: 0 }}>{fmt(c.bedrag)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Meldingen per maand */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <Eyebrow>Meldingen per maand (laatste 12)</Eyebrow>
+          <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{openReports} open · {doneReports} afgerond</span>
+        </div>
+        <div className="flex items-end gap-1.5 mt-4" style={{ height: 130 }}>
+          {trend.map((t) => (
+            <div key={t.key} className="flex-1 flex flex-col items-center justify-end gap-1.5" style={{ height: "100%", minWidth: 0 }} title={`${t.label}: ${t.n}`}>
+              <span style={{ fontFamily: "JetBrains Mono", fontSize: 10, color: "#98A1B0" }}>{t.n > 0 ? t.n : ""}</span>
+              <div className="w-full rounded-t" style={{ height: `${(t.n / trendMax) * 100}%`, minHeight: t.n > 0 ? 3 : 0, background: t.n > 0 ? "linear-gradient(180deg,#22D3B0,#0EA5A0)" : "transparent" }} />
+              <span style={{ fontFamily: "Inter", fontSize: 10, color: "#B4BCC9" }}>{t.label}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+      </>
+      )}
+    </div>
   );
 }
 
@@ -5403,6 +5543,7 @@ const VIEW_PATHS = {
   trailers: "/trailers", drivers: "/chauffeurs", inspection: "/inspectie",
   costs: "/kosten", settings: "/instellingen", users: "/gebruikers",
   codes: "/abonnementen", support: "/meldingen", admincompanies: "/bedrijven",
+  rapportage: "/rapportage",
 };
 const PATH_VIEWS = Object.fromEntries(Object.entries(VIEW_PATHS).map(([v, p]) => [p, v]));
 function viewToPath(view, selectedVehicleId) {
@@ -5425,6 +5566,7 @@ const NAV_GROUPS = [
   ]},
   { group: "Overzicht", roles: ["admin", "garage"], items: [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "rapportage", label: "Rapportage", icon: BarChart3, roles: ["admin"] },
     { id: "ai", label: "AI Assistent", icon: Sparkles, module: "ai" },
   ]},
   { group: "Werkplaats", roles: ["admin", "garage"], items: [
@@ -6253,6 +6395,7 @@ export default function TruckGarageApp({ session, onLogout }) {
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
+                {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
                 {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
