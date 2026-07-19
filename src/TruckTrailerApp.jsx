@@ -820,37 +820,23 @@ function ReportMedia({ media }) {
   );
 }
 
-// In-app camera via getUserMedia. Betrouwbaarder dan de native bestand-camera,
-// die op sommige iPhones/in-app browsers zwart blijft. Valt netjes terug op de
-// galerij als de camera niet mag/kan.
-function CameraCapture({ onCapture, onClose, onFallback }) {
+// In-app camera. De stream wordt in de KLIK-handler opgehaald (nodig op iOS
+// Safari: getUserMedia moet binnen het gebruikersgebaar) en hier meegegeven.
+// Valt netjes terug op de galerij als de camera niet mag/kan.
+function CameraCapture({ stream, error, onCapture, onClose, onFallback }) {
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const [err, setErr] = useState("");
   const [ready, setReady] = useState(false);
+  const err = error || "";
 
   useEffect(() => {
-    let cancelled = false;
-    async function start() {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error("no-support");
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-        setReady(true);
-      } catch (e) {
-        setErr(e?.name === "NotAllowedError" ? "geen-toestemming" : "geen-camera");
-      }
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().then(() => setReady(true)).catch(() => setReady(true));
     }
-    start();
-    return () => { cancelled = true; if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
-  }, []);
+    return () => { if (stream) stream.getTracks().forEach((t) => t.stop()); };
+  }, [stream]);
 
-  const stop = () => { if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
+  const stop = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); };
 
   const snap = () => {
     const v = videoRef.current;
@@ -861,7 +847,6 @@ function CameraCapture({ onCapture, onClose, onFallback }) {
     c.toBlob((blob) => {
       if (!blob) return;
       const file = new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" });
-      stop();
       onCapture(file);
     }, "image/jpeg", 0.9);
   };
@@ -951,6 +936,21 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   };
 
   const [camOpen, setCamOpen] = useState(false);
+  const [camStream, setCamStream] = useState(null);
+  const [camErr, setCamErr] = useState("");
+  // Vraag de camera aan BINNEN de klik (iOS Safari eist een gebruikersgebaar).
+  const openCamera = async () => {
+    setCamErr(""); setCamStream(null);
+    if (!navigator.mediaDevices?.getUserMedia) { setCamErr("geen-camera"); setCamOpen(true); return; }
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      setCamStream(s); setCamOpen(true);
+    } catch (e) {
+      setCamErr(e?.name === "NotAllowedError" ? "geen-toestemming" : "geen-camera");
+      setCamOpen(true);
+    }
+  };
+  const closeCamera = () => { setCamOpen(false); setCamStream(null); setCamErr(""); };
   const addFiles = (files) => {
     const arr = Array.from(files).map((f) => ({ name: f.name, url: URL.createObjectURL(f), type: f.type.startsWith("video") ? "video" : "foto", file: f, mediaType: f.type }));
     setMedia((m) => [...m, ...arr]);
@@ -1102,7 +1102,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
               </ul>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <button onClick={() => setCamOpen(true)} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
+              <button onClick={openCamera} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
                 <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Foto maken</span>
               </button>
               <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
@@ -1116,7 +1116,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                 native bestand-camera die op sommige iPhones zwart blijft. */}
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             <input ref={videoRef} type="file" accept="video/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
-            {camOpen && <CameraCapture onCapture={(file) => { addFiles([file]); setCamOpen(false); }} onClose={() => setCamOpen(false)} onFallback={() => { setCamOpen(false); fileRef.current?.click(); }} />}
+            {camOpen && <CameraCapture stream={camStream} error={camErr} onCapture={(file) => { addFiles([file]); closeCamera(); }} onClose={closeCamera} onFallback={() => { closeCamera(); fileRef.current?.click(); }} />}
             <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", lineHeight: 1.5 }}>
               Tip: "Foto maken" opent de camera direct in de app. Werkt dat niet? Kies dan <b style={{ color: "#B4BCC9" }}>"Uit galerij"</b>.
             </div>
