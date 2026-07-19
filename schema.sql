@@ -172,7 +172,19 @@ begin
   if v_rol not in ('admin','garage') then raise exception 'NOT_ALLOWED'; end if;
   select data into d from public.company_state where company_id = cid;
   d := coalesce(d, '{}'::jsonb);
-  if v_rol = 'garage' then d := d - 'costs'; end if; -- werkplaats ziet geen kosten
+  if v_rol = 'garage' then
+    d := d - 'costs'; -- werkplaats ziet geen kosten
+    -- Privacy: de werkplaats hoeft de persoonlijke contactgegevens van
+    -- collega's/chauffeurs niet te zien. We strippen e-mail, telefoon en
+    -- (voor de zekerheid) wachtwoord uit de medewerkerslijst. Naam en rol
+    -- blijven staan zodat de werkvloer nog weet wie welke wagen rijdt.
+    if d ? 'users' and jsonb_typeof(d->'users') = 'array' then
+      d := jsonb_set(d, '{users}', coalesce((
+        select jsonb_agg(u - 'email' - 'telefoon' - 'wachtwoord')
+        from jsonb_array_elements(d->'users') as u
+      ), '[]'::jsonb));
+    end if;
+  end if;
   return d;
 end $$;
 grant execute on function public.load_company_state() to authenticated;
