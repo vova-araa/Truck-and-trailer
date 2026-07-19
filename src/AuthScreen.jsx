@@ -5,8 +5,8 @@ import { signIn, signUpCompany, signUpWithCode, requestPasswordReset, activation
 const ACCENT_PALETTE = ["#3B82F6", "#22D3B0", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6"];
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-export default function AuthScreen({ onAuthed }) {
-  const [mode, setMode] = useState("login");
+export default function AuthScreen({ onAuthed, onBack = null, initialMode = "login" }) {
+  const [mode, setMode] = useState(initialMode === "register" ? "register" : initialMode === "join" ? "join" : "login");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
@@ -133,6 +133,9 @@ export default function AuthScreen({ onAuthed }) {
   return (
     <div style={wrap}>
       <div style={{ width: "100%", maxWidth: 380 }}>
+        {onBack && (
+          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 12.5, cursor: "pointer", marginBottom: 10, padding: 0 }}>← Terug naar website</button>
+        )}
         <div style={{ textAlign: "center", marginBottom: 8 }}>
           <span style={{ fontFamily: "Oswald, sans-serif", fontSize: 26, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>
             TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER

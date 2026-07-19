@@ -348,6 +348,18 @@ export async function driverBootstrap() {
 }
 
 // Chauffeur voegt een melding toe (server bepaalt de chauffeur-identiteit).
+// Toegangsaanvraag vanaf de landingspagina (openbaar, geen login nodig).
+export async function sendContactRequest({ naam, bedrijf, email, telefoon, bericht }) {
+  const res = await fetch("/api/contact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ naam, bedrijf, email, telefoon, bericht }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Kon de aanvraag niet versturen.");
+  return data;
+}
+
 // Openstaande meldingen voor één wagen (om dubbele meldingen te voorkomen).
 export async function driverVehicleOpenReports(kenteken) {
   if (!kenteken) return [];

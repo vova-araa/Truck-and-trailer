@@ -1,8 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
+import Landing from "./Landing.jsx";
 import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap, setOwnPassword } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
+
+// Uitgelogde bezoekers zien standaard de landingspagina; /inloggen en /activeren
+// (of een uitnodigings-/herstel-link) openen meteen het inlogscherm.
+const AUTH_PATHS = /^\/(inloggen|activeren|aanmelden)\/?$/i;
+function wantsAuthFromUrl() {
+  try {
+    const s = (window.location.search || "") + (window.location.hash || "");
+    if (/type=(invite|recovery)/.test(s) || /[?&]welkom=1/.test(window.location.search || "")) return true;
+    return AUTH_PATHS.test(window.location.pathname || "/");
+  } catch { return false; }
+}
 
 export default function Root() {
   const [ready, setReady] = useState(false);
@@ -11,6 +23,12 @@ export default function Root() {
   // Uitnodiging/wachtwoord-reset: de gebruiker landt via een e-maillink en moet
   // eerst zelf een wachtwoord instellen voordat de app opent.
   const [needPassword, setNeedPassword] = useState(false);
+  // Uitgelogd: landingspagina of inlogscherm. "activate" opent de "Bedrijf
+  // activeren"-tab van het inlogscherm.
+  const [authView, setAuthView] = useState(() => (wantsAuthFromUrl() ? "auth" : "landing"));
+  const [authMode, setAuthMode] = useState(() => (/^\/(activeren|aanmelden)\/?$/i.test((typeof window !== "undefined" && window.location.pathname) || "") ? "register" : "login"));
+  const goAuth = (mode) => { setAuthMode(mode === "register" ? "register" : "login"); setAuthView("auth"); try { window.history.pushState(null, "", mode === "register" ? "/activeren" : "/inloggen"); } catch { /* noop */ } };
+  const goLanding = () => { setAuthView("landing"); try { window.history.pushState(null, "", "/"); } catch { /* noop */ } };
 
   const boot = async () => {
     setReady(false);
@@ -58,14 +76,20 @@ export default function Root() {
       if (evt === "PASSWORD_RECOVERY") setNeedPassword(true);
       if (!s) setSession(null);
     });
-    return () => sub?.subscription?.unsubscribe();
+    // Terug/vooruit-knop: houd landing vs. inlogscherm in sync met de URL.
+    const onPop = () => setAuthView(wantsAuthFromUrl() ? "auth" : "landing");
+    window.addEventListener("popstate", onPop);
+    return () => { sub?.subscription?.unsubscribe(); window.removeEventListener("popstate", onPop); };
   }, []);
 
   if (!supabaseConfigured) return <SetupNotice />;
   if (!ready) return <Splash text="Laden..." />;
   if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); await signOut(); setSession(null); }} />;
   if (loadErr) return <Splash text={"Fout bij laden: " + loadErr} />;
-  if (!session) return <AuthScreen onAuthed={boot} />;
+  if (!session) {
+    if (authView === "auth") return <AuthScreen onAuthed={boot} onBack={goLanding} initialMode={authMode} />;
+    return <Landing onLogin={() => goAuth("login")} onActivate={() => goAuth("register")} />;
+  }
 
   return (
     <TruckTrailerApp

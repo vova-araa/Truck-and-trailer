@@ -304,6 +304,47 @@ app.post("/api/ai", async (req, res) => {
   }
 });
 
+// ---------- CONTACT / TOEGANG AANVRAGEN (landingspagina) ----------
+// Bezoekers vragen via het formulier op de landingspagina toegang aan. We mailen
+// dit naar CONTACT_EMAIL (val terug op info@truckandtrailer.nl). Openbaar
+// endpoint, dus rate-limited + simpele validatie tegen misbruik.
+app.post("/api/contact", async (req, res) => {
+  if (rateLimited("contact:" + (req.ip || "onbekend"))) {
+    return res.status(429).json({ error: "Te veel aanvragen. Wacht even en probeer opnieuw." });
+  }
+  const RESEND = process.env.RESEND_API_KEY || "";
+  if (!RESEND) return res.status(503).json({ error: "E-mailen is niet geconfigureerd (RESEND_API_KEY ontbreekt)." });
+  const to = process.env.CONTACT_EMAIL || "info@truckandtrailer.nl";
+  const { naam, bedrijf, email, telefoon, bericht } = req.body || {};
+  if (!naam || !String(naam).trim()) return res.status(400).json({ error: "Naam is verplicht." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) return res.status(400).json({ error: "Geldig e-mailadres is verplicht." });
+  const esc = (s) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])).slice(0, 2000);
+  try {
+    const html = `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:20px;color:#1a2129">
+  <h2 style="font-size:18px;margin:0 0 12px">Nieuwe toegangsaanvraag — Truck &amp; Trailer</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:6px 0;color:#667085;width:110px">Naam</td><td style="padding:6px 0;font-weight:bold">${esc(naam)}</td></tr>
+    <tr><td style="padding:6px 0;color:#667085">Bedrijf</td><td style="padding:6px 0">${esc(bedrijf) || "—"}</td></tr>
+    <tr><td style="padding:6px 0;color:#667085">E-mail</td><td style="padding:6px 0">${esc(email)}</td></tr>
+    <tr><td style="padding:6px 0;color:#667085">Telefoon</td><td style="padding:6px 0">${esc(telefoon) || "—"}</td></tr>
+  </table>
+  <p style="font-size:14px;margin:14px 0 4px;color:#667085">Bericht</p>
+  <div style="font-size:14px;background:#f2f5f9;border:1px solid #d7dee7;border-radius:8px;padding:12px;white-space:pre-wrap">${esc(bericht) || "—"}</div>
+</div>`;
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "Truck & Trailer <noreply@truckandtrailer.nl>", to: [to], reply_to: email, subject: `Toegangsaanvraag: ${String(naam).trim()}${bedrijf ? " — " + String(bedrijf).trim() : ""}`, html }),
+    });
+    if (!r.ok) { const t = await r.text().catch(() => ""); return res.status(502).json({ error: "Kon de aanvraag niet versturen: " + t.slice(0, 160) }); }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("contact fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij het versturen." });
+  }
+});
+
 // ---------- HERINNERINGEN: APK / verzekering / tacho verloopt ----------
 // Een dagelijkse cron (bv. cron-job.org of een Render Cron Job) roept deze
 // endpoint aan met ?key=CRON_SECRET. We kijken per bedrijf welke voertuigen
