@@ -75,7 +75,7 @@ async function verifyUser(token) {
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured, push: pushConfigured });
+  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured, push: pushConfigured, resend: Boolean(process.env.RESEND_API_KEY) });
 });
 
 // Beheerder maakt een echt inlogaccount voor een medewerker aan. De service_role
