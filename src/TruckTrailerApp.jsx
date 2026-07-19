@@ -6465,7 +6465,7 @@ export default function TruckGarageApp({ session, onLogout }) {
         <div className="flex-1 flex flex-col" style={{ minWidth: 0, height: "100%", minHeight: 0 }}>
           <header style={{ borderBottom: "1px solid #1A2129", flexShrink: 0 }} className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
-              {isMobile && <button onClick={() => setMobileMenuOpen(true)}><Menu size={20} color="#E7ECF3" /></button>}
+              {isMobile && <button onClick={() => setMobileMenuOpen(true)} aria-label="Menu openen"><Menu size={20} color="#E7ECF3" /></button>}
               {!isMobile && (
                 <span style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{company.slug}</span>
               )}
@@ -6480,7 +6480,7 @@ export default function TruckGarageApp({ session, onLogout }) {
               {live && <SaveStatus status={saveStatus} compact={isMobile} />}
               {!isChauffeurOnly && (
                 <div className="relative">
-                  <button onClick={() => setNotifOpen((s) => !s)} className="relative flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 8, background: notifOpen ? "#1A2129" : "transparent" }}>
+                  <button onClick={() => setNotifOpen((s) => !s)} aria-label="Meldingen" className="relative flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 8, background: notifOpen ? "#1A2129" : "transparent" }}>
                     <Bell size={18} color={notifOpen ? "#3B82F6" : "#B4BCC9"} />
                     {openCount > 0 && <span className="absolute -top-0.5 -right-0.5 rounded-full flex items-center justify-center" style={{ minWidth: 16, height: 16, padding: "0 4px", background: "#F0453F", color: "#fff", fontSize: 9, fontWeight: 700 }}>{openCount}</span>}
                   </button>

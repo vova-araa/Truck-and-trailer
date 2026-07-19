@@ -1,3 +1,21 @@
 @import "tailwindcss";
 /* Zelf-gehoste fonts (latin) — geen externe CDN nodig, werkt ook offline. */
 @import "./fonts/fonts.css";
+
+/* ---------- Toegankelijkheid ---------- */
+/* Duidelijke focus voor toetsenbordgebruikers (muis-klik toont 'm niet). */
+:focus-visible {
+  outline: 2px solid #5A97FF;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Respecteer 'verminder beweging' (systeeminstelling): animaties en
+   overgangen uitschakelen voor wie daar gevoelig voor is. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
