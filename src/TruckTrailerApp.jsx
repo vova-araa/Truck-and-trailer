@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
@@ -928,11 +928,51 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   const [sent, setSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadWarn, setUploadWarn] = useState("");
+  // Openstaande meldingen voor de gekozen wagen — om dubbel melden te voorkomen.
+  const [openReports, setOpenReports] = useState([]);
   const recognitionRef = useRef(null);
   const fileRef = useRef(null);
   const videoRef = useRef(null);
 
   const STEPS = [t("stepVehicle"), t("stepProblem"), t("stepPhoto"), t("stepCheck")];
+
+  // Zodra er een wagen gekozen is, halen we de openstaande meldingen ervan op.
+  useEffect(() => {
+    let alive = true;
+    if (!vehicle) { setOpenReports([]); return; }
+    driverVehicleOpenReports(vehicle).then((list) => { if (alive) setOpenReports(Array.isArray(list) ? list : []); });
+    return () => { alive = false; };
+  }, [vehicle]);
+
+  // Eenvoudige gelijkenis: overlappende woorden (>3 letters) tussen twee teksten.
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9À-ɏ\s]/gi, " ").split(/\s+/).filter((w) => w.length > 3);
+  const looksSimilar = (a, b) => {
+    const wa = new Set(norm(a)); const wb = norm(b);
+    if (!wa.size || !wb.length) return false;
+    const hits = wb.filter((w) => wa.has(w)).length;
+    return hits >= 2 || (wb.length > 0 && hits / wb.length >= 0.5);
+  };
+  const similarExisting = omschrijving.trim() ? openReports.find((r) => looksSimilar(omschrijving, r.omschrijving)) : null;
+  const STATUS_LABEL = { nieuw: "Nieuw", intake: "In behandeling", bezig: "In de werkplaats", wacht: "Wacht op onderdelen", klaar: "Klaar" };
+  // Banner met openstaande meldingen voor de gekozen wagen (render-helper, geen component).
+  const openBanner = () => (
+    openReports.length === 0 ? null : (
+      <div className="p-3 rounded-lg" style={{ background: "#2A1E10", border: "1px solid #FF8A0055" }}>
+        <div className="flex items-center gap-2 mb-1.5" style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, color: "#FFB861" }}>
+          <AlertTriangle size={14} /> {t("dupTitle")} ({openReports.length})
+        </div>
+        <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#D9C3A8", lineHeight: 1.5, marginBottom: 8 }}>{t("dupSub")}</div>
+        <div className="space-y-1.5">
+          {openReports.slice(0, 5).map((r, i) => (
+            <div key={i} className="flex items-start justify-between gap-2 p-2 rounded" style={{ background: "#1A130A" }}>
+              <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", minWidth: 0 }}>{r.omschrijving || "—"}</span>
+              <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#FFB861", border: "1px solid #FF8A0055", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{STATUS_LABEL[r.status] || r.status || "—"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  );
 
   const toggleIssue = (issue) => {
     const parts = omschrijving.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1101,6 +1141,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
               <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("qProblem")}</div>
               <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qProblemSub")}</div>
             </div>
+            {openBanner()}
             <div className="flex flex-wrap gap-2">
               {COMMON_ISSUES.map((issue, i) => (
                 <Chip key={issue} active={omschrijving.includes(issue)} onClick={() => toggleIssue(issue)}>{t(ISSUE_KEYS[i])}</Chip>
@@ -1112,6 +1153,12 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                 {listening ? <MicOff size={14} /> : <Mic size={14} />} {listening ? t("listening") : t("speak")}
               </button>
               {voiceError && <div style={{ color: "#FF8A00", fontFamily: "Inter", fontSize: 12, marginTop: 6 }}>{voiceError}</div>}
+              {similarExisting && (
+                <div className="mt-2 p-2.5 rounded-lg flex items-start gap-2" style={{ background: "#2A1E10", border: "1px solid #FF8A0055" }}>
+                  <AlertTriangle size={14} color="#FFB861" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontFamily: "Inter", fontSize: 12, color: "#D9C3A8", lineHeight: 1.5 }}>{t("dupSimilar")} <span style={{ color: "#E7ECF3" }}>"{similarExisting.omschrijving}"</span></div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1202,6 +1249,8 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
               <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qCheckSub")}</div>
             </div>
 
+            {openBanner()}
+
             <div>
               <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>{t("safeDrive")}</div>
               <div className="grid grid-cols-3 gap-2">
@@ -1240,8 +1289,8 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
             </Button>
           )}
           {step === 3 && (
-            <Button icon={AlertTriangle} style={{ flex: 1, justifyContent: "center", background: veilig === "Nee" ? "#F0453F" : "#3B82F6" }} onClick={submit} disabled={!vehicle || !omschrijving.trim() || submitting}>
-              {submitting ? (media.length ? t("savingPhotos") : t("sending")) : t("submitReport")}
+            <Button icon={AlertTriangle} style={{ flex: 1, justifyContent: "center", background: veilig === "Nee" ? "#F0453F" : similarExisting ? "#FF8A00" : "#3B82F6" }} onClick={submit} disabled={!vehicle || !omschrijving.trim() || submitting}>
+              {submitting ? (media.length ? t("savingPhotos") : t("sending")) : similarExisting ? t("sendAnyway") : t("submitReport")}
             </Button>
           )}
         </div>

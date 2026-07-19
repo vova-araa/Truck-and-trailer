@@ -262,6 +262,29 @@ begin
 end $$;
 grant execute on function public.driver_bootstrap() to authenticated;
 
+-- Chauffeur ziet de OPENSTAANDE meldingen voor één wagen (ook van collega's),
+-- zodat hij niet per ongeluk iets dubbel meldt. Alleen veilige velden — geen
+-- naam of andere persoonsgegevens van wie het meldde. Bedrijf-gescopeerd.
+create or replace function public.driver_open_reports_for_vehicle(p_kenteken text)
+returns jsonb language plpgsql stable security definer as $$
+declare cid uuid; d jsonb; rlist jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id into cid from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  select data into d from public.company_state where company_id = cid;
+  d := coalesce(d, '{}'::jsonb);
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'omschrijving', r->'omschrijving', 'datum', r->'datum',
+      'status', r->'status', 'prioriteit', r->'prioriteit')), '[]'::jsonb)
+    into rlist
+    from jsonb_array_elements(coalesce(d->'reports','[]'::jsonb)) r
+    where r->>'vehicle' = p_kenteken
+      and coalesce(r->>'status','nieuw') <> 'klaar';
+  return rlist;
+end $$;
+grant execute on function public.driver_open_reports_for_vehicle(text) to authenticated;
+
 -- Chauffeur voegt een melding toe (server dwingt de chauffeur-identiteit af).
 create or replace function public.driver_add_report(p_report jsonb)
 returns void language plpgsql security definer as $$

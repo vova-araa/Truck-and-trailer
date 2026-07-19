@@ -348,6 +348,16 @@ export async function driverBootstrap() {
 }
 
 // Chauffeur voegt een melding toe (server bepaalt de chauffeur-identiteit).
+// Openstaande meldingen voor één wagen (om dubbele meldingen te voorkomen).
+export async function driverVehicleOpenReports(kenteken) {
+  if (!kenteken) return [];
+  try {
+    const { data, error } = await supabase.rpc("driver_open_reports_for_vehicle", { p_kenteken: kenteken });
+    if (error) return [];
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
 export async function driverAddReport(report) {
   // Geen verbinding? Direct in de offline-wachtrij; later automatisch verstuurd.
   if (typeof navigator !== "undefined" && navigator.onLine === false) {

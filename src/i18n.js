@@ -50,6 +50,7 @@ export const ZONE_KEYS = { cabine:"zone_cabine", voorkant:"zone_voorkant", achte
 export const DICT = {
   nl: {
     language: "Taal",
+    dupTitle: "Al gemeld voor deze wagen", dupSub: "Voor deze wagen staan al meldingen open. Staat jouw probleem er al bij? Dan hoef je niets te doen.", dupSimilar: "Dit lijkt sterk op een bestaande melding.", sendAnyway: "Toch versturen",
     greeting: "Hoi", greetingSub: "Zie je iets aan je wagen? Maak hieronder een melding.",
     lopend: "lopend", afgerond: "afgerond",
     yourReports: "Jouw meldingen", noReports: "Nog geen meldingen ingediend.",
@@ -85,6 +86,7 @@ export const DICT = {
   },
   en: {
     language: "Language",
+    dupTitle: "Already reported for this vehicle", dupSub: "There are already open reports for this vehicle. If your problem is already listed, you don't need to do anything.", dupSimilar: "This looks a lot like an existing report.", sendAnyway: "Send anyway",
     greeting: "Hi", greetingSub: "Notice something on your vehicle? Report it below.",
     lopend: "open", afgerond: "done",
     yourReports: "Your reports", noReports: "No reports submitted yet.",
@@ -120,6 +122,7 @@ export const DICT = {
   },
   pl: {
     language: "Język",
+    dupTitle: "Już zgłoszono dla tego pojazdu", dupSub: "Dla tego pojazdu są już otwarte zgłoszenia. Jeśli Twój problem już tam jest, nie musisz nic robić.", dupSimilar: "To bardzo przypomina istniejące zgłoszenie.", sendAnyway: "Wyślij mimo to",
     greeting: "Cześć", greetingSub: "Widzisz coś w pojeździe? Zgłoś to poniżej.",
     lopend: "otwarte", afgerond: "zakończone",
     yourReports: "Twoje zgłoszenia", noReports: "Brak zgłoszeń.",
@@ -155,6 +158,7 @@ export const DICT = {
   },
   ro: {
     language: "Limbă",
+    dupTitle: "Deja raportat pentru acest vehicul", dupSub: "Există deja rapoarte deschise pentru acest vehicul. Dacă problema ta este deja acolo, nu trebuie să faci nimic.", dupSimilar: "Aceasta seamănă mult cu un raport existent.", sendAnyway: "Trimite oricum",
     greeting: "Salut", greetingSub: "Observi ceva la vehicul? Raportează mai jos.",
     lopend: "deschise", afgerond: "finalizate",
     yourReports: "Rapoartele tale", noReports: "Niciun raport trimis încă.",
@@ -190,6 +194,7 @@ export const DICT = {
   },
   bg: {
     language: "Език",
+    dupTitle: "Вече съобщено за това превозно средство", dupSub: "Вече има отворени сигнали за това превозно средство. Ако проблемът ти вече е там, не е нужно да правиш нищо.", dupSimilar: "Това много прилича на съществуващ сигнал.", sendAnyway: "Изпрати въпреки това",
     greeting: "Здравей", greetingSub: "Забелязваш нещо по превозното средство? Съобщи по-долу.",
     lopend: "отворени", afgerond: "приключени",
     yourReports: "Твоите сигнали", noReports: "Все още няма сигнали.",
@@ -225,6 +230,7 @@ export const DICT = {
   },
   uk: {
     language: "Мова",
+    dupTitle: "Уже повідомлено для цього транспорту", dupSub: "Для цього транспорту вже є відкриті заявки. Якщо ваша проблема вже вказана, нічого робити не потрібно.", dupSimilar: "Це дуже схоже на наявну заявку.", sendAnyway: "Усе одно надіслати",
     greeting: "Привіт", greetingSub: "Помітили щось у транспорті? Повідомте нижче.",
     lopend: "відкриті", afgerond: "завершені",
     yourReports: "Ваші заявки", noReports: "Ще немає заявок.",
@@ -260,6 +266,7 @@ export const DICT = {
   },
   ru: {
     language: "Язык",
+    dupTitle: "Уже сообщено для этой машины", dupSub: "Для этой машины уже есть открытые заявки. Если ваша проблема уже указана, ничего делать не нужно.", dupSimilar: "Это очень похоже на существующую заявку.", sendAnyway: "Всё равно отправить",
     greeting: "Привет", greetingSub: "Заметили что-то в машине? Сообщите ниже.",
     lopend: "открытые", afgerond: "завершённые",
     yourReports: "Ваши заявки", noReports: "Заявок пока нет.",
@@ -295,6 +302,7 @@ export const DICT = {
   },
   tr: {
     language: "Dil",
+    dupTitle: "Bu araç için zaten bildirildi", dupSub: "Bu araç için zaten açık bildirimler var. Sorunun zaten listedeyse bir şey yapmana gerek yok.", dupSimilar: "Bu, mevcut bir bildirime çok benziyor.", sendAnyway: "Yine de gönder",
     greeting: "Merhaba", greetingSub: "Aracında bir şey mi fark ettin? Aşağıdan bildir.",
     lopend: "açık", afgerond: "tamamlandı",
     yourReports: "Bildirimlerin", noReports: "Henüz bildirim yok.",
@@ -330,6 +338,7 @@ export const DICT = {
   },
   hy: {
     language: "Լեզու",
+    dupTitle: "Արդեն հայտնված է այս մեքենայի համար", dupSub: "Այս մեքենայի համար արդեն կան բաց հայտեր։ Եթե քո խնդիրն արդեն նշված է, ոչինչ պետք չէ անել։", dupSimilar: "Սա շատ նման է առկա հայտին։", sendAnyway: "Այնուամենայնիվ ուղարկել",
     greeting: "Բարև", greetingSub: "Ինչ-որ բան նկատե՞լ ես մեքենայում։ Հայտնիր ստորև։",
     lopend: "բաց", afgerond: "ավարտված",
     yourReports: "Քո հայտերը", noReports: "Դեռ հայտեր չկան։",
@@ -365,6 +374,7 @@ export const DICT = {
   },
   ka: {
     language: "ენა",
+    dupTitle: "ამ მანქანისთვის უკვე შეტყობინებულია", dupSub: "ამ მანქანისთვის უკვე არის ღია შეტყობინებები. თუ შენი პრობლემა უკვე ჩამოთვლილია, არაფრის გაკეთება არ გჭირდება.", dupSimilar: "ეს ძალიან ჰგავს არსებულ შეტყობინებას.", sendAnyway: "მაინც გაგზავნა",
     greeting: "გამარჯობა", greetingSub: "შენიშნე რამე მანქანაზე? შეატყობინე ქვემოთ.",
     lopend: "ღია", afgerond: "დასრულებული",
     yourReports: "შენი შეტყობინებები", noReports: "ჯერ არ არის შეტყობინებები.",
@@ -400,6 +410,7 @@ export const DICT = {
   },
   lt: {
     language: "Kalba",
+    dupTitle: "Jau pranešta apie šią transporto priemonę", dupSub: "Šiai transporto priemonei jau yra atvirų pranešimų. Jei tavo problema jau nurodyta, nieko daryti nereikia.", dupSimilar: "Tai labai panašu į esamą pranešimą.", sendAnyway: "Vis tiek siųsti",
     greeting: "Sveiki", greetingSub: "Pastebėjai ką nors transporto priemonėje? Pranešk žemiau.",
     lopend: "atviri", afgerond: "užbaigti",
     yourReports: "Tavo pranešimai", noReports: "Pranešimų dar nėra.",
