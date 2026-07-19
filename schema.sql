@@ -688,6 +688,22 @@ create policy "documenten verwijderen eigen bedrijf" on storage.objects
     and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
   );
 
+-- ---------- WEB-PUSH: abonnementen voor pushmeldingen ----------
+-- Beheer/werkplaats kan pushmeldingen aanzetten (bij een nieuwe melding). De
+-- browser-subscription wordt hier bewaard. Alleen de server (service_role) leest
+-- en schrijft; RLS staat aan zonder policies, dus de browser komt er niet bij.
+create table if not exists public.push_subscriptions (
+  endpoint    text primary key,
+  user_id     uuid references auth.users(id) on delete cascade,
+  company_id  uuid references public.companies(id) on delete cascade,
+  rol         text,
+  keys        jsonb not null,
+  created_at  timestamptz default now()
+);
+create index if not exists push_subs_company_idx on public.push_subscriptions (company_id);
+alter table public.push_subscriptions enable row level security;
+-- (Geen policies: uitsluitend bereikbaar via de server met de service_role.)
+
 -- ---------- OPTIONAL: mark a platform super-admin ----------
 -- After you have signed up your own account, run this once with your email:
 -- update public.profiles set is_superadmin = true where email = 'jij@truckandtrailer.nl';

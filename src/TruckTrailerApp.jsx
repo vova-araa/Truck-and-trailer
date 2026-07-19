@@ -10,6 +10,7 @@ import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, creat
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
+import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany } from "./push.js";
 
 // Vertaal-hook: geeft t() terug en her-rendert bij een taalwissel.
 function useT() {
@@ -3491,6 +3492,20 @@ function CompanySupportCard() {
 function DeviceNotificationsCard() {
   const [status, setStatus] = useState(() => (notifySupported() ? Notification.permission : "unsupported"));
   const [err, setErr] = useState("");
+  // Echte push (ook als de app dicht is).
+  const [pushState, setPushState] = useState("checking"); // checking | off | on | unavailable | busy
+  const [pushErr, setPushErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!pushSupported()) { if (alive) setPushState("unavailable"); return; }
+      const cfg = await getPushConfig();
+      if (!alive) return;
+      if (!cfg.enabled) { setPushState("unavailable"); return; }
+      setPushState((await isPushSubscribed()) ? "on" : "off");
+    })();
+    return () => { alive = false; };
+  }, []);
   const enable = async () => {
     setErr("");
     try {
@@ -3498,6 +3513,16 @@ function DeviceNotificationsCard() {
       setStatus(p);
       if (p === "granted") { try { new Notification("Truck & Trailer", { body: "Meldingen staan aan op dit apparaat.", icon: "/icon-192.png" }); } catch {} }
     } catch (e) { setErr(e.message || "Kon meldingen niet aanzetten."); }
+  };
+  const enablePush = async () => {
+    setPushErr(""); setPushState("busy");
+    try { await subscribeToPush(); setPushState("on"); }
+    catch (e) { setPushErr(e.message || "Kon push niet aanzetten."); setPushState("off"); }
+  };
+  const disablePush = async () => {
+    setPushState("busy");
+    try { await unsubscribeFromPush(); } catch { /* stil */ }
+    setPushState("off");
   };
   return (
     <Card className="p-5">
@@ -3515,7 +3540,23 @@ function DeviceNotificationsCard() {
         <Button small icon={Bell} onClick={enable}>Meldingen aanzetten</Button>
       )}
       {err && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{err}</div>}
-      <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 10 }}>Meldingen wanneer de app helemaal gesloten is (echte push) volgen later.</div>
+
+      {/* Echte push — ook als de app volledig gesloten is */}
+      {pushState !== "unavailable" && pushState !== "checking" && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #1A2129" }}>
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, color: "#E7ECF3" }}>Push-meldingen (ook als de app dicht is)</div>
+          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", margin: "3px 0 10px", lineHeight: 1.5 }}>Ontvang direct een pushbericht bij een nieuwe chauffeursmelding, zelfs als je de app hebt afgesloten.</div>
+          {pushState === "on" ? (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "#12271C", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600 }}><Check size={14} /> Push staat aan</span>
+              <button onClick={disablePush} style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", textDecoration: "underline" }}>Uitzetten</button>
+            </div>
+          ) : (
+            <Button small icon={BellRing} onClick={enablePush} disabled={pushState === "busy"}>{pushState === "busy" ? "Bezig…" : "Push aanzetten"}</Button>
+          )}
+          {pushErr && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{pushErr}</div>}
+        </div>
+      )}
     </Card>
   );
 }
@@ -5812,7 +5853,12 @@ export default function TruckGarageApp({ session, onLogout }) {
   const addReport = (r) => {
     setReports((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
     // Chauffeur: los opslaan via de veilige functie (ze slaan de hele dataset niet op).
-    if (live && role === "chauffeur") driverAddReport(r).catch((e) => console.error("Melding opslaan mislukt:", e?.message || e));
+    if (live && role === "chauffeur") {
+      driverAddReport(r).catch((e) => console.error("Melding opslaan mislukt:", e?.message || e));
+      // Push naar beheer/werkplaats (best effort): "Nieuwe melding".
+      const prio = r.prioriteit === "kritiek" ? "KRITIEK — " : "";
+      notifyCompany({ title: "Nieuwe melding", body: `${prio}${r.vehicle}: ${(r.omschrijving || "").slice(0, 120)}`, url: "/werkvloer" });
+    }
   };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
   // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.

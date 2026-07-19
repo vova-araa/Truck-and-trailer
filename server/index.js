@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import webpush from "web-push";
 
 /*
   Productie-server voor Truck & Trailer.
@@ -50,8 +51,31 @@ const supaAdmin = adminAuthConfigured
   ? createClient(SUPA_URL, SERVICE_ROLE, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
 
+// --- Web-push (VAPID): notificaties ook als de app dicht is ---
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:noreply@truckandtrailer.nl";
+const pushConfigured = Boolean(VAPID_PUBLIC && VAPID_PRIVATE && supaAdmin);
+if (pushConfigured) {
+  try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); }
+  catch (e) { console.error("VAPID-config ongeldig:", e?.message || e); }
+}
+
+const bearer = (req) => (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+// Verifieer de sessie en haal het profiel op (bedrijf + rol). null = ongeldig.
+async function verifyUser(token) {
+  if (!supaAdmin || !token) return null;
+  try {
+    const { data: who, error } = await supaAdmin.auth.getUser(token);
+    if (error || !who?.user) return null;
+    const { data: prof } = await supaAdmin.from("profiles").select("company_id, rol, naam").eq("id", who.user.id).single();
+    if (!prof) return null;
+    return { userId: who.user.id, company_id: prof.company_id, rol: prof.rol, naam: prof.naam };
+  } catch { return null; }
+}
+
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured });
+  res.json({ ok: true, ai: apiKeyConfigured, adminAuth: adminAuthConfigured, push: pushConfigured });
 });
 
 // Beheerder maakt een echt inlogaccount voor een medewerker aan. De service_role
@@ -278,6 +302,66 @@ app.post("/api/ai", async (req, res) => {
     console.error("AI-proxy fout:", err);
     res.status(500).json({ error: "Onverwachte serverfout bij de AI-aanvraag." });
   }
+});
+
+// ---------- WEB-PUSH ENDPOINTS ----------
+
+// De browser haalt de publieke VAPID-sleutel op (die mag publiek zijn).
+app.get("/api/push/config", (_req, res) => {
+  res.json({ enabled: pushConfigured, publicKey: pushConfigured ? VAPID_PUBLIC : null });
+});
+
+// Een ingelogde gebruiker meldt zijn browser aan voor push. We bewaren de
+// subscription (server-side, via service_role) samen met bedrijf en rol.
+app.post("/api/push/subscribe", async (req, res) => {
+  if (!pushConfigured) return res.status(503).json({ error: "Push is niet geconfigureerd op de server." });
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Log in om push aan te zetten." });
+  const sub = req.body?.subscription;
+  if (!sub?.endpoint || !sub?.keys) return res.status(400).json({ error: "Ongeldige subscription." });
+  const { error } = await supaAdmin.from("push_subscriptions").upsert(
+    { endpoint: sub.endpoint, user_id: me.userId, company_id: me.company_id, rol: me.rol, keys: sub.keys },
+    { onConflict: "endpoint" }
+  );
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Afmelden voor push (endpoint verwijderen).
+app.post("/api/push/unsubscribe", async (req, res) => {
+  if (!pushConfigured) return res.status(503).json({ error: "Push is niet geconfigureerd." });
+  const endpoint = req.body?.endpoint;
+  if (!endpoint) return res.status(400).json({ error: "endpoint is verplicht." });
+  await supaAdmin.from("push_subscriptions").delete().eq("endpoint", endpoint);
+  res.json({ ok: true });
+});
+
+// Stuur een push naar de beheerders/werkplaats van hetzelfde bedrijf (niet naar
+// de afzender zelf). Gebruikt door de chauffeur-client na een nieuwe melding.
+app.post("/api/push/notify", async (req, res) => {
+  if (!pushConfigured) return res.status(503).json({ error: "Push is niet geconfigureerd." });
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Sessie ongeldig." });
+  if (rateLimited("push:" + me.userId)) return res.status(429).json({ error: "Te veel meldingen, wacht even." });
+  const { title, body, url } = req.body || {};
+  const { data: subs } = await supaAdmin.from("push_subscriptions")
+    .select("endpoint, keys, user_id, rol")
+    .eq("company_id", me.company_id)
+    .in("rol", ["admin", "garage"]);
+  const payload = JSON.stringify({
+    title: String(title || "Truck & Trailer").slice(0, 120),
+    body: String(body || "Nieuwe melding").slice(0, 240),
+    url: typeof url === "string" && url.startsWith("/") ? url : "/",
+  });
+  const targets = (subs || []).filter((s) => s.user_id !== me.userId);
+  const stale = [];
+  let sent = 0;
+  await Promise.all(targets.map(async (s) => {
+    try { await webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, payload); sent++; }
+    catch (e) { if (e?.statusCode === 404 || e?.statusCode === 410) stale.push(s.endpoint); }
+  }));
+  if (stale.length) await supaAdmin.from("push_subscriptions").delete().in("endpoint", stale);
+  res.json({ ok: true, sent });
 });
 
 // Frontend: statische bestanden + SPA-fallback naar index.html
