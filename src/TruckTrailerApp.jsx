@@ -5001,6 +5001,32 @@ const modOn = (modules, key) => !key || (modules ? modules[key] !== false : true
 // welk scherm hoort bij welke module (voor de terugval als een module uit staat)
 const VIEW_MODULE = { planning: "planning", maintenance: "maintenance", parts: "parts", bakwagens: "bakwagens", bestelwagens: "bestelwagens", trailers: "trailers", drivers: "drivers", inspection: "inspection", costs: "costs", ai: "ai" };
 
+// --- Routing: elk scherm een eigen pad (bv. /werkvloer). Eén app, maar de URL
+// loopt mee zodat de terug-knop werkt, je kunt bookmarken en verversen op
+// hetzelfde scherm blijft. ---
+const VIEW_PATHS = {
+  dashboard: "/", driver: "/melding", ai: "/ai", workfloor: "/werkvloer",
+  planning: "/planning", maintenance: "/onderhoud", parts: "/voorraad",
+  vehicles: "/vrachtwagens", bakwagens: "/bakwagens", bestelwagens: "/bestelwagens",
+  trailers: "/trailers", drivers: "/chauffeurs", inspection: "/inspectie",
+  costs: "/kosten", settings: "/instellingen", users: "/gebruikers",
+  codes: "/abonnementen", support: "/meldingen", admincompanies: "/bedrijven",
+};
+const PATH_VIEWS = Object.fromEntries(Object.entries(VIEW_PATHS).map(([v, p]) => [p, v]));
+function viewToPath(view, selectedVehicleId) {
+  const base = VIEW_PATHS[view] || "/";
+  if (view === "vehicles" && selectedVehicleId) return "/vrachtwagens/" + encodeURIComponent(selectedVehicleId);
+  return base;
+}
+function pathToView(pathname) {
+  const clean = (pathname || "/").replace(/\/+$/, "") || "/";
+  const segs = clean.split("/").filter(Boolean);
+  if (segs.length === 0) return { view: "dashboard", sel: null };
+  if (segs[0] === "vrachtwagens") return { view: "vehicles", sel: segs[1] ? decodeURIComponent(segs[1]) : null };
+  const view = PATH_VIEWS["/" + segs[0]];
+  return view ? { view, sel: null } : null;
+}
+
 const NAV_GROUPS = [
   { group: "Chauffeur", roles: ["admin", "garage", "chauffeur"], items: [
     { id: "driver", label: "Melding maken", icon: AlertTriangle, badgeKey: "openCount" },
@@ -5314,9 +5340,25 @@ export default function TruckGarageApp({ session, onLogout }) {
 
   const [currentUser, setCurrentUser] = useState(live ? { ...session.profile } : null);
   const [companyId, setCompanyId] = useState(liveCompanyId);
-  const [view, setViewRaw] = useState("dashboard");
-  const [selectedVehicleId, setSelectedVehicleId] = useState(null);
+  const initRoute = (typeof window !== "undefined" ? pathToView(window.location.pathname) : null) || { view: "dashboard", sel: null };
+  const [view, setViewRaw] = useState(initRoute.view);
+  const [selectedVehicleId, setSelectedVehicleId] = useState(initRoute.sel);
   const setView = (v) => { if (v !== "vehicles") setSelectedVehicleId(null); setViewRaw(v); };
+  // Houd de URL gelijk aan het huidige scherm (voor terug-knop / delen / verversen).
+  const routeInit = useRef(false);
+  useEffect(() => {
+    const path = viewToPath(view, selectedVehicleId);
+    if (typeof window === "undefined") return;
+    if (window.location.pathname === path) { routeInit.current = true; return; }
+    if (!routeInit.current) { routeInit.current = true; window.history.replaceState({ view, selectedVehicleId }, "", path); }
+    else window.history.pushState({ view, selectedVehicleId }, "", path);
+  }, [view, selectedVehicleId]);
+  // Terug/vooruit-knop van de browser: scherm uit de URL halen.
+  useEffect(() => {
+    const onPop = () => { const r = pathToView(window.location.pathname) || { view: "dashboard", sel: null }; setViewRaw(r.view); setSelectedVehicleId(r.sel); };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const [companyPicker, setCompanyPicker] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
