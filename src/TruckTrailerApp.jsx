@@ -5640,27 +5640,32 @@ const VIEW_MODULE = { planning: "planning", maintenance: "maintenance", parts: "
 // --- Routing: elk scherm een eigen pad (bv. /werkvloer). Eén app, maar de URL
 // loopt mee zodat de terug-knop werkt, je kunt bookmarken en verversen op
 // hetzelfde scherm blijft. ---
-const VIEW_PATHS = {
-  dashboard: "/", driver: "/melding", ai: "/ai", workfloor: "/werkvloer",
-  planning: "/planning", maintenance: "/onderhoud", parts: "/voorraad",
-  vehicles: "/vrachtwagens", bakwagens: "/bakwagens", bestelwagens: "/bestelwagens",
-  trailers: "/trailers", drivers: "/chauffeurs", inspection: "/inspectie",
-  costs: "/kosten", settings: "/instellingen", users: "/gebruikers",
-  codes: "/abonnementen", support: "/meldingen", admincompanies: "/bedrijven",
-  rapportage: "/rapportage",
+// De app draait onder /app; de landingspagina staat op /. Elk scherm heeft een
+// eigen subpad (bv. /app/werkvloer) zodat terug/delen/verversen blijft werken.
+const APP_PREFIX = "/app";
+const VIEW_SUBPATHS = {
+  dashboard: "", driver: "melding", ai: "ai", workfloor: "werkvloer",
+  planning: "planning", maintenance: "onderhoud", parts: "voorraad",
+  vehicles: "vrachtwagens", bakwagens: "bakwagens", bestelwagens: "bestelwagens",
+  trailers: "trailers", drivers: "chauffeurs", inspection: "inspectie",
+  costs: "kosten", settings: "instellingen", users: "gebruikers",
+  codes: "abonnementen", support: "meldingen", admincompanies: "bedrijven",
+  rapportage: "rapportage",
 };
-const PATH_VIEWS = Object.fromEntries(Object.entries(VIEW_PATHS).map(([v, p]) => [p, v]));
+const SUBPATH_VIEWS = Object.fromEntries(Object.entries(VIEW_SUBPATHS).map(([v, p]) => [p, v]));
 function viewToPath(view, selectedVehicleId) {
-  const base = VIEW_PATHS[view] || "/";
-  if (view === "vehicles" && selectedVehicleId) return "/vrachtwagens/" + encodeURIComponent(selectedVehicleId);
-  return base;
+  if (view === "vehicles" && selectedVehicleId) return APP_PREFIX + "/vrachtwagens/" + encodeURIComponent(selectedVehicleId);
+  const sub = VIEW_SUBPATHS[view] || "";
+  return sub ? APP_PREFIX + "/" + sub : APP_PREFIX;
 }
 function pathToView(pathname) {
   const clean = (pathname || "/").replace(/\/+$/, "") || "/";
-  const segs = clean.split("/").filter(Boolean);
+  if (clean === APP_PREFIX) return { view: "dashboard", sel: null };
+  if (!clean.startsWith(APP_PREFIX + "/")) return null; // buiten de app-zone
+  const segs = clean.slice(APP_PREFIX.length + 1).split("/").filter(Boolean);
   if (segs.length === 0) return { view: "dashboard", sel: null };
   if (segs[0] === "vrachtwagens") return { view: "vehicles", sel: segs[1] ? decodeURIComponent(segs[1]) : null };
-  const view = PATH_VIEWS["/" + segs[0]];
+  const view = SUBPATH_VIEWS[segs[0]];
   return view ? { view, sel: null } : null;
 }
 
@@ -6271,7 +6276,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       driverAddReport(r).catch((e) => console.error("Melding opslaan mislukt:", e?.message || e));
       // Push naar beheer/werkplaats (best effort): "Nieuwe melding".
       const prio = r.prioriteit === "kritiek" ? "KRITIEK — " : "";
-      notifyCompany({ title: "Nieuwe melding", body: `${prio}${r.vehicle}: ${(r.omschrijving || "").slice(0, 120)}`, url: "/werkvloer" });
+      notifyCompany({ title: "Nieuwe melding", body: `${prio}${r.vehicle}: ${(r.omschrijving || "").slice(0, 120)}`, url: "/app/werkvloer" });
     }
   };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),

@@ -434,7 +434,7 @@ app.all("/api/cron/reminders", async (req, res) => {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <p style="margin:20px 0"><a href="${appUrl}/vrachtwagens" style="background:#3B82F6;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold;font-size:14px;display:inline-block">Bekijk je vloot</a></p>
+  <p style="margin:20px 0"><a href="${appUrl}/app/vrachtwagens" style="background:#3B82F6;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold;font-size:14px;display:inline-block">Bekijk je vloot</a></p>
   <p style="font-size:12px;color:#98a1b0;margin-top:20px">Je krijgt deze mail omdat je beheerder bent in Truck &amp; Trailer.</p>
 </div>`;
       const ok = await sendResendEmail(to, `Herinnering: keuring/verzekering verloopt (${items.length})`, html);

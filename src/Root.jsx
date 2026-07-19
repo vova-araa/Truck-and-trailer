@@ -2,18 +2,20 @@ import React, { useEffect, useState } from "react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
 import Landing from "./Landing.jsx";
+import { PrivacyPage, TermsPage } from "./Legal.jsx";
 import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap, setOwnPassword } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
 
-// Uitgelogde bezoekers zien standaard de landingspagina; /inloggen en /activeren
-// (of een uitnodigings-/herstel-link) openen meteen het inlogscherm.
-const AUTH_PATHS = /^\/(inloggen|activeren|aanmelden)\/?$/i;
-function wantsAuthFromUrl() {
-  try {
-    const s = (window.location.search || "") + (window.location.hash || "");
-    if (/type=(invite|recovery)/.test(s) || /[?&]welkom=1/.test(window.location.search || "")) return true;
-    return AUTH_PATHS.test(window.location.pathname || "/");
-  } catch { return false; }
+// Routing-zones: de landingspagina staat op /, de app onder /app, plus losse
+// publieke pagina's (/privacy, /voorwaarden) en het inlogscherm (/inloggen,
+// /activeren). Een uitnodigings-/herstel-link opent het wachtwoord-scherm.
+function zoneOf(pathname) {
+  const p = (pathname || "/").replace(/\/+$/, "") || "/";
+  if (p === "/privacy") return "privacy";
+  if (p === "/voorwaarden") return "terms";
+  if (p === "/app" || p.startsWith("/app/")) return "app";
+  if (p === "/inloggen" || p === "/activeren" || p === "/aanmelden") return "auth";
+  return "landing";
 }
 
 export default function Root() {
@@ -23,12 +25,9 @@ export default function Root() {
   // Uitnodiging/wachtwoord-reset: de gebruiker landt via een e-maillink en moet
   // eerst zelf een wachtwoord instellen voordat de app opent.
   const [needPassword, setNeedPassword] = useState(false);
-  // Uitgelogd: landingspagina of inlogscherm. "activate" opent de "Bedrijf
-  // activeren"-tab van het inlogscherm.
-  const [authView, setAuthView] = useState(() => (wantsAuthFromUrl() ? "auth" : "landing"));
-  const [authMode, setAuthMode] = useState(() => (/^\/(activeren|aanmelden)\/?$/i.test((typeof window !== "undefined" && window.location.pathname) || "") ? "register" : "login"));
-  const goAuth = (mode) => { setAuthMode(mode === "register" ? "register" : "login"); setAuthView("auth"); try { window.history.pushState(null, "", mode === "register" ? "/activeren" : "/inloggen"); } catch { /* noop */ } };
-  const goLanding = () => { setAuthView("landing"); try { window.history.pushState(null, "", "/"); } catch { /* noop */ } };
+  // Huidig pad bijhouden zodat we de juiste zone (landing/app/legal/auth) tonen.
+  const [routePath, setRoutePath] = useState(() => (typeof window !== "undefined" ? window.location.pathname : "/"));
+  const navigate = (p) => { try { window.history.pushState(null, "", p); } catch { /* noop */ } setRoutePath(p); };
 
   const boot = async () => {
     setReady(false);
@@ -76,8 +75,8 @@ export default function Root() {
       if (evt === "PASSWORD_RECOVERY") setNeedPassword(true);
       if (!s) setSession(null);
     });
-    // Terug/vooruit-knop: houd landing vs. inlogscherm in sync met de URL.
-    const onPop = () => setAuthView(wantsAuthFromUrl() ? "auth" : "landing");
+    // Terug/vooruit-knop: houd de zone in sync met de URL.
+    const onPop = () => setRoutePath(window.location.pathname);
     window.addEventListener("popstate", onPop);
     return () => { sub?.subscription?.unsubscribe(); window.removeEventListener("popstate", onPop); };
   }, []);
@@ -86,17 +85,27 @@ export default function Root() {
   if (!ready) return <Splash text="Laden..." />;
   if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); await signOut(); setSession(null); }} />;
   if (loadErr) return <Splash text={"Fout bij laden: " + loadErr} />;
-  if (!session) {
-    if (authView === "auth") return <AuthScreen onAuthed={boot} onBack={goLanding} initialMode={authMode} />;
-    return <Landing onLogin={() => goAuth("login")} onActivate={() => goAuth("register")} />;
+
+  const zone = zoneOf(routePath);
+  // Publieke pagina's zijn altijd bereikbaar (ook zonder/ met login).
+  if (zone === "privacy") return <PrivacyPage onBack={() => navigate("/")} />;
+  if (zone === "terms") return <TermsPage onBack={() => navigate("/")} />;
+
+  // Ingelogd: altijd de app (die corrigeert de URL zelf naar /app…).
+  if (session) {
+    return (
+      <TruckTrailerApp
+        session={session}
+        onLogout={async () => { await signOut(); setSession(null); navigate("/"); }}
+      />
+    );
   }
 
-  return (
-    <TruckTrailerApp
-      session={session}
-      onLogout={async () => { await signOut(); setSession(null); }}
-    />
-  );
+  // Uitgelogd: app-zone en /inloggen tonen het inlogscherm; de rest de landing.
+  if (zone === "app" || zone === "auth") {
+    return <AuthScreen onAuthed={boot} onBack={() => navigate("/")} initialMode={zone === "auth" && /activeren|aanmelden/i.test(routePath) ? "register" : "login"} />;
+  }
+  return <Landing onLogin={() => navigate("/inloggen")} onActivate={() => navigate("/activeren")} onLegal={(p) => navigate(p)} />;
 }
 
 function SetPasswordScreen({ onDone, onCancel }) {

@@ -87,7 +87,7 @@ function Phone({ src, alt, style }) {
   );
 }
 
-export default function Landing({ onLogin, onActivate }) {
+export default function Landing({ onLogin, onActivate, onLegal }) {
   const [form, setForm] = useState({ naam: "", bedrijf: "", email: "", telefoon: "", bericht: "" });
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -330,7 +330,11 @@ export default function Landing({ onLogin, onActivate }) {
             <Truck size={15} color={ACCENT} />
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7585" }}>© {new Date().getFullYear()} Truck &amp; Trailer — vloot- en werkplaatsbeheer</span>
           </div>
-          <button onClick={onLogin} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Inloggen →</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button onClick={() => onLegal && onLegal("/privacy")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Privacy</button>
+            <button onClick={() => onLegal && onLegal("/voorwaarden")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Voorwaarden</button>
+            <button onClick={onLogin} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Inloggen →</button>
+          </div>
         </div>
       </div>
     </div>
