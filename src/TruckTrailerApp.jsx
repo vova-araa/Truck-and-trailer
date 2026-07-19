@@ -2229,7 +2229,7 @@ ${JSON.stringify(ctx)}`;
                   </div>
                   {it.binnen && <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: col, marginTop: 2 }}>⏱ {it.binnen}</div>}
                   {it.reden && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{it.reden}</div>}
-                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); document.getElementById("tt-main")?.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Inplannen
                   </button>
@@ -2252,7 +2252,7 @@ ${JSON.stringify(ctx)}`;
                   </div>
                   {it.binnen && <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: col, marginTop: 2 }}>⏱ {it.binnen}</div>}
                   {it.reden && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{it.reden}</div>}
-                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: it.taak, monteur: "" }); document.getElementById("tt-main")?.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Inplannen
                   </button>
@@ -2281,7 +2281,7 @@ ${JSON.stringify(ctx)}`;
                   <span className="text-xs px-2 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{PRIO_META[r.prioriteit].label}</span>
                 </div>
                 {r.status !== "klaar" && (
-                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  <button onClick={() => { setSched({ open: true, datum: TODAY, tijd: "09:00", duur: "60", taak: r.omschrijving, monteur: "" }); document.getElementById("tt-main")?.scrollTo({ top: 0, behavior: "smooth" }); }}
                     className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>
                     <Calendar size={12} /> Deze melding inplannen
                   </button>
@@ -5418,8 +5418,9 @@ export default function TruckGarageApp({ session, onLogout }) {
     });
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, live, companyId, session]);
 
-  // Elke paginawissel begint bovenaan.
-  useEffect(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); } }, [view, selectedVehicleId]);
+  // Elke paginawissel begint bovenaan. Het scrollen gebeurt nu binnen <main>
+  // (#tt-main), niet meer op het document.
+  useEffect(() => { try { document.getElementById("tt-main")?.scrollTo({ top: 0, behavior: "auto" }); } catch {} }, [view, selectedVehicleId]);
   // Staat het huidige scherm bij een module die uit staat (bv. via de AI of een
   // tegel), val dan netjes terug op het dashboard i.p.v. een leeg scherm.
   useEffect(() => {
@@ -5632,11 +5633,13 @@ export default function TruckGarageApp({ session, onLogout }) {
   const deleteReport = (id) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((r) => r.id !== id) }));
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0A0E14", fontFamily: "Inter", overflowX: "hidden", width: "100%" }}>
+    <div style={{ height: "100dvh", background: "#0A0E14", fontFamily: "Inter", overflow: "hidden", width: "100%" }}>
       <style>{`
         ${FONT_IMPORT}
-        html { scroll-behavior: smooth; }
-        html, body { background: #0A0E14 !important; overscroll-behavior: none; -webkit-font-smoothing: antialiased; }
+        /* Document zelf scrollt niet (voorkomt 'pull-to-refresh' bij omhoog trekken);
+           het scrollen gebeurt binnen <main>. */
+        html, body, #root { height: 100%; overflow: hidden; overscroll-behavior: none; }
+        html, body { background: #0A0E14 !important; -webkit-font-smoothing: antialiased; }
         @keyframes tg-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
         @keyframes tg-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes tg-fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -5685,10 +5688,10 @@ export default function TruckGarageApp({ session, onLogout }) {
         }
       `}</style>
 
-      <div className="flex">
+      <div className="flex" style={{ height: "100%", minHeight: 0 }}>
         {/* Desktop persistent sidebar */}
         {!isMobile && (
-          <aside style={{ width: 240, borderRight: "1px solid #1A2129", minHeight: "100vh" }} className="shrink-0">
+          <aside style={{ width: 240, borderRight: "1px solid #1A2129", height: "100%" }} className="shrink-0">
             <SidebarContent view={view} setView={setView} openCount={openCount} company={company} currentUser={currentUser} role={role} isSuperAdmin={isSuperAdmin} modules={cModules}
               onCompanyClick={() => setCompanyPicker((s) => !s)} onLogout={live ? onLogout : () => setCurrentUser(null)} />
           </aside>
@@ -5719,8 +5722,8 @@ export default function TruckGarageApp({ session, onLogout }) {
           </div>
         )}
 
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <header style={{ borderBottom: "1px solid #1A2129" }} className="flex items-center justify-between px-5 py-3">
+        <div className="flex-1 flex flex-col" style={{ minWidth: 0, height: "100%", minHeight: 0 }}>
+          <header style={{ borderBottom: "1px solid #1A2129", flexShrink: 0 }} className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
               {isMobile && <button onClick={() => setMobileMenuOpen(true)}><Menu size={20} color="#E7ECF3" /></button>}
               {!isMobile && (
@@ -5779,7 +5782,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             </div>
           </header>
 
-          <main style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", width: "100%", maxWidth: "100%", minWidth: 0 }}>
+          <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
               <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
