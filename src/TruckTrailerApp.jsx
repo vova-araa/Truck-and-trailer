@@ -1301,6 +1301,14 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
   const lowStock = parts.filter((p) => p.voorraad < p.min).length;
   const thisYear = String(new Date().getFullYear());
   const costsThisYear = costs.filter((c) => (c.datum || "").startsWith(thisYear)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+  // Maand-op-maand trend voor de kosten-tegel.
+  const _now = new Date();
+  const _curMonth = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}`;
+  const _prev = new Date(_now.getFullYear(), _now.getMonth() - 1, 1);
+  const _prevMonth = `${_prev.getFullYear()}-${String(_prev.getMonth() + 1).padStart(2, "0")}`;
+  const costsCurMonth = costs.filter((c) => (c.datum || "").startsWith(_curMonth)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+  const costsPrevMonth = costs.filter((c) => (c.datum || "").startsWith(_prevMonth)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+  const costsDeltaPct = costsPrevMonth > 0 ? Math.round(((costsCurMonth - costsPrevMonth) / costsPrevMonth) * 100) : null;
   const avgHealth = Math.round(vehicles.reduce((a, v) => a + v.health, 0) / (vehicles.length || 1));
   const inWorkshop = vehicles.filter((v) => v.status === "workshop").length;
   const go = (v) => onNavigate && onNavigate(v);
@@ -1392,6 +1400,9 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Kosten {thisYear}</div>
                   <div style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{"€ " + Math.round(costsThisYear).toLocaleString("nl-NL")}</div>
+                  {costsDeltaPct !== null && costsDeltaPct !== 0 && (
+                    <div style={{ fontFamily: "Inter", fontSize: 11.5, fontWeight: 600, color: costsDeltaPct > 0 ? "#F0453F" : "#22C55E", marginTop: 2 }}>{costsDeltaPct > 0 ? "▲" : "▼"} {Math.abs(costsDeltaPct)}% vs vorige maand</div>
+                  )}
                 </div>
               </div>
               <span style={{ color: "#3B82F6", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>Naar kosten →</span>
@@ -4216,6 +4227,25 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
   const byVehicle = Object.entries(filtered.reduce((acc, c) => { acc[c.vehicle] = (acc[c.vehicle] || 0) + (Number(c.bedrag) || 0); return acc; }, {})).map(([vehicle, bedrag]) => ({ vehicle, bedrag })).sort((a, b) => b.bedrag - a.bedrag);
   const maxCat = Math.max(1, ...byCat.map((c) => c.bedrag));
 
+  // Maandtrend: bij een gekozen jaar de 12 maanden van dat jaar, anders de
+  // laatste 12 maanden waarin er kosten zijn. Toont uitgaven over tijd.
+  const trend = (() => {
+    if (year !== "all") {
+      return MONTHS.map((m, i) => {
+        const bedrag = costs.filter((c) => (c.datum || "").startsWith(`${year}-${m}`)).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+        return { key: `${year}-${m}`, label: MONTH_LABELS[i].slice(0, 3), bedrag };
+      });
+    }
+    // Alle jaren: verzamel per YYYY-MM, sorteer en neem de laatste 12 met data.
+    const acc = {};
+    costs.forEach((c) => { const k = (c.datum || "").slice(0, 7); if (/^\d{4}-\d{2}$/.test(k)) acc[k] = (acc[k] || 0) + (Number(c.bedrag) || 0); });
+    return Object.keys(acc).sort().slice(-12).map((k) => ({ key: k, label: `${MONTH_LABELS[Number(k.slice(5, 7)) - 1].slice(0, 3)} '${k.slice(2, 4)}`, bedrag: acc[k] }));
+  })();
+  const trendMax = Math.max(1, ...trend.map((t) => t.bedrag));
+  const trendTotal = trend.reduce((a, t) => a + t.bedrag, 0);
+  const trendMonths = trend.filter((t) => t.bedrag > 0).length;
+  const trendAvg = trendMonths ? trendTotal / trendMonths : 0;
+
   const submit = () => {
     if (!form.vehicle || !form.bedrag) return;
     onAdd({ id: "c" + Date.now(), vehicle: form.vehicle, categorie: form.categorie, bedrag: Number(form.bedrag), datum: form.datum, omschrijving: form.omschrijving });
@@ -4297,6 +4327,24 @@ function CostsView({ costs, vehicles, onAdd, onDelete }) {
                 <span style={{ width: 110, fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", flexShrink: 0 }}>{c.label}</span>
                 <div className="flex-1 h-3 rounded-full" style={{ background: "#1A2129", overflow: "hidden" }}><div className="h-full rounded-full" style={{ width: `${(c.bedrag / maxCat) * 100}%`, background: c.color }} /></div>
                 <span style={{ width: 90, textAlign: "right", fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#E7ECF3", flexShrink: 0 }}>{euro(c.bedrag)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {trend.some((t) => t.bedrag > 0) && (
+        <Card className="p-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <Eyebrow>Kosten per maand {year !== "all" ? `— ${year}` : "— laatste 12 maanden"}</Eyebrow>
+            <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>Gem. {euro(trendAvg)}/mnd</span>
+          </div>
+          <div className="flex items-end gap-1.5 mt-4" style={{ height: 140 }}>
+            {trend.map((t) => (
+              <div key={t.key} className="flex-1 flex flex-col items-center justify-end gap-1.5" style={{ height: "100%", minWidth: 0 }} title={`${t.label}: ${euro(t.bedrag)}`}>
+                <span style={{ fontFamily: "JetBrains Mono", fontSize: 9.5, color: "#98A1B0", whiteSpace: "nowrap" }}>{t.bedrag > 0 ? (t.bedrag >= 1000 ? `€${Math.round(t.bedrag / 1000)}k` : `€${Math.round(t.bedrag)}`) : ""}</span>
+                <div className="w-full rounded-t" style={{ height: `${(t.bedrag / trendMax) * 100}%`, minHeight: t.bedrag > 0 ? 3 : 0, background: t.bedrag > 0 ? "linear-gradient(180deg,#3B82F6,#2563EB)" : "transparent", transition: "height .3s" }} />
+                <span style={{ fontFamily: "Inter", fontSize: 10, color: "#B4BCC9", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{t.label}</span>
               </div>
             ))}
           </div>
