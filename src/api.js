@@ -417,6 +417,33 @@ export async function uploadReportMedia(companyId, reportId, items) {
   return out;
 }
 
+// ---------- VOERTUIGDOCUMENTEN (privé-bucket 'documenten') ----------
+
+// Upload één document (kentekenbewijs, verzekering, APK, ...) voor een voertuig.
+// Geeft de metadata terug die we op het voertuig bewaren (in company_state).
+export async function uploadVehicleDocument(companyId, vehicleId, file, meta = {}) {
+  if (!supabase || !companyId || !file) throw new Error("Geen bestand of bedrijf");
+  const ext = ((file.name || "").split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
+  const path = `${companyId}/${vehicleId}/${Date.now()}-${Math.round(Math.random() * 1e9)}.${ext}`;
+  const { error } = await supabase.storage.from("documenten").upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw error;
+  return { path, name: file.name || `document.${ext}`, categorie: meta.categorie || "overig", size: file.size || 0, type: file.type || "", uploadedAt: new Date().toISOString() };
+}
+
+// Tijdelijke (1 uur) link om een document te openen/downloaden.
+export async function signedDocUrl(path) {
+  if (!path || !supabase) return null;
+  const { data } = await supabase.storage.from("documenten").createSignedUrl(path, 3600);
+  return data?.signedUrl || null;
+}
+
+// Verwijder een document uit de opslag.
+export async function deleteVehicleDocument(path) {
+  if (!path || !supabase) return;
+  const { error } = await supabase.storage.from("documenten").remove([path]);
+  if (error) throw error;
+}
+
 // Zet opgeslagen paden om naar tijdelijke (1 uur) links om te tonen. Onbekende
 // of oudere meldingen (met alleen een count, geen paden) geven een lege lijst.
 export async function signedMediaUrls(media) {

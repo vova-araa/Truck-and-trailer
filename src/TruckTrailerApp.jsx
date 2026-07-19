@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
@@ -1982,12 +1982,17 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   );
 }
 
-function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete, aiReady, inspectionOn = true }) {
+function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete, aiReady, inspectionOn = true, companyId = null, live = false }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [showInsp, setShowInsp] = useState(false);
   const [form, setForm] = useState(vehicle);
   const [note, setNote] = useState(vehicle.notitie || "");
+  const docRef = useRef(null);
+  const [docCat, setDocCat] = useState("kentekenbewijs");
+  const [docBusy, setDocBusy] = useState(false);
+  const [docErr, setDocErr] = useState("");
+  const documenten = Array.isArray(vehicle.documenten) ? vehicle.documenten : [];
   const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
@@ -2027,6 +2032,43 @@ ${JSON.stringify(ctx)}`;
 
   const saveNote = () => { onUpdate({ ...vehicle, notitie: note }); setToast("Notitie opgeslagen."); };
   const noteChanged = (note || "") !== (vehicle.notitie || "");
+
+  const DOC_CATS = [
+    { id: "kentekenbewijs", label: "Kentekenbewijs" },
+    { id: "verzekering", label: "Verzekering" },
+    { id: "apk", label: "APK-rapport" },
+    { id: "overig", label: "Overig" },
+  ];
+  const docCatLabel = (id) => (DOC_CATS.find((c) => c.id === id) || { label: "Overig" }).label;
+  const uploadDoc = async (files) => {
+    const file = files && files[0];
+    if (!file) return;
+    if (!live) { setDocErr("Documenten uploaden werkt in de live-app (met opslag). In de demo is dit uitgeschakeld."); return; }
+    if (file.size > 15 * 1024 * 1024) { setDocErr("Bestand is te groot (max 15 MB)."); return; }
+    setDocBusy(true); setDocErr("");
+    try {
+      const meta = await uploadVehicleDocument(companyId, vehicle.id, file, { categorie: docCat });
+      onUpdate({ ...vehicle, documenten: [meta, ...documenten] });
+      setToast("Document toegevoegd.");
+    } catch (e) {
+      setDocErr("Uploaden mislukt: " + (e?.message || "onbekende fout"));
+    } finally {
+      setDocBusy(false);
+      if (docRef.current) docRef.current.value = "";
+    }
+  };
+  const openDoc = async (doc) => {
+    try {
+      const url = await signedDocUrl(doc.path);
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+      else setDocErr("Kon document niet openen.");
+    } catch (e) { setDocErr("Kon document niet openen."); }
+  };
+  const removeDoc = async (doc) => {
+    try { await deleteVehicleDocument(doc.path); } catch (e) { /* toch uit lijst halen */ }
+    onUpdate({ ...vehicle, documenten: documenten.filter((d) => d.path !== doc.path) });
+    setToast("Document verwijderd.");
+  };
 
   const vReports = reports.filter((r) => r.vehicle === vehicle.kenteken).sort((a, b) => (a.datum < b.datum ? 1 : -1));
   const vPlanning = planning.filter((p) => p.vehicle === vehicle.kenteken).sort((a, b) => (a.datum + a.tijd < b.datum + b.tijd ? 1 : -1));
@@ -2112,6 +2154,46 @@ ${JSON.stringify(ctx)}`;
           {noteChanged && <Button small onClick={saveNote}>Opslaan</Button>}
         </div>
         <textarea className="tg-input" rows={3} style={{ width: "100%", resize: "vertical" }} placeholder="Bv. bijzonderheden, afspraken met de chauffeur, terugkerende klachten…" value={note} onChange={(e) => setNote(e.target.value)} />
+      </Card>
+
+      {/* Documenten */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#A855F718" }}><FileText size={15} color="#A855F7" /></div>
+            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Documenten</span>
+            {documenten.length > 0 && <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#A855F718", color: "#C99BFF", fontWeight: 600 }}>{documenten.length}</span>}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select className="tg-input" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={docCat} onChange={(e) => setDocCat(e.target.value)}>
+              {DOC_CATS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <input ref={docRef} type="file" accept=".pdf,image/*" hidden onChange={(e) => uploadDoc(e.target.files)} />
+            <Button small icon={Plus} onClick={() => docRef.current?.click()} disabled={docBusy}>{docBusy ? "Uploaden…" : "Uploaden"}</Button>
+          </div>
+        </div>
+        {docErr && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#FF8A00", marginBottom: 8 }}>{docErr}</div>}
+        {documenten.length === 0 ? (
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>Nog geen documenten. Voeg bijvoorbeeld het kentekenbewijs, de verzekeringspolis of het APK-rapport toe (PDF of foto, max 15 MB).</div>
+        ) : (
+          <div className="space-y-2">
+            {documenten.map((d) => (
+              <div key={d.path} className="flex items-center justify-between gap-2 p-3 rounded-lg" style={{ background: "#161C25", border: "1px solid #232B38" }}>
+                <button onClick={() => openDoc(d)} className="flex items-center gap-2.5 text-left" style={{ minWidth: 0, flex: "1 1 0%" }}>
+                  <FileText size={16} color="#A855F7" style={{ flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0" }}>{docCatLabel(d.categorie)}{d.uploadedAt ? ` · ${new Date(d.uploadedAt).toLocaleDateString("nl-NL")}` : ""}</div>
+                  </div>
+                </button>
+                <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                  <button onClick={() => openDoc(d)} title="Openen" style={{ color: "#3B82F6" }}><Download size={15} /></button>
+                  <button onClick={() => removeDoc(d)} title="Verwijderen" style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Compliance & keuringen */}
@@ -5983,7 +6065,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
-                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} aiReady={aiReady} inspectionOn={modOn(cModules, "inspection")} />;
+                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} aiReady={aiReady} inspectionOn={modOn(cModules, "inspection")} companyId={companyId} live={live} />;
                 })()}
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}

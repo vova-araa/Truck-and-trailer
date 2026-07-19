@@ -642,6 +642,40 @@ create policy "meldingen verwijderen beheerder" on storage.objects
     and ( ((storage.foldername(name))[1] = public.current_company_id()::text and public.is_company_admin()) or public.is_superadmin() )
   );
 
+-- ---------- VOERTUIGDOCUMENTEN: privé-bucket in Supabase Storage ----------
+-- Beheer/werkplaats kan per voertuig documenten bewaren (kentekenbewijs,
+-- verzekering, APK-rapport, ...). Privé bucket 'documenten', map per bedrijf
+-- (eerste padsegment = company_id) en daarbinnen per voertuig. Alleen leden van
+-- hetzelfde bedrijf kunnen uploaden/bekijken; getoond via tijdelijke links.
+
+insert into storage.buckets (id, name, public)
+  values ('documenten', 'documenten', false)
+  on conflict (id) do nothing;
+
+drop policy if exists "documenten upload eigen bedrijf" on storage.objects;
+create policy "documenten upload eigen bedrijf" on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'documenten'
+    and (storage.foldername(name))[1] = public.current_company_id()::text
+  );
+
+drop policy if exists "documenten lezen eigen bedrijf" on storage.objects;
+create policy "documenten lezen eigen bedrijf" on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'documenten'
+    and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
+  );
+
+drop policy if exists "documenten verwijderen eigen bedrijf" on storage.objects;
+create policy "documenten verwijderen eigen bedrijf" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'documenten'
+    and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
+  );
+
 -- ---------- OPTIONAL: mark a platform super-admin ----------
 -- After you have signed up your own account, run this once with your email:
 -- update public.profiles set is_superadmin = true where email = 'jij@truckandtrailer.nl';
