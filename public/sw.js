@@ -5,6 +5,10 @@
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
+// Pass-through fetch-handler. We cachen (nog) niets, maar de aanwezigheid van
+// een fetch-handler is nodig zodat de browser de app als "installeerbaar" ziet.
+self.addEventListener("fetch", () => { /* netwerk doet het werk */ });
+
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; }

@@ -10,7 +10,7 @@ import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, creat
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
-import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany } from "./push.js";
+import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, registerSW } from "./push.js";
 
 // Vertaal-hook: geeft t() terug en her-rendert bij een taalwissel.
 function useT() {
@@ -1250,6 +1250,59 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
   );
 }
 
+// "Installeer op beginscherm"-kaart. Android/desktop tonen een echte
+// installatieknop (beforeinstallprompt); iOS Safari kent dat event niet, dus
+// daar tonen we korte instructies. Verdwijnt zodra de app als PWA draait.
+function InstallCard() {
+  const [deferred, setDeferred] = useState(null);
+  const [installed, setInstalled] = useState(false);
+  const [showIOS, setShowIOS] = useState(false);
+  const [dismissed, setDismissed] = useState(() => { try { return localStorage.getItem("tt_install_dismiss") === "1"; } catch { return false; } });
+  const isIOS = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
+  const isStandalone = typeof window !== "undefined" && ((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true);
+  useEffect(() => {
+    const onPrompt = (e) => { e.preventDefault(); setDeferred(e); };
+    const onInstalled = () => setInstalled(true);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => { window.removeEventListener("beforeinstallprompt", onPrompt); window.removeEventListener("appinstalled", onInstalled); };
+  }, []);
+  if (isStandalone || installed || dismissed) return null;
+  if (!deferred && !isIOS) return null; // niets te installeren op deze browser
+  const dismiss = () => { setDismissed(true); try { localStorage.setItem("tt_install_dismiss", "1"); } catch { /* noop */ } };
+  const install = async () => {
+    if (deferred) {
+      deferred.prompt();
+      try { const { outcome } = await deferred.userChoice; if (outcome === "accepted") setInstalled(true); } catch { /* noop */ }
+      setDeferred(null);
+    } else if (isIOS) setShowIOS((s) => !s);
+  };
+  return (
+    <div className="max-w-xl mx-auto">
+      <div className="p-3.5 rounded-xl" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 38, height: 38, background: "#3B82F618", flexShrink: 0 }}><Download size={18} color="#3B82F6" /></div>
+          <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+            <div style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 700, color: "#E7ECF3" }}>App op je beginscherm</div>
+            <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA" }}>Sneller openen en meldingen ontvangen, net als een echte app.</div>
+          </div>
+          <button onClick={dismiss} style={{ color: "#98A1B0", flexShrink: 0 }} aria-label="Sluiten"><X size={16} /></button>
+        </div>
+        <div className="flex items-center gap-2 mt-3">
+          <Button small icon={Download} onClick={install}>{isIOS && !deferred ? "Hoe installeer ik dit?" : "Installeren"}</Button>
+        </div>
+        {showIOS && isIOS && (
+          <div className="mt-3 p-2.5 rounded-lg" style={{ background: "#0E1826", border: "1px solid #232B38", fontFamily: "Inter", fontSize: 12, color: "#B9C6DA", lineHeight: 1.6 }}>
+            1. Tik op het <b style={{ color: "#E7ECF3" }}>deel-icoon</b> (het vierkantje met pijltje omhoog) onderin Safari.<br />
+            2. Kies <b style={{ color: "#E7ECF3" }}>"Zet op beginscherm"</b>.<br />
+            3. Open de app voortaan via het nieuwe icoon — dan werken ook de push-meldingen.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia }) {
   const { t } = useT();
   const firstName = currentUser?.naam?.split(" ")[0] || "";
@@ -1297,6 +1350,8 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
           </div>
         )}
       </div>
+
+      <InstallCard />
 
       <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
 

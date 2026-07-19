@@ -31,7 +31,7 @@ export async function getPushConfig() {
   catch { return { enabled: false, publicKey: null }; }
 }
 
-async function registerSW() {
+export async function registerSW() {
   if (!("serviceWorker" in navigator)) return null;
   try { return await navigator.serviceWorker.register("/sw.js"); }
   catch { return null; }

@@ -8,3 +8,10 @@ createRoot(document.getElementById("root")).render(
     <Root />
   </React.StrictMode>
 );
+
+// Service worker registreren (voor push-meldingen én "installeren op beginscherm").
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => { /* stil: app werkt ook zonder */ });
+  });
+}
