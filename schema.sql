@@ -10,14 +10,14 @@ create table if not exists public.companies (
   name text not null,
   slug text not null,
   accent text not null default '#3B82F6',
-  join_code text not null default upper(substr(md5(random()::text), 1, 6)),
+  join_code text not null default upper(substr(md5(random()::text || clock_timestamp()::text), 1, 10)),
   created_at timestamptz not null default now()
 );
 
 -- Bestaat de tabel al van een eerdere versie? Voeg de kolom dan alsnog toe
 -- (bestaande rijen krijgen elk een eigen willekeurige code) en borg uniekheid.
 alter table public.companies
-  add column if not exists join_code text not null default upper(substr(md5(random()::text), 1, 6));
+  add column if not exists join_code text not null default upper(substr(md5(random()::text || clock_timestamp()::text), 1, 10));
 create unique index if not exists companies_join_code_key on public.companies (upper(join_code));
 
 -- Abonnement-velden per bedrijf. plan_paid = betaalt het bedrijf (true) of is het

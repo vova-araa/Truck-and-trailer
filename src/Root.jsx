@@ -88,7 +88,7 @@ export default function Root() {
 
   if (!supabaseConfigured) return <SetupNotice />;
   if (!ready) return <Splash text="Laden..." />;
-  if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); await signOut(); setSession(null); }} />;
+  if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); try { window.history.replaceState(null, "", "/"); } catch {} setRoutePath("/"); await signOut(); setSession(null); }} />;
   if (loadErr) return <Splash text={"Fout bij laden: " + loadErr} />;
 
   const zone = zoneOf(routePath);

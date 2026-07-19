@@ -381,10 +381,11 @@ export async function driverAddReport(report) {
     if (error) throw error;
     return { queued: false };
   } catch (e) {
-    // Netwerkfout onderweg -> bewaren en later opnieuw versturen. Andere fouten
-    // (bv. serverafwijzing) gooien we door zodat ze zichtbaar worden.
-    if (isNetworkError(e)) { enqueueReport(report); return { queued: true }; }
-    throw e;
+    // Wat er ook misgaat (netwerk óf server): de melding NIET stil verliezen.
+    // We bewaren 'm in de wachtrij; die probeert later opnieuw en geeft na een
+    // paar mislukte pogingen op (zie offlineQueue) zodat er geen "poison" ontstaat.
+    enqueueReport(report);
+    return { queued: true };
   }
 }
 

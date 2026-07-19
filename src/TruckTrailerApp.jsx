@@ -5664,7 +5664,12 @@ function pathToView(pathname) {
   if (!clean.startsWith(APP_PREFIX + "/")) return null; // buiten de app-zone
   const segs = clean.slice(APP_PREFIX.length + 1).split("/").filter(Boolean);
   if (segs.length === 0) return { view: "dashboard", sel: null };
-  if (segs[0] === "vrachtwagens") return { view: "vehicles", sel: segs[1] ? decodeURIComponent(segs[1]) : null };
+  if (segs[0] === "vrachtwagens") {
+    // Een kapotte percent-encoding mag de app niet laten crashen (wit scherm).
+    let sel = null;
+    if (segs[1]) { try { sel = decodeURIComponent(segs[1]); } catch { sel = segs[1]; } }
+    return { view: "vehicles", sel };
+  }
   const view = SUBPATH_VIEWS[segs[0]];
   return view ? { view, sel: null } : null;
 }
@@ -6000,10 +6005,21 @@ export default function TruckGarageApp({ session, onLogout }) {
   }, [view, selectedVehicleId]);
   // Terug/vooruit-knop van de browser: scherm uit de URL halen.
   useEffect(() => {
-    const onPop = () => { const r = pathToView(window.location.pathname) || { view: "dashboard", sel: null }; setViewRaw(r.view); setSelectedVehicleId(r.sel); };
+    const onPop = () => {
+      const r = pathToView(window.location.pathname);
+      if (!r) {
+        // De URL wees buiten de app-zone (bv. terug naar "/"). Een ingelogde
+        // gebruiker hoort in de app te blijven — zet de URL terug op /app zodat
+        // scherm en adresbalk in sync blijven.
+        if (live) { try { window.history.replaceState(null, "", viewToPath("dashboard")); } catch { /* noop */ } }
+        setViewRaw("dashboard"); setSelectedVehicleId(null);
+        return;
+      }
+      setViewRaw(r.view); setSelectedVehicleId(r.sel);
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [live]);
   const [companyPicker, setCompanyPicker] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -6167,14 +6183,19 @@ export default function TruckGarageApp({ session, onLogout }) {
   // --- Hooks die ALTIJD moeten draaien (vóór welke vroege return dan ook), zodat
   // de hook-volgorde stabiel blijft tussen het inlogscherm en de ingelogde app. ---
   const [refreshing, setRefreshing] = useState(false);
-  // Waarschuwingstermijn toepassen op de compliance-berekeningen zodra die
-  // instelling (of het actieve bedrijf) verandert.
-  useEffect(() => { setWarnMonths((workshopHours[companyId] || {}).warnMonths); }, [companyId, workshopHours]);
+  // Waarschuwingstermijn synchroon toepassen tijdens render (module-variabele,
+  // geen React-state) zodat de compliance-kleuren meteen de juiste drempel
+  // gebruiken — ook bij de eerste render en na een bedrijfswissel.
+  setWarnMonths((workshopHours[companyId] || {}).warnMonths);
   // Apparaat-melding bij een nieuwe melding op de werkvloer (werkplaats/beheerder).
   const notifSeen = useRef(null);
+  const notifCompany = useRef(null);
   useEffect(() => {
-    if (!live) { notifSeen.current = null; return; }
+    if (!live) { notifSeen.current = null; notifCompany.current = null; return; }
     const openIds = (reports[companyId] || []).filter((r) => r.status !== "klaar").map((r) => r.id);
+    // Bij een bedrijfswissel (superadmin): opnieuw ijken zonder te notificeren,
+    // anders tellen alle open meldingen van het nieuwe bedrijf als "nieuw".
+    if (notifCompany.current !== companyId) { notifSeen.current = new Set(openIds); notifCompany.current = companyId; return; }
     if (notifSeen.current === null) { notifSeen.current = new Set(openIds); return; }
     const fresh = openIds.filter((id) => !notifSeen.current.has(id));
     notifSeen.current = new Set(openIds);

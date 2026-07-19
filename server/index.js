@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
@@ -28,7 +29,13 @@ const anthropic = apiKeyConfigured ? new Anthropic() : null;
 
 const app = express();
 app.set("trust proxy", 1); // achter een reverse proxy: gebruik X-Forwarded-For voor req.ip
-app.use(express.json({ limit: "25mb" })); // foto's gaan als base64 mee
+// Grote body (base64-foto's) mag ALLEEN op /api/ai; overal elders een kleine
+// limiet zodat publieke endpoints (bv. /api/contact) geen geheugen-DoS zijn.
+app.use("/api/ai", express.json({ limit: "25mb" }));
+app.use(express.json({ limit: "200kb" }));
+
+// HTML-escape voor waarden die we in e-mail-HTML interpoleren (voorkomt injectie).
+const esc = (s) => String(s == null ? "" : s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])).slice(0, 2000);
 
 // Eenvoudige in-memory rate-limiting op /api/ai zodat een publieke deployment
 // de Anthropic-key (en kosten) niet kan laten misbruiken.
@@ -161,7 +168,9 @@ app.post("/api/admin/invite-user", async (req, res) => {
     if (prof.rol !== "admin") return res.status(403).json({ error: "Alleen een beheerder mag uitnodigen." });
 
     // Link waar de medewerker na het klikken landt (om een wachtwoord te kiezen).
-    const base = process.env.APP_URL || req.headers.origin || "";
+    // ALLEEN een vaste, geconfigureerde URL — nooit de (spoofbare) Origin-header,
+    // anders kan een uitnodigings-magic-link naar een vreemd domein wijzen.
+    const base = process.env.APP_URL || "https://truckandtrailer.nl";
     const redirectTo = base ? `${base.replace(/\/+$/, "")}/?welkom=1` : undefined;
 
     const { data: invited, error: invErr } = await supaAdmin.auth.admin.inviteUserByEmail(
@@ -210,8 +219,8 @@ app.post("/api/admin/send-activation-email", async (req, res) => {
     if (!code || !/^\d{6,}$/.test(String(code))) return res.status(400).json({ error: "Geldige code is verplicht." });
 
     const appUrl = (process.env.APP_URL || "https://truckandtrailer.nl").replace(/\/+$/, "");
-    const naam = (adminNaam || "").trim();
-    const bedrijf = (companyName || "je bedrijf").trim();
+    const naam = esc((adminNaam || "").trim());
+    const bedrijf = esc((companyName || "je bedrijf").trim());
     const pretty = String(code).replace(/(\d{4})(?=\d)/g, "$1 ");
     const html = `
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#1a2129">
@@ -279,7 +288,7 @@ app.post("/api/ai", async (req, res) => {
   try {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: Math.min(Number(maxTokens) || 1000, 4096),
+      max_tokens: Math.min(Math.max(1, Number(maxTokens) || 1000), 4096),
       ...(system ? { system } : {}),
       messages,
     });
@@ -318,7 +327,6 @@ app.post("/api/contact", async (req, res) => {
   const { naam, bedrijf, email, telefoon, bericht } = req.body || {};
   if (!naam || !String(naam).trim()) return res.status(400).json({ error: "Naam is verplicht." });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) return res.status(400).json({ error: "Geldig e-mailadres is verplicht." });
-  const esc = (s) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])).slice(0, 2000);
   try {
     const html = `
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:20px;color:#1a2129">
@@ -377,8 +385,10 @@ function daysUntil(dateStr) {
 app.all("/api/cron/reminders", async (req, res) => {
   const secret = process.env.CRON_SECRET || "";
   if (!secret) return res.status(503).json({ error: "CRON_SECRET niet ingesteld op de server." });
-  const given = req.query.key || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (given !== secret) return res.status(401).json({ error: "Ongeldige sleutel." });
+  const given = String(req.query.key || (req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+  // Constante-tijd vergelijking tegen timing-aanvallen.
+  const a = Buffer.from(given), b = Buffer.from(secret);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Ongeldige sleutel." });
   if (!supaAdmin) return res.status(503).json({ error: "SUPABASE_SERVICE_ROLE_KEY ontbreekt." });
   if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: "RESEND_API_KEY ontbreekt." });
   try {
@@ -412,12 +422,12 @@ app.all("/api/cron/reminders", async (req, res) => {
       }
       if (!items.length) continue;
       itemsFound += items.length;
-      const bedrijf = profiel.bedrijfsnaam || adminByCompany[row.company_id]?.naam || "je vloot";
+      const bedrijf = esc(profiel.bedrijfsnaam || adminByCompany[row.company_id]?.naam || "je vloot");
       const rows = items.map((it) => `
         <tr>
-          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;font-weight:bold;color:#0A0E14">${it.kenteken}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${it.type}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${it.datum}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;font-weight:bold;color:#0A0E14">${esc(it.kenteken)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${esc(it.type)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:#475467">${esc(it.datum)}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #eef1f5;color:${it.dagen <= 3 ? "#F0453F" : "#B54708"};font-weight:bold">${it.dagen === 0 ? "vandaag" : it.dagen + " dagen"}</td>
         </tr>`).join("");
       const appUrl = (process.env.APP_URL || "https://truckandtrailer.nl").replace(/\/+$/, "");
@@ -473,9 +483,12 @@ app.post("/api/push/subscribe", async (req, res) => {
 // Afmelden voor push (endpoint verwijderen).
 app.post("/api/push/unsubscribe", async (req, res) => {
   if (!pushConfigured) return res.status(503).json({ error: "Push is niet geconfigureerd." });
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Log in om je af te melden." });
   const endpoint = req.body?.endpoint;
   if (!endpoint) return res.status(400).json({ error: "endpoint is verplicht." });
-  await supaAdmin.from("push_subscriptions").delete().eq("endpoint", endpoint);
+  // Alleen je eigen subscription mag je verwijderen (voorkomt IDOR/DoS).
+  await supaAdmin.from("push_subscriptions").delete().eq("endpoint", endpoint).eq("user_id", me.userId);
   res.json({ ok: true });
 });
 
@@ -491,10 +504,13 @@ app.post("/api/push/notify", async (req, res) => {
     .select("endpoint, keys, user_id, rol")
     .eq("company_id", me.company_id)
     .in("rol", ["admin", "garage"]);
+  // URL moet een intern pad zijn: precies één leading slash (geen "//evil.com"
+  // en geen "http…"), anders kan een push naar een phishingdomein leiden.
+  const safeUrl = typeof url === "string" && /^\/(?!\/)/.test(url) ? url : "/";
   const payload = JSON.stringify({
     title: String(title || "Truck & Trailer").slice(0, 120),
     body: String(body || "Nieuwe melding").slice(0, 240),
-    url: typeof url === "string" && url.startsWith("/") ? url : "/",
+    url: safeUrl,
   });
   const targets = (subs || []).filter((s) => s.user_id !== me.userId);
   const stale = [];

@@ -36,6 +36,7 @@ export function enqueueReport(report) {
   notify();
 }
 
+const MAX_ATTEMPTS = 6; // na zoveel mislukte (niet-netwerk) pogingen: opgeven
 let flushing = false;
 // Probeer de wachtrij te legen. Geeft het aantal succesvol verstuurde meldingen terug.
 export async function flushQueue() {
@@ -46,16 +47,23 @@ export async function flushQueue() {
   flushing = true;
   const remaining = [];
   let sent = 0;
-  for (const item of arr) {
+  for (let i = 0; i < arr.length; i++) {
+    const item = arr[i];
     try {
       const { error } = await supabase.rpc("driver_add_report", { p_report: item.report });
       if (error) throw error;
       sent++;
     } catch (e) {
-      // Nog steeds netwerkprobleem -> laten staan. Echte fout -> ook laten staan
-      // maar niet eindeloos blijven proberen binnen deze ronde.
-      remaining.push(item);
-      if (isNetworkError(e)) break; // verbinding weg: stop, probeer later opnieuw
+      if (isNetworkError(e)) {
+        // Verbinding weg: dit én de rest bewaren en later opnieuw proberen.
+        remaining.push(item, ...arr.slice(i + 1));
+        break;
+      }
+      // Echte (server)fout: teller ophogen; na te veel pogingen droppen zodat
+      // één kapotte melding de wachtrij niet blokkeert.
+      const attempts = (item.attempts || 0) + 1;
+      if (attempts < MAX_ATTEMPTS) remaining.push({ ...item, attempts });
+      else console.error("Melding definitief niet verstuurd (opgegeven):", item.report?.id);
     }
   }
   write(remaining);
