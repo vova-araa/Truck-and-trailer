@@ -645,3 +645,16 @@ create policy "meldingen verwijderen beheerder" on storage.objects
 -- ---------- OPTIONAL: mark a platform super-admin ----------
 -- After you have signed up your own account, run this once with your email:
 -- update public.profiles set is_superadmin = true where email = 'jij@truckandtrailer.nl';
+
+-- ---------- REALTIME: live-updates op de werkvloer ----------
+-- Laat de app live meeluisteren op wijzigingen van de bedrijfsrij (o.a. nieuwe
+-- chauffeursmeldingen), zodat de werkvloer vanzelf ververst. Idempotent.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'companies'
+  ) then
+    alter publication supabase_realtime add table public.companies;
+  end if;
+end $$;

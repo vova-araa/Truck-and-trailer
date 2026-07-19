@@ -7,6 +7,7 @@ import {
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail } from "./api.js";
+import { supabase } from "./supabaseClient.js";
 
 /* ---------------------------------------------------------------------
    EIGEN VOERTUIG-PICTOGRAMMEN (in lucide-stijl: stroke = color-prop)
@@ -5638,6 +5639,24 @@ export default function TruckGarageApp({ session, onLogout }) {
       setRefreshing(false);
     }
   };
+  // Live-updates: houd de laatste refreshData in een ref, en abonneer op
+  // wijzigingen van de bedrijfsrij. Zodra een chauffeur een melding toevoegt
+  // (of iemand anders iets wijzigt), ververst de app vanzelf — geen handmatige
+  // "Ververs" meer nodig. Kort gedebounced zodat de eigen opslag geen storm geeft.
+  const refreshRef = useRef(refreshData);
+  refreshRef.current = refreshData;
+  useEffect(() => {
+    if (!live || !supabase || role === "chauffeur") return;
+    let timer = null;
+    const ch = supabase
+      .channel("company-live-" + companyId)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "companies", filter: "id=eq." + companyId }, () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { refreshRef.current && refreshRef.current(); }, 1500);
+      })
+      .subscribe();
+    return () => { if (timer) clearTimeout(timer); try { supabase.removeChannel(ch); } catch {} };
+  }, [companyId, live, role]);
 
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
   const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
