@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient.js";
+import { enqueueReport, isNetworkError } from "./offlineQueue.js";
 
 /*
   DATA MODEL (see schema.sql)
@@ -348,8 +349,21 @@ export async function driverBootstrap() {
 
 // Chauffeur voegt een melding toe (server bepaalt de chauffeur-identiteit).
 export async function driverAddReport(report) {
-  const { error } = await supabase.rpc("driver_add_report", { p_report: report });
-  if (error) throw error;
+  // Geen verbinding? Direct in de offline-wachtrij; later automatisch verstuurd.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    enqueueReport(report);
+    return { queued: true };
+  }
+  try {
+    const { error } = await supabase.rpc("driver_add_report", { p_report: report });
+    if (error) throw error;
+    return { queued: false };
+  } catch (e) {
+    // Netwerkfout onderweg -> bewaren en later opnieuw versturen. Andere fouten
+    // (bv. serverafwijzing) gooien we door zodat ze zichtbaar worden.
+    if (isNetworkError(e)) { enqueueReport(report); return { queued: true }; }
+    throw e;
+  }
 }
 
 // Debounce-timer PER bedrijf, zodat een save voor bedrijf A niet wordt gewist

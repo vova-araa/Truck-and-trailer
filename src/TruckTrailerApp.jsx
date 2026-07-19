@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail } from "./api.js";
 import { supabase } from "./supabaseClient.js";
+import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 
 /* ---------------------------------------------------------------------
    EIGEN VOERTUIG-PICTOGRAMMEN (in lucide-stijl: stroke = color-prop)
@@ -1225,11 +1226,33 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
   const openCount = myReports.filter((r) => r.status !== "klaar").length;
   const doneCount = myReports.filter((r) => r.status === "klaar").length;
   const statusColor = (s) => s === "klaar" ? "#34D399" : s === "nieuw" ? "#B4BCC9" : "#3B82F6";
+  // Offline-wachtrij: hoeveel meldingen wachten nog op verbinding.
+  const [pending, setPending] = useState(queuedCount());
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  useEffect(() => {
+    const off = onQueueChange(setPending);
+    const on = () => { setOnline(true); flushQueue(); };
+    const offl = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", offl);
+    flushQueue(); // bij openen: probeer eventuele wachtrij te legen
+    return () => { off(); window.removeEventListener("online", on); window.removeEventListener("offline", offl); };
+  }, []);
   return (
     <div className="space-y-6">
       <div className="max-w-xl mx-auto">
         <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3" }}>Hoi{firstName ? `, ${firstName}` : ""} 👋</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Zie je iets aan je wagen? Maak hieronder een melding.</p>
+        {(pending > 0 || !online) && (
+          <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg" style={{ background: "#FF8A0018", border: "1px solid #FF8A0044" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: online ? "#FF8A00" : "#98A1B0", flexShrink: 0 }} />
+            <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3" }}>
+              {pending > 0
+                ? `${pending} melding${pending === 1 ? "" : "en"} wacht${pending === 1 ? "" : "en"} op verbinding — wordt automatisch verstuurd.`
+                : "Je bent offline. Meldingen worden bewaard en later verstuurd."}
+            </span>
+          </div>
+        )}
         {myReports.length > 0 && (
           <div className="flex gap-2 mt-3">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background: "#3B82F618", border: "1px solid #3B82F544" }}>
