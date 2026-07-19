@@ -30,14 +30,14 @@ function IconTruckTrailer({ size = 24, color = "currentColor", ...rest }) {
   </>);
 }
 function IconTrailer({ size = 24, color = "currentColor", ...rest }) {
-  // Losse oplegger/aanhanger: lange laadbak, tandem-as achter, steunpoot +
-  // koppeling voor (geen cabine).
+  // Losse oplegger/aanhanger: lange laadbak, tandem-as, steunpoot + koppeling
+  // aan de rechterkant (geen cabine).
   return svgWrap(size, color, rest, <>
-    <rect x="3" y="6.8" width="16" height="7.6" rx="1" />
-    <path d="M3 10.6 H1" />
-    <path d="M5.5 14.4 v2.6" />
-    <circle cx="11.5" cy="17.2" r="1.5" />
-    <circle cx="15.8" cy="17.2" r="1.5" />
+    <rect x="5" y="6.8" width="16" height="7.6" rx="1" />
+    <path d="M21 10.6 H23" />
+    <path d="M18.5 14.4 v2.6" />
+    <circle cx="8.2" cy="17.2" r="1.5" />
+    <circle cx="12.5" cy="17.2" r="1.5" />
   </>);
 }
 function IconBoxTruck({ size = 24, color = "currentColor", ...rest }) {
