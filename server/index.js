@@ -165,25 +165,34 @@ app.post("/api/admin/invite-user", async (req, res) => {
 });
 
 app.post("/api/ai", async (req, res) => {
-  if (rateLimited(req.ip || "onbekend")) {
-    return res.status(429).json({ error: `Te veel AI-aanvragen (max ${RL_MAX}/min). Wacht even en probeer opnieuw.` });
-  }
-  // Als we sessies kunnen verifiëren (service_role gezet), eisen we een geldig
-  // ingelogde gebruiker — zo kan niemand van buitenaf de AI-credits verbruiken.
-  if (supaAdmin) {
-    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) return res.status(401).json({ error: "Log in om de AI te gebruiken." });
-    try {
-      const { data: who, error } = await supaAdmin.auth.getUser(token);
-      if (error || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
-    } catch {
-      return res.status(401).json({ error: "Kon sessie niet verifiëren." });
-    }
-  }
   if (!anthropic) {
-    return res.status(503).json({
-      error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving.",
-    });
+    return res.status(503).json({ error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving." });
+  }
+  // AI vereist een geverifieerde, ingelogde gebruiker met een profiel. Kunnen we
+  // sessies niet verifiëren (geen service_role), dan sluiten we AI AF (fail
+  // closed) i.p.v. 'm open te zetten voor de hele wereld — zo kan niemand van
+  // buitenaf de AI-credits verbruiken.
+  if (!supaAdmin) {
+    return res.status(503).json({ error: "AI is niet volledig geconfigureerd (SUPABASE_SERVICE_ROLE_KEY ontbreekt op de server)." });
+  }
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return res.status(401).json({ error: "Log in om de AI te gebruiken." });
+  let userId;
+  try {
+    const { data: who, error } = await supaAdmin.auth.getUser(token);
+    if (error || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+    userId = who.user.id;
+    // Alleen echte app-gebruikers (met een profiel bij een bedrijf) mogen de AI
+    // gebruiken — niet zomaar elke auth-gebruiker.
+    const { data: prof, error: pErr } = await supaAdmin.from("profiles").select("company_id").eq("id", userId).single();
+    if (pErr || !prof) return res.status(403).json({ error: "Geen profiel gevonden voor deze gebruiker." });
+  } catch {
+    return res.status(401).json({ error: "Kon sessie niet verifiëren." });
+  }
+  // Rate limit per gebruiker (naast/i.p.v. per-IP), zodat één account de credits
+  // niet kan leegtrekken.
+  if (rateLimited("ai:" + userId)) {
+    return res.status(429).json({ error: `Te veel AI-aanvragen (max ${RL_MAX}/min). Wacht even en probeer opnieuw.` });
   }
   const { messages, system, max_tokens: maxTokens } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
