@@ -9,6 +9,33 @@ import {
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
+import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
+
+// Vertaal-hook: geeft t() terug en her-rendert bij een taalwissel.
+function useT() {
+  const [lang, setLangState] = useState(getLang());
+  useEffect(() => {
+    const h = (e) => setLangState((e && e.detail) || getLang());
+    window.addEventListener("tt-lang", h);
+    return () => window.removeEventListener("tt-lang", h);
+  }, []);
+  const t = (key, vars) => {
+    let s = translate(key, lang);
+    if (vars) Object.keys(vars).forEach((k) => { s = s.replace("{" + k + "}", vars[k]); });
+    return s;
+  };
+  return { t, lang };
+}
+
+// Taalkiezer voor de chauffeur (vlag + taalnaam).
+function LangSwitcher({ compact = false }) {
+  const { lang } = useT();
+  return (
+    <select aria-label="Taal / Language" className="tg-input" style={{ width: "auto", padding: compact ? "5px 8px" : "7px 10px", fontSize: 13 }} value={lang} onChange={(e) => setLang(e.target.value)}>
+      {LANGS.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
+    </select>
+  );
+}
 
 /* ---------------------------------------------------------------------
    EIGEN VOERTUIG-PICTOGRAMMEN (in lucide-stijl: stroke = color-prop)
@@ -886,6 +913,7 @@ function CameraCapture({ stream, error, onCapture, onClose, onFallback }) {
 }
 
 function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
+  const { t } = useT();
   const [step, setStep] = useState(0);
   const [vehicle, setVehicle] = useState("");
   const [omschrijving, setOmschrijving] = useState("");
@@ -903,7 +931,7 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   const fileRef = useRef(null);
   const videoRef = useRef(null);
 
-  const STEPS = ["Voertuig", "Probleem", "Foto", "Check"];
+  const STEPS = [t("stepVehicle"), t("stepProblem"), t("stepPhoto"), t("stepCheck")];
 
   const toggleIssue = (issue) => {
     const parts = omschrijving.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1018,10 +1046,10 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
       <div className="max-w-xl mx-auto">
         <Card className="p-8 flex flex-col items-center text-center">
           <div className="flex items-center justify-center rounded-full mb-4" style={{ width: 64, height: 64, background: "#34D39918" }}><CheckCircle2 size={34} color="#34D399" /></div>
-          <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3" }}>Melding verstuurd!</div>
-          <div style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>De werkplaats gaat ermee aan de slag. Je ziet de status onder "Jouw meldingen".</div>
+          <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3" }}>{t("sentTitle")}</div>
+          <div style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>{t("sentSub")}</div>
           {uploadWarn && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#FF8A00", marginTop: 8 }}>{uploadWarn}</div>}
-          <Button style={{ marginTop: 20 }} icon={Plus} onClick={() => { setSent(false); setUploadWarn(""); }}>Nieuwe melding</Button>
+          <Button style={{ marginTop: 20 }} icon={Plus} onClick={() => { setSent(false); setUploadWarn(""); }}>{t("newReport")}</Button>
         </Card>
       </div>
     );
@@ -1046,8 +1074,8 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
         {step === 0 && (
           <div className="space-y-4">
             <div>
-              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>Welk voertuig?</div>
-              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>Kies de wagen waar het om gaat.</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("qVehicle")}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qVehicleSub")}</div>
             </div>
             <div className="space-y-2">
               {vehicles.map((v) => (
@@ -1069,18 +1097,18 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
         {step === 1 && (
           <div className="space-y-4">
             <div>
-              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>Wat is er aan de hand?</div>
-              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>Tik veelvoorkomende problemen aan of beschrijf het zelf.</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("qProblem")}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qProblemSub")}</div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {COMMON_ISSUES.map((issue) => (
-                <Chip key={issue} active={omschrijving.includes(issue)} onClick={() => toggleIssue(issue)}>{issue}</Chip>
+              {COMMON_ISSUES.map((issue, i) => (
+                <Chip key={issue} active={omschrijving.includes(issue)} onClick={() => toggleIssue(issue)}>{t(ISSUE_KEYS[i])}</Chip>
               ))}
             </div>
             <div>
-              <textarea className="tg-input w-full" rows={3} placeholder="Beschrijf: geluid, gevoel, lampje, lekkage..." value={omschrijving} onChange={(e) => setOmschrijving(e.target.value)} />
+              <textarea className="tg-input w-full" rows={3} placeholder={t("descPlaceholder")} value={omschrijving} onChange={(e) => setOmschrijving(e.target.value)} />
               <button onClick={startVoice} className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-sm" style={{ fontFamily: "Inter", fontWeight: 600, background: listening ? "#F0453F18" : "#1A2129", color: listening ? "#F0453F" : "#E7ECF3", border: "1px solid #232B38" }}>
-                {listening ? <MicOff size={14} /> : <Mic size={14} />} {listening ? "Aan het luisteren..." : "Inspreken"}
+                {listening ? <MicOff size={14} /> : <Mic size={14} />} {listening ? t("listening") : t("speak")}
               </button>
               {voiceError && <div style={{ color: "#FF8A00", fontFamily: "Inter", fontSize: 12, marginTop: 6 }}>{voiceError}</div>}
             </div>
@@ -1091,27 +1119,27 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
         {step === 2 && (
           <div className="space-y-4">
             <div>
-              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>Foto of video</div>
-              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>Handig voor de werkplaats — maar niet verplicht.</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("qPhoto")}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qPhotoSub")}</div>
             </div>
             {/* Fotogids voor de chauffeur */}
             <div className="p-3 rounded-lg" style={{ background: "#12233E", border: "1px solid #3B82F544" }}>
-              <div className="flex items-center gap-2 mb-1.5" style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, color: "#8FB8FF" }}><Camera size={14} /> Zo maak je een goede foto</div>
+              <div className="flex items-center gap-2 mb-1.5" style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, color: "#8FB8FF" }}><Camera size={14} /> {t("photoGuide")}</div>
               <ul style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA", lineHeight: 1.6, paddingLeft: 16, listStyle: "disc" }}>
-                <li>Fotografeer <b style={{ color: "#E7ECF3" }}>{zone ? (ZONES.find((z) => z.id === zone)?.label || "het onderdeel") : "het onderdeel waar het probleem zit"}</b>.</li>
-                <li>Houd eerst het hele onderdeel in beeld, maak daarna een foto van dichtbij.</li>
-                <li>Zorg voor goed licht en een scherp beeld (schade goed zichtbaar).</li>
+                <li>{t("guide1a")} <b style={{ color: "#E7ECF3" }}>{zone ? t(ZONE_KEYS[zone]) : t("guidePart")}</b>.</li>
+                <li>{t("guide2")}</li>
+                <li>{t("guide3")}</li>
               </ul>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <button onClick={openCamera} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Foto maken</span>
+                <Camera size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>{t("takePhoto")}</span>
               </button>
               <button onClick={() => fileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Boxes size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Uit galerij</span>
+                <Boxes size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>{t("fromGallery")}</span>
               </button>
               <button onClick={() => videoRef.current?.click()} className="flex flex-col items-center justify-center gap-2 py-6 rounded-lg" style={{ border: "1px dashed #3A4252", background: "#1A2129" }}>
-                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>Video</span>
+                <Video size={22} color="#3B82F6" /><span style={{ fontFamily: "Inter", fontSize: 12, color: "#E7ECF3", fontWeight: 500 }}>{t("video")}</span>
               </button>
             </div>
             {/* "Foto maken" opent een echte in-app camera (getUserMedia) i.p.v. de
@@ -1120,7 +1148,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
             <input ref={videoRef} type="file" accept="video/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             {camOpen && <CameraCapture stream={camStream} error={camErr} onCapture={(file) => { addFiles([file]); closeCamera(); }} onClose={closeCamera} onFallback={() => { closeCamera(); fileRef.current?.click(); }} />}
             <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", lineHeight: 1.5 }}>
-              Tip: "Foto maken" opent de camera direct in de app. Werkt dat niet? Kies dan <b style={{ color: "#B4BCC9" }}>"Uit galerij"</b>.
+              {t("photoTip")}
             </div>
             {media.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -1137,12 +1165,12 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                 ))}
               </div>
             )}
-            {media.length === 0 && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", textAlign: "center" }}>Geen foto? Geen probleem — tik op "Volgende".</div>}
+            {media.length === 0 && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", textAlign: "center" }}>{t("noPhoto")}</div>}
 
             {media.some((m) => m.type === "foto") && (
               <div className="pt-1">
                 <button onClick={analyzeDamage} disabled={damageLoading} className="w-full flex items-center justify-center gap-2 py-3 rounded-lg" style={{ background: damageLoading ? "#1A2129" : "linear-gradient(180deg, #4C8DFF, #3B82F6)", color: "#FFFFFF", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5, boxShadow: "0 2px 10px rgba(59,130,246,0.3)" }}>
-                  <Sparkles size={15} /> {damageLoading ? "Foto analyseren..." : "AI: herken schade op foto"}
+                  <Sparkles size={15} /> {damageLoading ? t("analyzing") : t("aiRecognize")}
                 </button>
                 {damageError && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#FF8A00", marginTop: 8 }}>{damageError}</div>}
                 {damageResult && (() => {
@@ -1150,13 +1178,13 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                   return (
                     <div className="mt-3 p-3 rounded-lg" style={{ background: "#161C25", border: `1px solid ${col}55`, borderLeft: `3px solid ${col}` }}>
                       <div className="flex items-center justify-between gap-2 mb-1">
-                        <span style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: col, letterSpacing: 0.5, textTransform: "uppercase" }}>AI-analyse</span>
+                        <span style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: col, letterSpacing: 0.5, textTransform: "uppercase" }}>{t("aiAnalysis")}</span>
                         <span className="text-xs px-2 py-0.5 rounded" style={{ color: col, border: `1px solid ${col}55`, fontWeight: 600 }}>{damageResult.ernst}</span>
                       </div>
                       {damageResult.onderdeel && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{damageResult.onderdeel}</div>}
                       <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 500, marginTop: 2 }}>{damageResult.schade}</div>
                       {damageResult.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>💡 {damageResult.aanbeveling}</div>}
-                      <button onClick={applyDamageToDescription} className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>+ Aan omschrijving toevoegen</button>
+                      <button onClick={applyDamageToDescription} className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>{t("addToDesc")}</button>
                     </div>
                   );
                 })()}
@@ -1169,50 +1197,50 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
         {step === 3 && (
           <div className="space-y-4">
             <div>
-              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>Bijna klaar</div>
-              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>Een paar korte vragen helpen de werkplaats (optioneel).</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("qCheck")}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#B4BCC9" }}>{t("qCheckSub")}</div>
             </div>
 
             <div>
-              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>Rijdt het voertuig nog veilig?</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>{t("safeDrive")}</div>
               <div className="grid grid-cols-3 gap-2">
-                {[{ v: "Ja", c: "#34D399" }, { v: "Twijfel", c: "#FF8A00" }, { v: "Nee", c: "#F0453F" }].map((o) => (
-                  <button key={o.v} onClick={() => setVeilig(o.v)} className="py-2.5 rounded-lg text-sm" style={{ fontFamily: "Inter", fontWeight: 600, background: veilig === o.v ? `${o.c}22` : "#1A2129", color: veilig === o.v ? o.c : "#B4BCC9", border: `1px solid ${veilig === o.v ? o.c : "#232B38"}` }}>{o.v}</button>
+                {[{ v: "Ja", label: t("yes"), c: "#34D399" }, { v: "Twijfel", label: t("doubt"), c: "#FF8A00" }, { v: "Nee", label: t("no"), c: "#F0453F" }].map((o) => (
+                  <button key={o.v} onClick={() => setVeilig(o.v)} className="py-2.5 rounded-lg text-sm" style={{ fontFamily: "Inter", fontWeight: 600, background: veilig === o.v ? `${o.c}22` : "#1A2129", color: veilig === o.v ? o.c : "#B4BCC9", border: `1px solid ${veilig === o.v ? o.c : "#232B38"}` }}>{o.label}</button>
                 ))}
               </div>
-              {veilig === "Nee" && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 6 }}>⚠ Deze melding wordt als kritiek gemarkeerd.</div>}
+              {veilig === "Nee" && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 6 }}>{t("criticalNote")}</div>}
             </div>
 
             <div>
-              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>Waar op de wagen? <span style={{ color: "#98A1B0", fontWeight: 400 }}>(optioneel)</span></div>
-              <div className="flex flex-wrap gap-2">{ZONES.map((z) => <Chip key={z.id} active={zone === z.id} onClick={() => setZone(zone === z.id ? "" : z.id)}>{z.label}</Chip>)}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>{t("whereOnVehicle")} <span style={{ color: "#98A1B0", fontWeight: 400 }}>{t("optional")}</span></div>
+              <div className="flex flex-wrap gap-2">{ZONES.map((z) => <Chip key={z.id} active={zone === z.id} onClick={() => setZone(zone === z.id ? "" : z.id)}>{t(ZONE_KEYS[z.id])}</Chip>)}</div>
             </div>
 
             <div>
-              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>Wanneer? <span style={{ color: "#98A1B0", fontWeight: 400 }}>(optioneel)</span></div>
-              <div className="flex flex-wrap gap-2">{["Bij rijden", "Bij remmen", "Bij starten", "Bij stilstand", "Altijd"].map((w) => <Chip key={w} active={wanneer === w} onClick={() => setWanneer(wanneer === w ? "" : w)}>{w}</Chip>)}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", marginBottom: 8, fontWeight: 500 }}>{t("whenLabel")} <span style={{ color: "#98A1B0", fontWeight: 400 }}>{t("optional")}</span></div>
+              <div className="flex flex-wrap gap-2">{[{ v: "Bij rijden", label: t("whenDriving") }, { v: "Bij remmen", label: t("whenBraking") }, { v: "Bij starten", label: t("whenStarting") }, { v: "Bij stilstand", label: t("whenIdle") }, { v: "Altijd", label: t("whenAlways") }].map((w) => <Chip key={w.v} active={wanneer === w.v} onClick={() => setWanneer(wanneer === w.v ? "" : w.v)}>{w.label}</Chip>)}</div>
             </div>
 
             {/* Summary */}
             <div className="p-3 rounded-lg" style={{ background: "#1A2129", border: "1px solid #232B38" }}>
               <div className="flex items-center gap-2 mb-1"><Kenteken value={vehicle} />{selectedVehicle && <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>{selectedVehicle.merk}</span>}</div>
               <div style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3" }}>{omschrijving}</div>
-              {media.length > 0 && <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9", marginTop: 2 }}>{media.length} bijlage(n)</div>}
+              {media.length > 0 && <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B4BCC9", marginTop: 2 }}>{t("attachments", { n: media.length })}</div>}
             </div>
           </div>
         )}
 
         {/* Navigation */}
         <div className="flex gap-2 mt-5">
-          {step > 0 && <Button variant="ghost" icon={ChevronLeft} onClick={() => setStep(step - 1)}>Terug</Button>}
+          {step > 0 && <Button variant="ghost" icon={ChevronLeft} onClick={() => setStep(step - 1)}>{t("back")}</Button>}
           {step < 3 && (
             <Button style={{ flex: 1, justifyContent: "center" }} onClick={() => setStep(step + 1)} disabled={!canNext}>
-              {step === 2 && media.length === 0 ? "Overslaan" : "Volgende"}
+              {step === 2 && media.length === 0 ? t("skip") : t("next")}
             </Button>
           )}
           {step === 3 && (
             <Button icon={AlertTriangle} style={{ flex: 1, justifyContent: "center", background: veilig === "Nee" ? "#F0453F" : "#3B82F6" }} onClick={submit} disabled={!vehicle || !omschrijving.trim() || submitting}>
-              {submitting ? (media.length ? "Foto's opslaan…" : "Versturen…") : "Melding versturen"}
+              {submitting ? (media.length ? t("savingPhotos") : t("sending")) : t("submitReport")}
             </Button>
           )}
         </div>
@@ -1222,6 +1250,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
 }
 
 function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia }) {
+  const { t } = useT();
   const firstName = currentUser?.naam?.split(" ")[0] || "";
   const openCount = myReports.filter((r) => r.status !== "klaar").length;
   const doneCount = myReports.filter((r) => r.status === "klaar").length;
@@ -1241,15 +1270,16 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
   return (
     <div className="space-y-6">
       <div className="max-w-xl mx-auto">
-        <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3" }}>Hoi{firstName ? `, ${firstName}` : ""} 👋</h1>
-        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Zie je iets aan je wagen? Maak hieronder een melding.</p>
+        <div className="flex items-start justify-between gap-3">
+          <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3" }}>{t("greeting")}{firstName ? `, ${firstName}` : ""} 👋</h1>
+          <LangSwitcher compact />
+        </div>
+        <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{t("greetingSub")}</p>
         {(pending > 0 || !online) && (
           <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg" style={{ background: "#FF8A0018", border: "1px solid #FF8A0044" }}>
             <span style={{ width: 8, height: 8, borderRadius: 999, background: online ? "#FF8A00" : "#98A1B0", flexShrink: 0 }} />
             <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3" }}>
-              {pending > 0
-                ? `${pending} melding${pending === 1 ? "" : "en"} wacht${pending === 1 ? "" : "en"} op verbinding — wordt automatisch verstuurd.`
-                : "Je bent offline. Meldingen worden bewaard en later verstuurd."}
+              {pending > 0 ? t("offlinePending", { n: pending }) : t("offlineNow")}
             </span>
           </div>
         )}
@@ -1257,11 +1287,11 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
           <div className="flex gap-2 mt-3">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background: "#3B82F618", border: "1px solid #3B82F544" }}>
               <span style={{ fontFamily: "Oswald", fontSize: 15, fontWeight: 700, color: "#3B82F6" }}>{openCount}</span>
-              <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>lopend</span>
+              <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{t("lopend")}</span>
             </div>
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background: "#34D39918", border: "1px solid #34D39944" }}>
               <span style={{ fontFamily: "Oswald", fontSize: 15, fontWeight: 700, color: "#34D399" }}>{doneCount}</span>
-              <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>afgerond</span>
+              <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{t("afgerond")}</span>
             </div>
           </div>
         )}
@@ -1270,11 +1300,11 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
       <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
 
       <div className="max-w-xl mx-auto">
-        <Eyebrow>Jouw meldingen</Eyebrow>
+        <Eyebrow>{t("yourReports")}</Eyebrow>
         {myReports.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
             <CheckCircle2 size={26} color="#6B7585" />
-            <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>Nog geen meldingen ingediend.</span>
+            <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>{t("noReports")}</span>
           </div>
         ) : (
           <div className="space-y-2 mt-1">
