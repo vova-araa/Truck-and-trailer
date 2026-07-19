@@ -50,6 +50,21 @@ export async function createActivationCode({ companyName, adminNaam, adminEmail,
   return data; // de code (string)
 }
 
+// Platformbeheerder mailt een nieuw bedrijf de activatiecode.
+export async function sendActivationEmail({ email, code, companyName, adminNaam }) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  if (!token) throw new Error("Niet ingelogd — log opnieuw in.");
+  const res = await fetch("/api/admin/send-activation-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ email, code, companyName, adminNaam }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Kon de code niet mailen.");
+  return data;
+}
+
 // Beheerder zegt het abonnement op (blijft werken tot de verlengdatum) of
 // heractiveert het weer.
 export async function cancelSubscription() {

@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 
 /* ---------------------------------------------------------------------
@@ -4372,6 +4372,8 @@ function CodesView({ live, companies = [] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
+  const [toast, setToast] = useState("");
+  const [emailNew, setEmailNew] = useState(true);
   const compName = (c) => c.company_name || (companies.find((x) => x.id === c.company_id) || {}).name || "—";
 
   const load = async () => {
@@ -4383,11 +4385,24 @@ function CodesView({ live, companies = [] }) {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [live]);
 
+  const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || "");
   const submit = async () => {
     setErr("");
     try {
       setBusy(true);
-      await createActivationCode(form);
+      const code = await createActivationCode(form);
+      // Nieuw bedrijf meteen mailen met de code (als er een e-mailadres is en de
+      // schakelaar "mailen" aan staat).
+      if (emailNew && validEmail(form.adminEmail) && code) {
+        try {
+          await sendActivationEmail({ email: form.adminEmail.trim(), code, companyName: form.companyName, adminNaam: form.adminNaam });
+          setToast(`Code gemaild naar ${form.adminEmail.trim()}.`);
+        } catch (mailErr) {
+          setToast(`Code aangemaakt, maar mailen mislukte: ${mailErr.message || "fout"}. Je kunt 'm nog kopiëren.`);
+        }
+      } else {
+        setToast("Code aangemaakt.");
+      }
       setForm(blank());
       await load();
     } catch (e) {
@@ -4416,6 +4431,7 @@ function CodesView({ live, companies = [] }) {
 
   return (
     <div className="space-y-5">
+      {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <div>
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Ticket size={22} color="#3B82F6" /> Abonnementen</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Overzicht van lopende abonnementen en 12-cijferige activatiecodes. Codes die jij aanmaakt zijn standaard gratis; zet de schakelaar op "Betaald" wanneer nodig.</p>
@@ -4496,6 +4512,13 @@ function CodesView({ live, companies = [] }) {
               <Button icon={Plus} onClick={submit} disabled={busy}>{busy ? "Aanmaken…" : "Code aanmaken"}</Button>
             </div>
           </div>
+          {/* Nieuw bedrijf direct de code mailen */}
+          <label className="flex items-center gap-2.5 mt-3" style={{ cursor: "pointer" }}>
+            <span onClick={() => setEmailNew((v) => !v)} className="rounded-full flex items-center" style={{ width: 34, height: 20, background: emailNew ? "#3B82F6" : "#2A3340", padding: 2, flexShrink: 0 }}>
+              <span className="rounded-full" style={{ width: 16, height: 16, background: "#fff", transform: emailNew ? "translateX(14px)" : "translateX(0)", transition: "transform .2s" }} />
+            </span>
+            <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>Code direct per e-mail naar de beheerder sturen (als er een e-mailadres is ingevuld)</span>
+          </label>
           {err && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
         </div>
       </Card>

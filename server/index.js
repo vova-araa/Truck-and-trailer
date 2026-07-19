@@ -164,6 +164,60 @@ app.post("/api/admin/invite-user", async (req, res) => {
   }
 });
 
+// Platformbeheerder mailt een nieuw bedrijf de activatiecode (bij het aanmaken
+// van een gratis/betaald bedrijf). Verstuurd via Resend (RESEND_API_KEY).
+app.post("/api/admin/send-activation-email", async (req, res) => {
+  if (rateLimited("sendcode:" + (req.ip || "onbekend"))) {
+    return res.status(429).json({ error: "Te veel aanvragen. Wacht even en probeer opnieuw." });
+  }
+  const RESEND = process.env.RESEND_API_KEY || "";
+  if (!supaAdmin) return res.status(503).json({ error: "Niet geconfigureerd (SUPABASE_SERVICE_ROLE_KEY ontbreekt)." });
+  if (!RESEND) return res.status(503).json({ error: "E-mailen is niet geconfigureerd (RESEND_API_KEY ontbreekt op de server)." });
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return res.status(401).json({ error: "Niet ingelogd." });
+  try {
+    const { data: who, error: whoErr } = await supaAdmin.auth.getUser(token);
+    if (whoErr || !who?.user) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+    const { data: prof, error: pErr } = await supaAdmin.from("profiles").select("is_superadmin").eq("id", who.user.id).single();
+    if (pErr || !prof?.is_superadmin) return res.status(403).json({ error: "Alleen de platformbeheerder mag dit." });
+
+    const { email, code, companyName, adminNaam } = req.body || {};
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) return res.status(400).json({ error: "Geldig e-mailadres is verplicht." });
+    if (!code || !/^\d{6,}$/.test(String(code))) return res.status(400).json({ error: "Geldige code is verplicht." });
+
+    const appUrl = (process.env.APP_URL || "https://truckandtrailer.nl").replace(/\/+$/, "");
+    const naam = (adminNaam || "").trim();
+    const bedrijf = (companyName || "je bedrijf").trim();
+    const pretty = String(code).replace(/(\d{4})(?=\d)/g, "$1 ");
+    const html = `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#1a2129">
+  <h1 style="font-size:20px;margin:0 0 8px">TRUCK &amp; TRAILER</h1>
+  <p style="font-size:15px;line-height:1.5;margin:16px 0">${naam ? "Hallo " + naam + "," : "Hallo,"}</p>
+  <p style="font-size:15px;line-height:1.5;margin:16px 0">Je bent uitgenodigd om <b>${bedrijf}</b> te activeren op Truck &amp; Trailer — vloot- en werkplaatsbeheer voor transportbedrijven.</p>
+  <p style="font-size:14px;line-height:1.5;margin:16px 0">Je activatiecode:</p>
+  <div style="font-family:'Courier New',monospace;font-size:26px;font-weight:bold;letter-spacing:3px;background:#f2f5f9;border:1px solid #d7dee7;border-radius:10px;padding:16px;text-align:center;color:#0A0E14">${pretty}</div>
+  <p style="margin:24px 0">
+    <a href="${appUrl}/" style="background:#3B82F6;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:bold;font-size:15px;display:inline-block">Bedrijf activeren</a>
+  </p>
+  <p style="font-size:12.5px;color:#667085;line-height:1.5;margin:16px 0 0">Ga naar <a href="${appUrl}/" style="color:#3B82F6">${appUrl.replace(/^https?:\/\//, "")}</a>, kies <b>"Bedrijf activeren"</b> en voer de code hierboven in. Daarna maak je je beheerdersaccount aan en kun je meteen aan de slag.</p>
+  <p style="font-size:12px;color:#98a1b0;margin-top:24px">Niet verwacht? Dan kun je deze mail negeren.</p>
+</div>`;
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "Truck & Trailer <noreply@truckandtrailer.nl>", to: [email], subject: `Activeer ${bedrijf} op Truck & Trailer`, html }),
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      return res.status(502).json({ error: "Kon de mail niet versturen via Resend: " + t.slice(0, 200) });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("send-activation-email fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij het mailen van de code." });
+  }
+});
+
 app.post("/api/ai", async (req, res) => {
   if (!anthropic) {
     return res.status(503).json({ error: "AI is niet geconfigureerd. Zet ANTHROPIC_API_KEY in de server-omgeving." });
