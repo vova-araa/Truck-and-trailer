@@ -5990,8 +5990,10 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Houd de URL gelijk aan het huidige scherm (voor terug-knop / delen / verversen).
   const routeInit = useRef(false);
   useEffect(() => {
-    const path = viewToPath(view, selectedVehicleId);
     if (typeof window === "undefined") return;
+    // Demo/rondleiding (geen sessie): de URL niet omschrijven, zodat /demo blijft staan.
+    if (!live) return;
+    const path = viewToPath(view, selectedVehicleId);
     if (window.location.pathname === path) { routeInit.current = true; return; }
     if (!routeInit.current) { routeInit.current = true; window.history.replaceState({ view, selectedVehicleId }, "", path); }
     else window.history.pushState({ view, selectedVehicleId }, "", path);

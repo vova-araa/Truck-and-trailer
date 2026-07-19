@@ -9,10 +9,15 @@ import TruckTrailerApp from "./TruckTrailerApp.jsx";
 // Routing-zones: de landingspagina staat op /, de app onder /app, plus losse
 // publieke pagina's (/privacy, /voorwaarden) en het inlogscherm (/inloggen,
 // /activeren). Een uitnodigings-/herstel-link opent het wachtwoord-scherm.
+// Privacy/Voorwaarden staan nog "offline" (worden aan het eind afgemaakt).
+// Zet op true zodra de teksten definitief zijn — dan werken de routes + links.
+const LEGAL_LIVE = false;
+
 function zoneOf(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
-  if (p === "/privacy") return "privacy";
-  if (p === "/voorwaarden") return "terms";
+  if (LEGAL_LIVE && p === "/privacy") return "privacy";
+  if (LEGAL_LIVE && p === "/voorwaarden") return "terms";
+  if (p === "/demo" || p.startsWith("/demo/")) return "demo";
   if (p === "/app" || p.startsWith("/app/")) return "app";
   if (p === "/inloggen" || p === "/activeren" || p === "/aanmelden") return "auth";
   return "landing";
@@ -90,6 +95,8 @@ export default function Root() {
   // Publieke pagina's zijn altijd bereikbaar (ook zonder/ met login).
   if (zone === "privacy") return <PrivacyPage onBack={() => navigate("/")} />;
   if (zone === "terms") return <TermsPage onBack={() => navigate("/")} />;
+  // Klikbare demo (seed-data, geen login) — voor de rondleiding vanaf de landing.
+  if (zone === "demo") return <TruckTrailerApp session={null} onLogout={() => navigate("/")} />;
 
   // Ingelogd: altijd de app (die corrigeert de URL zelf naar /app…).
   if (session) {
@@ -105,7 +112,7 @@ export default function Root() {
   if (zone === "app" || zone === "auth") {
     return <AuthScreen onAuthed={boot} onBack={() => navigate("/")} initialMode={zone === "auth" && /activeren|aanmelden/i.test(routePath) ? "register" : "login"} />;
   }
-  return <Landing onLogin={() => navigate("/inloggen")} onActivate={() => navigate("/activeren")} onLegal={(p) => navigate(p)} />;
+  return <Landing onLogin={() => navigate("/inloggen")} onActivate={() => navigate("/activeren")} onDemo={() => navigate("/demo")} onLegal={LEGAL_LIVE ? (p) => navigate(p) : null} />;
 }
 
 function SetPasswordScreen({ onDone, onCancel }) {
