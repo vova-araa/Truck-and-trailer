@@ -134,7 +134,7 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
     <div style={wrap}>
       <div style={{ width: "100%", maxWidth: 380 }}>
         {onBack && (
-          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 12.5, cursor: "pointer", marginBottom: 10, padding: 0 }}>← Terug naar website</button>
+          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8FB8FF", fontFamily: "Inter, sans-serif", fontSize: 13, cursor: "pointer", marginBottom: 34, padding: "6px 0", display: "inline-flex", alignItems: "center", gap: 6 }}>← Terug naar website</button>
         )}
         <div style={{ textAlign: "center", marginBottom: 8 }}>
           <span style={{ fontFamily: "Oswald, sans-serif", fontSize: 26, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>
@@ -176,7 +176,9 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
               onChange={(e) => setLogin({ ...login, wachtwoord: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doLogin()} />
             {err && <div style={errStyle}>{err}</div>}
             {notice && <div style={noticeStyle}>{notice}</div>}
-            <button style={primaryBtn} disabled={busy} onClick={doLogin}><LogIn size={16} /> {busy ? "Bezig..." : "Inloggen"}</button>
+            {(() => { const off = busy || !login.email.trim() || !login.wachtwoord; return (
+              <button style={{ ...primaryBtn, opacity: off ? 0.5 : 1, cursor: off ? "not-allowed" : "pointer" }} disabled={off} onClick={doLogin}><LogIn size={16} /> {busy ? "Bezig..." : "Inloggen"}</button>
+            ); })()}
             <button style={linkBtn} disabled={busy} onClick={doReset}>Wachtwoord vergeten?</button>
           </div>
         ) : (
