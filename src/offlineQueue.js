@@ -26,11 +26,13 @@ export function isNetworkError(e) {
   return /failed to fetch|networkerror|network request failed|load failed|fetch/i.test(msg);
 }
 
-export function enqueueReport(report) {
+export function enqueueReport(report, uid = null) {
   const arr = read();
   // Dubbele meldingen (zelfde id) niet nog eens toevoegen.
   if (!arr.some((it) => it.report && it.report.id === report.id)) {
-    arr.push({ report, queuedAt: null });
+    // 'uid' legt vast wíé de melding maakte: op een gedeeld apparaat mag een
+    // achtergebleven melding nooit onder een andere login verstuurd worden.
+    arr.push({ report, uid, queuedAt: null });
     write(arr);
   }
   notify();
@@ -44,11 +46,22 @@ export async function flushQueue() {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
   const arr = read();
   if (!arr.length) return 0;
+  // Zonder geldige sessie niets proberen (en zeker niets als "poging" tellen):
+  // de meldingen blijven staan tot de juiste gebruiker weer ingelogd is.
+  let uid = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    uid = data?.session?.user?.id || null;
+  } catch { /* auth even niet bereikbaar */ }
+  if (!uid) return 0;
   flushing = true;
   const remaining = [];
   let sent = 0;
   for (let i = 0; i < arr.length; i++) {
     const item = arr[i];
+    // Melding van een ándere gebruiker (of zonder eigenaar uit een oudere
+    // versie): bewaren, niet onder deze login versturen.
+    if (item.uid !== uid) { remaining.push(item); continue; }
     try {
       const { error } = await supabase.rpc("driver_add_report", { p_report: item.report });
       if (error) throw error;

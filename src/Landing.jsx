@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   Truck, AlertTriangle, KanbanSquare, Euro, Sparkles, FileText, ShieldCheck,
-  BellRing, Globe, WifiOff, Check, ArrowRight, Mail, Phone as PhoneIcon, MessageCircle, LogIn, Ticket, Star,
+  BellRing, Globe, WifiOff, Check, ArrowRight, Mail, Phone as PhoneIcon, MessageCircle, LogIn, Ticket,
   Wrench, Users, ChevronDown, BarChart3,
 } from "lucide-react";
 import { sendContactRequest } from "./api.js";
@@ -18,8 +18,10 @@ import { sendContactRequest } from "./api.js";
 const ACCENT = "#3B82F6";
 const TEAL = "#22D3B0";
 const CONTACT_EMAIL = "info@truckandtrailer.nl";
-const CONTACT_TEL = "+31 6 12 34 56 78"; // pas aan naar je eigen nummer
-const WHATSAPP = "31612345678";           // internationaal, zonder +
+// Bel- en WhatsApp-knoppen verschijnen pas als hier een ECHT nummer staat —
+// een placeholder-nummer zou bezoekers naar een willekeurige derde laten bellen.
+const CONTACT_TEL = "";  // bv. "+31 6 12345678"
+const WHATSAPP = "";     // internationaal, zonder + (bv. "31612345678")
 
 const FEATURES = [
   { icon: AlertTriangle, kleur: "#F0453F", titel: "Meldingen van chauffeurs", tekst: "Chauffeurs melden onderweg een probleem in een paar tikken — met foto, spraak en AI-schadeherkenning. In 11 talen en zelfs offline." },
@@ -213,8 +215,9 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         <div className="ln-hero-grid">
           <div>
             <Reveal>
+              {/* Geen nep-sterrenscore: dat wekt een reviewclaim die (nog) niet bestaat. */}
               <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 999, border: "1px solid #233047", background: "rgba(59,130,246,.08)", marginBottom: 18 }}>
-                <span style={{ display: "inline-flex", gap: 1 }}>{[0, 1, 2, 3, 4].map((i) => <Star key={i} size={11} color="#F5B301" fill="#F5B301" />)}</span>
+                <span style={{ width: 7, height: 7, borderRadius: 999, background: TEAL, boxShadow: `0 0 8px ${TEAL}` }} />
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#B4BCC9" }}>Voor Nederlandse transportbedrijven</span>
               </div>
             </Reveal>
@@ -391,8 +394,8 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
               </p>
               <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                 <a className="ln-btn ln-ghost" href={`mailto:${CONTACT_EMAIL}`}><Mail size={15} /> {CONTACT_EMAIL}</a>
-                <a className="ln-btn ln-ghost" href={`tel:${CONTACT_TEL.replace(/\s/g, "")}`}><PhoneIcon size={15} /> Bellen</a>
-                <a className="ln-btn ln-ghost" href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noopener noreferrer"><MessageCircle size={15} /> WhatsApp</a>
+                {CONTACT_TEL && <a className="ln-btn ln-ghost" href={`tel:${CONTACT_TEL.replace(/\s/g, "")}`}><PhoneIcon size={15} /> Bellen</a>}
+                {WHATSAPP && <a className="ln-btn ln-ghost" href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noopener noreferrer"><MessageCircle size={15} /> WhatsApp</a>}
               </div>
             </div>
             <div style={{ padding: 28 }}>

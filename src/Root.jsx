@@ -78,7 +78,10 @@ export default function Root() {
     boot();
     const { data: sub } = supabase.auth.onAuthStateChange((evt, s) => {
       if (evt === "PASSWORD_RECOVERY") setNeedPassword(true);
-      if (!s) setSession(null);
+      // Bij uitloggen óók routePath verversen: de app zet zelf de URL op /app…
+      // via pushState (geen popstate-event), dus onze state kan verouderd zijn.
+      // Zonder sync zou na uitloggen de landing onder een /app-URL verschijnen.
+      if (!s) { setSession(null); try { setRoutePath(window.location.pathname); } catch { /* noop */ } }
     });
     // Terug/vooruit-knop: houd de zone in sync met de URL.
     const onPop = () => setRoutePath(window.location.pathname);
@@ -89,19 +92,21 @@ export default function Root() {
   if (!supabaseConfigured) return <SetupNotice />;
   if (!ready) return <Splash text="Laden..." />;
   if (needPassword) return <SetPasswordScreen onDone={() => { setNeedPassword(false); try { window.history.replaceState(null, "", window.location.pathname); } catch {} boot(); }} onCancel={async () => { setNeedPassword(false); try { window.history.replaceState(null, "", "/"); } catch {} setRoutePath("/"); await signOut(); setSession(null); }} />;
-  if (loadErr) return <Splash text={"Fout bij laden: " + loadErr} />;
+  if (loadErr) return <ErrorScreen text={loadErr} onRetry={() => boot()} onLogout={async () => { try { await signOut(); } catch { /* noop */ } setSession(null); setLoadErr(""); try { window.history.replaceState(null, "", "/"); } catch { /* noop */ } setRoutePath("/"); }} />;
 
   const zone = zoneOf(routePath);
   // Publieke pagina's zijn altijd bereikbaar (ook zonder/ met login).
   if (zone === "privacy") return <PrivacyPage onBack={() => navigate("/")} />;
   if (zone === "terms") return <TermsPage onBack={() => navigate("/")} />;
   // Klikbare demo (seed-data, geen login) — voor de rondleiding vanaf de landing.
-  if (zone === "demo") return <TruckTrailerApp session={null} onLogout={() => navigate("/")} />;
+  // De 'key' zorgt dat demo- en live-app nooit React-state delen (verse mount).
+  if (zone === "demo") return <TruckTrailerApp key="demo" session={null} onLogout={() => navigate("/")} />;
 
   // Ingelogd: altijd de app (die corrigeert de URL zelf naar /app…).
   if (session) {
     return (
       <TruckTrailerApp
+        key={session.user?.id || "live"}
         session={session}
         onLogout={async () => { await signOut(); setSession(null); navigate("/"); }}
       />
@@ -158,6 +163,29 @@ function Splash({ text }) {
   return (
     <div style={splash}>
       <div style={{ color: "#B4BCC9", fontFamily: "Inter, sans-serif", fontSize: 14 }}>{text}</div>
+    </div>
+  );
+}
+
+// Foutscherm met uitweg: opnieuw proberen of uitloggen. Zonder deze knoppen zit
+// iemand met een persistente sessie maar een tijdelijke laadfout muurvast.
+function ErrorScreen({ text, onRetry, onLogout }) {
+  return (
+    <div style={splash}>
+      <div style={{ width: "100%", maxWidth: 420, textAlign: "center" }}>
+        <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 22, fontWeight: 700, color: "#E7ECF3", marginBottom: 10 }}>
+          TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER
+        </div>
+        <div style={{ color: "#B4BCC9", fontFamily: "Inter, sans-serif", fontSize: 14, lineHeight: 1.6, marginBottom: 18 }}>
+          Er ging iets mis bij het laden: {text}
+        </div>
+        <button onClick={onRetry} style={{ width: "100%", background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 14, border: "none", borderRadius: 10, padding: "12px 0", cursor: "pointer" }}>
+          Opnieuw proberen
+        </button>
+        <button onClick={onLogout} style={{ width: "100%", background: "transparent", color: "#98A1B0", fontFamily: "Inter, sans-serif", fontSize: 12.5, border: "none", marginTop: 10, cursor: "pointer" }}>
+          Uitloggen en terug naar de website
+        </button>
+      </div>
     </div>
   );
 }

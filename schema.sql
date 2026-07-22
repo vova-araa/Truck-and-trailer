@@ -10,9 +10,15 @@ create table if not exists public.companies (
   name text not null,
   slug text not null,
   accent text not null default '#3B82F6',
-  join_code text not null default upper(substr(md5(random()::text || clock_timestamp()::text), 1, 10)),
+  -- gen_random_uuid() als bron: cryptografisch sterk (random() is dat niet).
+  join_code text not null default upper(substr(md5(gen_random_uuid()::text), 1, 10)),
   created_at timestamptz not null default now()
 );
+
+-- Revisieteller: elke wijziging aan company_state "tikt" deze kolom aan (zie
+-- trigger verderop). De app luistert via Realtime op de companies-rij; zonder
+-- deze tik zou er nooit een event komen en ververst de werkvloer niet vanzelf.
+alter table public.companies add column if not exists state_rev bigint not null default 0;
 
 -- Bestaat de tabel al van een eerdere versie? Voeg de kolom dan alsnog toe
 -- (bestaande rijen krijgen elk een eigen willekeurige code) en borg uniekheid.
@@ -145,6 +151,20 @@ drop trigger if exists trg_guard_superadmin on public.profiles;
 create trigger trg_guard_superadmin before insert or update on public.profiles
   for each row execute function public.guard_superadmin_flag();
 
+-- De primary key van een profiel (gekoppeld aan auth.users) mag nooit wijzigen;
+-- de UPDATE-policy kan dat zelf niet afdwingen, dus een kleine trigger-guard.
+create or replace function public.guard_profile_id()
+returns trigger language plpgsql as $$
+begin
+  if new.id is distinct from old.id then
+    raise exception 'Niet toegestaan: profiel-id kan niet gewijzigd worden.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_guard_profile_id on public.profiles;
+create trigger trg_guard_profile_id before update on public.profiles
+  for each row execute function public.guard_profile_id();
+
 -- COMPANY STATE
 -- De volledige dataset (jsonb) is alleen direct te lezen/schrijven door de
 -- BEHEERDER van het bedrijf (of de platform-superadmin). Werkplaats en chauffeur
@@ -244,12 +264,78 @@ begin
   -- we de bestaande users-lijst uit de database ongewijzigd.
   if v_rol = 'garage' then
     final := final || jsonb_build_object('users', coalesce(existing -> 'users', '[]'::jsonb));
+    -- De werkplaats ziet geen kosten (load stript ze) en mag ze dus ook niet
+    -- wijzigen of verwijderen — alleen NIEUWE toevoegen (werkbon). Bestaande
+    -- kosten winnen altijd; door de client meegestuurde "bekende" ids negeren
+    -- we, zodat een garage-save nooit financiële data kan wissen of vervangen.
+    final := final || jsonb_build_object('costs', ex_costs || coalesce((
+      select jsonb_agg(c) from jsonb_array_elements(in_costs) c
+      where (c ->> 'id') is not null
+        and not exists (select 1 from jsonb_array_elements(ex_costs) e where e ->> 'id' = c ->> 'id')
+    ), '[]'::jsonb));
   end if;
 
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
 grant execute on function public.save_company_state(jsonb, text[], text[]) to authenticated;
+
+-- Superadmin-variant: de platformbeheerder bewerkt vaak een ÁNDER bedrijf dan
+-- z'n eigen. Een kale upsert zou de merge-bescherming omzeilen en bv. een
+-- chauffeursmelding wegvagen die tijdens het meekijken binnenkwam. Daarom:
+-- dezelfde meldingen/kosten-merge, maar gescopeerd op een expliciet bedrijf.
+create or replace function public.save_company_state_scoped(
+  p_company_id uuid, p_data jsonb,
+  p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}'
+) returns void language plpgsql security definer as $$
+declare existing jsonb; ex_reports jsonb; ex_costs jsonb; in_reports jsonb; in_costs jsonb;
+        cli_report_ids text[]; cli_cost_ids text[]; final jsonb;
+begin
+  if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
+  if p_company_id is null then raise exception 'NO_COMPANY'; end if;
+
+  select data into existing from public.company_state where company_id = p_company_id for update;
+  existing := coalesce(existing, '{}'::jsonb);
+  final := coalesce(p_data, '{}'::jsonb);
+
+  ex_reports := case when jsonb_typeof(existing -> 'reports') = 'array' then existing -> 'reports' else '[]'::jsonb end;
+  ex_costs   := case when jsonb_typeof(existing -> 'costs')   = 'array' then existing -> 'costs'   else '[]'::jsonb end;
+  in_reports := case when jsonb_typeof(final -> 'reports') = 'array' then final -> 'reports' else '[]'::jsonb end;
+  in_costs   := case when jsonb_typeof(final -> 'costs')   = 'array' then final -> 'costs'   else '[]'::jsonb end;
+
+  select coalesce(array_agg(e ->> 'id'), '{}') into cli_report_ids from jsonb_array_elements(in_reports) e where (e ->> 'id') is not null;
+  select coalesce(array_agg(e ->> 'id'), '{}') into cli_cost_ids   from jsonb_array_elements(in_costs)   e where (e ->> 'id') is not null;
+
+  final := final
+    || jsonb_build_object('reports', in_reports || coalesce((
+         select jsonb_agg(r) from jsonb_array_elements(ex_reports) r
+         where (r ->> 'id') is not null
+           and not (r ->> 'id' = any(cli_report_ids))
+           and not (r ->> 'id' = any(p_base_report_ids))
+       ), '[]'::jsonb))
+    || jsonb_build_object('costs', in_costs || coalesce((
+         select jsonb_agg(c) from jsonb_array_elements(ex_costs) c
+         where (c ->> 'id') is not null
+           and not (c ->> 'id' = any(cli_cost_ids))
+           and not (c ->> 'id' = any(p_base_cost_ids))
+       ), '[]'::jsonb));
+
+  insert into public.company_state (company_id, data, updated_at) values (p_company_id, final, now())
+    on conflict (company_id) do update set data = excluded.data, updated_at = now();
+end $$;
+grant execute on function public.save_company_state_scoped(uuid, jsonb, text[], text[]) to authenticated;
+
+-- Elke wijziging aan company_state tikt de companies-rij aan, zodat de
+-- Realtime-luisteraar in de app (op tabel companies) daadwerkelijk vuurt.
+create or replace function public.touch_company_rev()
+returns trigger language plpgsql security definer as $$
+begin
+  update public.companies set state_rev = state_rev + 1 where id = new.company_id;
+  return new;
+end $$;
+drop trigger if exists trg_touch_company_rev on public.company_state;
+create trigger trg_touch_company_rev after insert or update on public.company_state
+  for each row execute function public.touch_company_rev();
 
 -- Chauffeur: alleen minimale voertuiggegevens (om uit te kiezen) + eigen meldingen.
 create or replace function public.driver_bootstrap()
@@ -295,21 +381,36 @@ end $$;
 grant execute on function public.driver_open_reports_for_vehicle(text) to authenticated;
 
 -- Chauffeur voegt een melding toe (server dwingt de chauffeur-identiteit af).
+-- Hardening: alleen bekende velden worden overgenomen (whitelist), de omvang is
+-- begrensd, en dezelfde melding-id twee keer insturen is een no-op (idempotent —
+-- de offline-wachtrij kan na een timeout opnieuw versturen terwijl de eerste
+-- poging tóch was aangekomen).
 create or replace function public.driver_add_report(p_report jsonb)
 returns void language plpgsql security definer as $$
-declare cid uuid; v_naam text; newrep jsonb;
+declare cid uuid; v_naam text; newrep jsonb; rep jsonb; rid text;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
   if cid is null then raise exception 'NO_COMPANY'; end if;
-  newrep := coalesce(p_report, '{}'::jsonb)
+  rep := coalesce(p_report, '{}'::jsonb);
+  if length(rep::text) > 65536 then raise exception 'REPORT_TOO_LARGE'; end if;
+  -- Whitelist: onbekende/gevaarlijke velden (zoals een eigen 'status') vallen weg.
+  select coalesce(jsonb_object_agg(k, rep -> k), '{}'::jsonb) into newrep
+    from unnest(array['id','vehicle','omschrijving','prioriteit','datum','zone','wanneer','hoelang','veilig','media','mediaCount']) as k
+    where rep ? k;
+  newrep := newrep
     || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'), 'status', 'nieuw');
+  rid := newrep ->> 'id';
   insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
   update public.company_state
     set data = jsonb_set(coalesce(data, '{}'::jsonb), '{reports}',
           jsonb_build_array(newrep) || coalesce(data -> 'reports', '[]'::jsonb)),
         updated_at = now()
-    where company_id = cid;
+    where company_id = cid
+      and (rid is null or not exists (
+        select 1 from jsonb_array_elements(coalesce(data -> 'reports', '[]'::jsonb)) r
+        where r ->> 'id' = rid
+      ));
 end $$;
 grant execute on function public.driver_add_report(jsonb) to authenticated;
 
@@ -436,7 +537,8 @@ declare new_code text; tries int := 0;
 begin
   if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
   loop
-    new_code := lpad((floor(random()*1e12))::bigint::text, 12, '0');
+    -- Afgeleid van gen_random_uuid(): cryptografisch sterke bron (random() niet).
+    new_code := lpad(((('x' || substr(md5(gen_random_uuid()::text), 1, 12))::bit(48)::bigint) % 1000000000000)::text, 12, '0');
     exit when not exists(select 1 from public.activation_codes where code = new_code);
     tries := tries + 1;
     if tries > 10 then raise exception 'CODE_GEN_FAILED'; end if;
@@ -712,13 +814,28 @@ create policy "documenten lezen eigen bedrijf" on storage.objects
     and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
   );
 
+-- Verwijderen alleen door de beheerder (zelfde regel als bij 'meldingen'):
+-- een chauffeur/monteur moet niet alle kentekenbewijzen kunnen wissen.
 drop policy if exists "documenten verwijderen eigen bedrijf" on storage.objects;
 create policy "documenten verwijderen eigen bedrijf" on storage.objects
   for delete to authenticated
   using (
     bucket_id = 'documenten'
-    and ( (storage.foldername(name))[1] = public.current_company_id()::text or public.is_superadmin() )
+    and ( ((storage.foldername(name))[1] = public.current_company_id()::text and public.is_company_admin()) or public.is_superadmin() )
   );
+
+-- ---------- HERINNERINGEN-LOG: voorkomt dubbele reminder-mails ----------
+-- De cron-endpoint (server) logt hier welke mijlpaal-mail al verstuurd is, zodat
+-- een retry van de cron-dienst (of een handmatige trigger) niet nóg een keer
+-- dezelfde mail stuurt. Alleen de server (service_role) leest/schrijft dit.
+create table if not exists public.reminder_log (
+  company_id uuid not null references public.companies(id) on delete cascade,
+  item_key   text not null,           -- bv. "84-BSX-2|apkTot|2026-11-14|14"
+  sent_on    date not null default current_date,
+  primary key (company_id, item_key, sent_on)
+);
+alter table public.reminder_log enable row level security;
+-- (Geen policies: uitsluitend bereikbaar via de server met de service_role.)
 
 -- ---------- WEB-PUSH: abonnementen voor pushmeldingen ----------
 -- Beheer/werkplaats kan pushmeldingen aanzetten (bij een nieuwe melding). De

@@ -160,20 +160,20 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
               </span>
             </div>
             <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw account</div>
-            <input style={input} placeholder="Jouw naam" value={join.naam} onChange={(e) => setJoin({ ...join, naam: e.target.value })} />
-            <input style={input} placeholder="E-mailadres" value={join.email} onChange={(e) => setJoin({ ...join, email: e.target.value })} />
-            <input style={input} placeholder="Telefoon (optioneel)" value={join.telefoon} onChange={(e) => setJoin({ ...join, telefoon: e.target.value })} />
-            <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={join.wachtwoord} onChange={(e) => setJoin({ ...join, wachtwoord: e.target.value })} />
-            <input style={input} type="password" placeholder="Herhaal wachtwoord" value={join.wachtwoord2}
-              onChange={(e) => setJoin({ ...join, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doJoin()} />
+            <input style={input} name="name" autoComplete="name" placeholder="Jouw naam" value={join.naam} onChange={(e) => setJoin({ ...join, naam: e.target.value })} />
+            <input style={input} type="email" name="email" autoComplete="email" inputMode="email" placeholder="E-mailadres" value={join.email} onChange={(e) => setJoin({ ...join, email: e.target.value })} />
+            <input style={input} type="tel" name="tel" autoComplete="tel" inputMode="tel" placeholder="Telefoon (optioneel)" value={join.telefoon} onChange={(e) => setJoin({ ...join, telefoon: e.target.value })} />
+            <input style={input} type="password" name="new-password" autoComplete="new-password" placeholder="Wachtwoord (min. 6 tekens)" value={join.wachtwoord} onChange={(e) => setJoin({ ...join, wachtwoord: e.target.value })} />
+            <input style={input} type="password" name="confirm-password" autoComplete="new-password" placeholder="Herhaal wachtwoord" value={join.wachtwoord2}
+              onChange={(e) => setJoin({ ...join, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && !busy && doJoin()} />
             {err && <div style={errStyle}>{err}</div>}
             <button style={primaryBtn} disabled={busy} onClick={doJoin}><KeyRound size={16} /> {busy ? "Bezig..." : "Meedoen"}</button>
           </div>
         ) : mode === "login" ? (
           <div style={{ display: "grid", gap: 10 }}>
-            <input style={input} placeholder="E-mailadres" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} />
-            <input style={input} type="password" placeholder="Wachtwoord" value={login.wachtwoord}
-              onChange={(e) => setLogin({ ...login, wachtwoord: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doLogin()} />
+            <input style={input} type="email" name="email" autoComplete="username" inputMode="email" placeholder="E-mailadres" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} />
+            <input style={input} type="password" name="current-password" autoComplete="current-password" placeholder="Wachtwoord" value={login.wachtwoord}
+              onChange={(e) => setLogin({ ...login, wachtwoord: e.target.value })} onKeyDown={(e) => e.key === "Enter" && !busy && doLogin()} />
             {err && <div style={errStyle}>{err}</div>}
             {notice && <div style={noticeStyle}>{notice}</div>}
             {(() => { const off = busy || !login.email.trim() || !login.wachtwoord; return (
@@ -188,7 +188,7 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
               <>
                 <div style={sectionLabel}>Abonnementscode</div>
                 <input style={{ ...input, letterSpacing: 2, fontFamily: "'JetBrains Mono', monospace" }} inputMode="numeric" maxLength={14} placeholder="12-cijferige code" value={reg.code}
-                  onChange={(e) => onRegCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && acceptCode()} />
+                  onChange={(e) => onRegCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !codeChecking && acceptCode()} />
                 <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", marginTop: -4 }}>
                   Deze krijg je bij je abonnement. Zonder geldige code kun je geen bedrijf activeren.
                 </div>
@@ -214,13 +214,13 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
                   <input style={input} placeholder="Bedrijfsnaam" value={reg.bedrijfsnaam} onChange={(e) => setReg({ ...reg, bedrijfsnaam: e.target.value })} />
                 </>)}
                 {(!codeInfo || !codeInfo.admin_naam || !codeInfo.admin_email) && <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>}
-                {(!codeInfo || !codeInfo.admin_naam) && <input style={input} placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
-                {(!codeInfo || !codeInfo.admin_email) && <input style={input} placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
-                {(!codeInfo || !codeInfo.company_name) && <input style={input} placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />}
+                {(!codeInfo || !codeInfo.admin_naam) && <input style={input} name="name" autoComplete="name" placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
+                {(!codeInfo || !codeInfo.admin_email) && <input style={input} type="email" name="email" autoComplete="email" inputMode="email" placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
+                {(!codeInfo || !codeInfo.company_name) && <input style={input} type="tel" name="tel" autoComplete="tel" inputMode="tel" placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />}
                 <div style={{ ...sectionLabel, marginTop: 2 }}>Kies een wachtwoord</div>
-                <input style={input} type="password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
-                <input style={input} type="password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
-                  onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doRegister()} />
+                <input style={input} type="password" name="new-password" autoComplete="new-password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
+                <input style={input} type="password" name="confirm-password" autoComplete="new-password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}
+                  onChange={(e) => setReg({ ...reg, wachtwoord2: e.target.value })} onKeyDown={(e) => e.key === "Enter" && !busy && doRegister()} />
                 {err && <div style={errStyle}>{err}</div>}
                 <button style={primaryBtn} disabled={busy} onClick={doRegister}><Building2 size={16} /> {busy ? "Activeren..." : "Bedrijf activeren & starten"}</button>
                 <div style={{ color: "#98A1B0", fontSize: 11, fontFamily: "Inter, sans-serif", textAlign: "center" }}>

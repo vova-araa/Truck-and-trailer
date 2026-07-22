@@ -386,9 +386,13 @@ export async function driverVehicleOpenReports(kenteken) {
 }
 
 export async function driverAddReport(report) {
+  // De wachtrij-items dragen de gebruikers-id mee, zodat een melding die op een
+  // gedeeld apparaat blijft hangen nooit onder een ándere login (of zelfs een
+  // ander bedrijf) wordt verstuurd.
+  const uid = await currentUserId();
   // Geen verbinding? Direct in de offline-wachtrij; later automatisch verstuurd.
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    enqueueReport(report);
+    enqueueReport(report, uid);
     return { queued: true };
   }
   try {
@@ -399,9 +403,17 @@ export async function driverAddReport(report) {
     // Wat er ook misgaat (netwerk óf server): de melding NIET stil verliezen.
     // We bewaren 'm in de wachtrij; die probeert later opnieuw en geeft na een
     // paar mislukte pogingen op (zie offlineQueue) zodat er geen "poison" ontstaat.
-    enqueueReport(report);
+    enqueueReport(report, uid);
     return { queued: true };
   }
+}
+
+// Huidige ingelogde gebruikers-id (of null). Faalt stil — ook offline bruikbaar.
+async function currentUserId() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id || null;
+  } catch { return null; }
 }
 
 // Debounce-timer PER bedrijf, zodat een save voor bedrijf A niet wordt gewist
@@ -418,14 +430,20 @@ export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
   saveTimers[companyId] = setTimeout(async () => {
     onStatus?.("saving");
     try {
-      // Een gewone beheerder én de werkplaats slaan op via save_company_state,
-      // die meldingen/kosten samenvoegt (geen dataverlies bij gelijktijdig werk).
-      // De superadmin bewerkt mogelijk een ánder bedrijf en gaat daarom direct
-      // naar de juiste company_state-rij (de RPC schrijft altijd naar je eigen bedrijf).
-      const viaRpc = !isSuperadmin && (role === "admin" || role === "garage");
-      const { error } = viaRpc
-        ? await supabase.rpc("save_company_state", { p_data: dataset, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds })
-        : await supabase.from("company_state").upsert({ company_id: companyId, data: dataset, updated_at: new Date().toISOString() });
+      // Wachtwoorden horen nooit in de bedrijfsdataset te belanden (plaintext in
+      // de database). Het veld bestaat alleen in de lokale demo-flow; hier
+      // strippen we het voor de zekerheid vóór élke opslag.
+      let toSave = dataset;
+      if (Array.isArray(dataset?.users) && dataset.users.some((u) => u && "wachtwoord" in u)) {
+        toSave = { ...dataset, users: dataset.users.map((u) => { if (!u || !("wachtwoord" in u)) return u; const { wachtwoord, ...rest } = u; return rest; }) };
+      }
+      // Een gewone beheerder én de werkplaats slaan op via save_company_state;
+      // de superadmin (die vaak een ÁNDER bedrijf bewerkt) via de gescopeerde
+      // variant. Beide voegen meldingen/kosten server-side samen, zodat een
+      // save nooit een net binnengekomen chauffeursmelding wegvaagt.
+      const { error } = isSuperadmin
+        ? await supabase.rpc("save_company_state_scoped", { p_company_id: companyId, p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds })
+        : await supabase.rpc("save_company_state", { p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds });
       onStatus?.(error ? "error" : "saved");
       if (error) console.error("Opslaan mislukt:", error.message);
     } catch (e) {

@@ -435,18 +435,36 @@ app.all("/api/cron/reminders", async (req, res) => {
       const data = row.data || {};
       const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
       const profiel = data.bedrijfsprofiel || {};
-      const to = (profiel.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profiel.email)) ? profiel.email : (adminByCompany[row.company_id]?.email || null);
+      // Voorkeur: het e-mailadres van het ADMIN-profiel (alleen door de beheerder
+      // zelf te wijzigen). Het bedrijfsprofiel is door de werkplaats aanpasbaar
+      // en dient alleen als vangnet als er geen admin-adres bekend is.
+      const to = adminByCompany[row.company_id]?.email
+        || ((profiel.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profiel.email)) ? profiel.email : null);
       if (!to) continue;
-      const items = [];
+      let items = [];
       for (const v of vehicles) {
         for (const c of CHECKS) {
           if (c.veld === "tachoTot" && !v.tachoPlicht) continue;
           const dl = daysUntil(v[c.veld]);
           if (dl != null && REMINDER_MILESTONES.includes(dl)) {
-            items.push({ kenteken: v.kenteken, merk: v.merk || "", type: c.label, datum: v[c.veld], dagen: dl });
+            items.push({ kenteken: v.kenteken, merk: v.merk || "", type: c.label, datum: v[c.veld], dagen: dl, key: `${v.kenteken}|${c.veld}|${v[c.veld]}|${dl}` });
           }
         }
       }
+      if (!items.length) continue;
+      // Dedupe: sla over wat vandaag al gemaild is (retry van de cron-dienst of
+      // een handmatige trigger mag niet nóg een mail opleveren). Als de
+      // reminder_log-tabel nog niet bestaat (oudere database), mailen we gewoon.
+      try {
+        const { data: logged, error: logErr } = await supaAdmin
+          .from("reminder_log").select("item_key")
+          .eq("company_id", row.company_id)
+          .eq("sent_on", new Date().toISOString().slice(0, 10));
+        if (!logErr && Array.isArray(logged)) {
+          const done = new Set(logged.map((l) => l.item_key));
+          items = items.filter((it) => !done.has(it.key));
+        }
+      } catch { /* tabel ontbreekt: geen dedupe, wel mailen */ }
       if (!items.length) continue;
       itemsFound += items.length;
       const bedrijf = esc(profiel.bedrijfsnaam || adminByCompany[row.company_id]?.naam || "je vloot");
@@ -475,7 +493,17 @@ app.all("/api/cron/reminders", async (req, res) => {
   <p style="font-size:12px;color:#98a1b0;margin-top:20px">Je krijgt deze mail omdat je beheerder bent in Truck &amp; Trailer.</p>
 </div>`;
       const ok = await sendResendEmail(to, `Herinnering: keuring/verzekering verloopt (${items.length})`, html);
-      if (ok) companiesMailed++;
+      if (ok) {
+        companiesMailed++;
+        // Vastleggen wat verstuurd is, zodat een herhaalde aanroep vandaag niets
+        // dubbel mailt. Faalt dit (tabel ontbreekt), dan is dat niet erg.
+        try {
+          await supaAdmin.from("reminder_log").upsert(
+            items.map((it) => ({ company_id: row.company_id, item_key: it.key, sent_on: new Date().toISOString().slice(0, 10) })),
+            { onConflict: "company_id,item_key,sent_on", ignoreDuplicates: true }
+          );
+        } catch { /* geen dedupe-log beschikbaar */ }
+      }
     }
     res.json({ ok: true, companiesMailed, itemsFound });
   } catch (err) {

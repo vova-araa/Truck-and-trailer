@@ -192,7 +192,10 @@ const ROLE_LABEL = { admin: "Beheerder", garage: "Werkplaats", chauffeur: "Chauf
 function toLocalKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-const TODAY = toLocalKey(new Date());
+// 'let' + een middernacht-timer in de app (zie useEffect aldaar): de PWA blijft
+// vaak dagenlang open staan op een werkplaats-tablet en "vandaag" moet dan
+// meeschuiven — anders tonen planning/compliance de dag ervoor.
+let TODAY = toLocalKey(new Date());
 
 const seedPlanning = {
   blex: [
@@ -214,11 +217,16 @@ const seedDrivers = {
   vandijk: [],
 };
 
-const STATUS_META = {
+const STATUS_META_MAP = {
   operational: { label: "Operationeel", color: "#34D399" },
   attention: { label: "Let op", color: "#FF8A00" },
   workshop: { label: "In werkplaats", color: "#F0453F" },
 };
+// Fallback voor onbekende/ontbrekende statuswaarden in live data — één afwijkend
+// record mag nooit een wit scherm geven (zelfde aanpak als PRIO_META).
+const STATUS_META = new Proxy(STATUS_META_MAP, {
+  get: (t, k) => t[k] || { label: "Onbekend", color: "#98A1B0" },
+});
 
 // Weekday keys, Monday first (matches JS getDay(): 0=zo..6=za, we map)
 const WEEKDAYS = [
@@ -991,7 +999,9 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
     if (!SR) { setVoiceError("Spraakherkenning wordt niet ondersteund in deze browser. Gebruik Chrome of typ je melding."); return; }
     let rec;
     try { rec = new SR(); } catch (e) { setVoiceError("Kon microfoon niet starten."); return; }
-    rec.lang = "nl-NL";
+    // Spraakherkenning in de taal van de chauffeur (niet hardcoded Nederlands).
+    const SPEECH_LANG = { nl: "nl-NL", en: "en-GB", pl: "pl-PL", ro: "ro-RO", bg: "bg-BG", uk: "uk-UA", ru: "ru-RU", tr: "tr-TR", hy: "hy-AM", ka: "ka-GE", lt: "lt-LT" };
+    rec.lang = SPEECH_LANG[getLang()] || "nl-NL";
     rec.continuous = false;
     rec.interimResults = false;
     rec.onresult = (e) => {
@@ -1381,15 +1391,16 @@ function hhmmToMin(s) {
   if (h > 23 || mi > 59) return null;
   return h * 60 + mi;
 }
-// Gewerkte minuten. Eind <= begin => nachtdienst (+24u). Pauze (45 min) eraf.
+// Gewerkte minuten. Eind vóór begin => nachtdienst (+24u). Pauze (45 min) eraf.
+// Begin == einde is ongeldig (anders zou een niet-aangepast veld als 24 uur tellen).
 function workedMinutes(start, eind, pauze) {
   const a = hhmmToMin(start), b = hhmmToMin(eind);
-  if (a == null || b == null) return null;
-  let d = b - a; if (d <= 0) d += 24 * 60;
+  if (a == null || b == null || a === b) return null;
+  let d = b - a; if (d < 0) d += 24 * 60;
   d -= pauze ? 45 : 0;
   return Math.max(0, d);
 }
-const isOvernight = (start, eind) => { const a = hhmmToMin(start), b = hhmmToMin(eind); return a != null && b != null && b <= a; };
+const isOvernight = (start, eind) => { const a = hhmmToMin(start), b = hhmmToMin(eind); return a != null && b != null && b < a; };
 // Minuten -> "8:15" (taal-neutraal).
 function fmtHM(min) {
   if (min == null) return "—";
@@ -1641,9 +1652,10 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
         ))}
       </div>
 
-      {tab === "uren" ? (
-        <UrenRegistratie currentUser={currentUser} />
-      ) : (
+      {/* Beide tabbladen blijven gemount (display:none) zodat een half ingevulde
+          melding niet verloren gaat als de chauffeur even naar z'n uren kijkt. */}
+      {tab === "uren" && <UrenRegistratie currentUser={currentUser} />}
+      <div className="space-y-6" style={{ display: tab === "uren" ? "none" : undefined }}>
         <>
           <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
 
@@ -1674,7 +1686,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
             )}
           </div>
         </>
-      )}
+      </div>
     </div>
   );
 }
@@ -1744,7 +1756,7 @@ function ReportingView({ vehicles = [], reports = [], costs = [], planning = [],
 
   const openReports = reports.filter((r) => r.status !== "klaar").length;
   const doneReports = reports.filter((r) => r.status === "klaar").length;
-  const kritiek = reports.filter((r) => r.prioriteit === "kritiek").length;
+  const kritiek = reports.filter((r) => r.prioriteit === "kritiek" && r.status !== "klaar").length;
 
   const exportFleet = () => {
     const rows = [...perVehicle].sort((a, b) => b.kostenJaar - a.kostenJaar).map((v) => [v.kenteken, v.merk || "", v.km || 0, Math.round(v.kostenJaar), Math.round(v.kostenTot), (Math.round(v.perKm * 100) / 100).toFixed(2), v.health]);
@@ -2081,7 +2093,9 @@ function GarageDashboard({ vehicles, reports, planning, parts, company, currentU
   // Next upcoming appointment today + total scheduled minutes
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const nextAppt = todayItems.find((p) => { const [h, m] = p.tijd.split(":").map(Number); return h * 60 + m >= nowMinutes; }) || todayItems[0];
+  // Alleen een afspraak die nog moet komen; is alles voorbij, dan geen kaart
+  // (anders staat om 17:30 "Volgende afspraak 08:00" prominent bovenaan).
+  const nextAppt = todayItems.find((p) => { const [h, m] = p.tijd.split(":").map(Number); return h * 60 + m >= nowMinutes; }) || null;
   const scheduledMin = todayItems.reduce((a, p) => a + (Number(p.duur) || 0), 0);
   const workloadPct = Math.min(100, Math.round((scheduledMin / (8 * 60)) * 100)); // vs 8h day
 
@@ -2566,7 +2580,18 @@ ${JSON.stringify(ctx)}`;
   const vPlanning = planning.filter((p) => p.vehicle === vehicle.kenteken).sort((a, b) => (a.datum + a.tijd < b.datum + b.tijd ? 1 : -1));
 
   const saveEdit = () => {
-    onUpdate({ ...form, km: Number(form.km) || 0, bouwjaar: Number(form.bouwjaar) || form.bouwjaar, health: Number(form.health) || form.health });
+    // Alleen de velden die het formulier echt bewerkt op de NIEUWSTE voertuigdata
+    // zetten. 'form' is een momentopname van het moment van openen; het hele
+    // object terugschrijven zou intussen toegevoegde documenten, inspecties of
+    // notities terugdraaien (bv. na een upload of realtime-refresh).
+    onUpdate({
+      ...vehicle,
+      merk: form.merk, type: form.type, driver: form.driver, status: form.status,
+      apkTot: form.apkTot || "", verzekeringTot: form.verzekeringTot || "",
+      tachoPlicht: !!form.tachoPlicht, tachoTot: form.tachoPlicht ? (form.tachoTot || "") : "",
+      km: Number(form.km) || 0,
+      bouwjaar: Number(form.bouwjaar) || vehicle.bouwjaar,
+    });
     setEditing(false);
     setToast("Voertuig bijgewerkt.");
   };
@@ -2684,7 +2709,8 @@ ${JSON.stringify(ctx)}`;
                   ) : (
                     <>
                       <button onClick={() => openDoc(d)} aria-label="Document openen" title="Openen" style={{ color: "#3B82F6" }}><Download size={15} /></button>
-                      <button onClick={() => setConfirmDoc(d.path)} aria-label="Document verwijderen" title="Verwijderen" style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                      {/* Verwijderen is beheerder-only (de storage-policy dwingt dat ook af). */}
+                      {isAdmin && <button onClick={() => setConfirmDoc(d.path)} aria-label="Document verwijderen" title="Verwijderen" style={{ color: "#F0453F" }}><Trash2 size={15} /></button>}
                     </>
                   )}
                 </div>
@@ -3344,6 +3370,9 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF({ unit: "mm", format: "a4" });
       const M = 16; const R = 210 - M; let y = 18;
+      // Paginering: vóór elke regel checken of hij nog past; anders nieuwe
+      // pagina. Zo lopen lange werkbonnen niet over de voettekst/pagina heen.
+      const br = (need = 10) => { if (y > 278 - need) { doc.addPage(); y = 18; } };
       const naam = profiel.bedrijfsnaam || company?.name || "";
 
       // Kop: logo links (indien aanwezig) + bedrijfsgegevens rechts.
@@ -3380,16 +3409,19 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
       row("Monteur", monteur);
       y += 3; doc.setFont("helvetica", "bold"); doc.text("Uitgevoerd werk", M, y); y += 6;
       doc.setFont("helvetica", "normal");
-      doc.text(doc.splitTextToSize(notities, R - M), M, y); y += 6 * Math.max(1, doc.splitTextToSize(notities, R - M).length) + 2;
+      doc.splitTextToSize(notities, R - M).forEach((tl) => { br(6); doc.text(tl, M, y); y += 6; });
+      y += 2;
       // Kostenregels
+      br(20);
       doc.setFont("helvetica", "bold"); doc.text("Omschrijving", M, y); doc.text("Aantal", 120, y); doc.text("Prijs", 150, y); doc.text("Totaal", R, y, { align: "right" }); y += 2;
       doc.line(M, y, R, y); y += 6; doc.setFont("helvetica", "normal");
-      const line = (oms, aantal, prijs, tot) => { doc.text(String(oms), M, y); doc.text(String(aantal), 120, y); doc.text(euro(prijs), 150, y); doc.text(euro(tot), R, y, { align: "right" }); y += 6; };
+      const line = (oms, aantal, prijs, tot) => { br(8); doc.text(String(oms), M, y); doc.text(String(aantal), 120, y); doc.text(euro(prijs), 150, y); doc.text(euro(tot), R, y, { align: "right" }); y += 6; };
       line(`Arbeid (${uren} u × ${euro(Number(tarief) || 0)})`, uren, Number(tarief) || 0, arbeid);
       lines.forEach((l) => line(l.naam, l.aantal, l.prijs, l.prijs * l.aantal));
       if (extra > 0) line(extraOms || "Overig", 1, extra, extra);
       y += 1; doc.line(M, y, R, y); y += 7;
       // Totalen met BTW.
+      br(60);
       const btwPct = profiel.btwPercentage != null ? Number(profiel.btwPercentage) : 21;
       const btwBedrag = total * (btwPct / 100);
       doc.setFont("helvetica", "normal"); doc.setFontSize(10);
@@ -6475,6 +6507,21 @@ export default function TruckGarageApp({ session, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reports, companyId, live]);
 
+  // Middernacht-tik: de PWA blijft vaak dagenlang open op een werkplaats-tablet.
+  // Om middernacht schuift TODAY mee en rendert de app opnieuw, zodat planning,
+  // weekstrip en compliance niet op "gisteren" blijven hangen.
+  const [, setDayTick] = useState(0);
+  useEffect(() => {
+    let timer = null;
+    const arm = () => {
+      const now = new Date();
+      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+      timer = setTimeout(() => { TODAY = toLocalKey(new Date()); setDayTick((t) => t + 1); arm(); }, next.getTime() - now.getTime());
+    };
+    arm();
+    return () => { if (timer) clearTimeout(timer); };
+  }, []);
+
   // Live-updates via Supabase Realtime. Deze hooks MOETEN vóór de vroege return
   // staan, anders verandert de hook-volgorde tussen inlogscherm en app (demo).
   // refreshData wordt hieronder pas gedefinieerd; we vullen de ref daar aan.
@@ -6803,7 +6850,7 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
