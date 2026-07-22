@@ -197,6 +197,33 @@ app.post("/api/admin/invite-user", async (req, res) => {
   }
 });
 
+// Beheerder verwijdert een medewerker ECHT (login intrekken), niet alleen uit de
+// lijst. Alleen een beheerder, alleen binnen zijn eigen bedrijf, nooit zichzelf
+// of een superadmin.
+app.post("/api/admin/delete-employee", async (req, res) => {
+  if (rateLimited("deluser:" + (req.ip || "onbekend"))) {
+    return res.status(429).json({ error: "Te veel aanvragen. Wacht even en probeer opnieuw." });
+  }
+  if (!supaAdmin) return res.status(503).json({ error: "Niet geconfigureerd (SUPABASE_SERVICE_ROLE_KEY ontbreekt)." });
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Sessie ongeldig, log opnieuw in." });
+  if (me.rol !== "admin") return res.status(403).json({ error: "Alleen een beheerder mag medewerkers verwijderen." });
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: "id is verplicht." });
+  if (id === me.userId) return res.status(400).json({ error: "Je kunt jezelf niet verwijderen." });
+  try {
+    const { data: target } = await supaAdmin.from("profiles").select("company_id, is_superadmin").eq("id", id).single();
+    if (!target || target.company_id !== me.company_id) return res.status(403).json({ error: "Deze gebruiker hoort niet bij jouw bedrijf." });
+    if (target.is_superadmin) return res.status(403).json({ error: "Niet toegestaan." });
+    try { await supaAdmin.auth.admin.deleteUser(id); }   // cascade ruimt het profiel op
+    catch { await supaAdmin.from("profiles").delete().eq("id", id); }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("delete-employee fout:", err);
+    res.status(500).json({ error: "Onverwachte serverfout bij het verwijderen." });
+  }
+});
+
 // Platformbeheerder mailt een nieuw bedrijf de activatiecode (bij het aanmaken
 // van een gratis/betaald bedrijf). Verstuurd via Resend (RESEND_API_KEY).
 app.post("/api/admin/send-activation-email", async (req, res) => {

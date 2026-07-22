@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
@@ -723,7 +723,7 @@ function LoginScreen({ allUsers, companies, onLogin, onRegister }) {
     if (!reg.naam.trim()) return setRegError("Vul je naam in.");
     if (!validEmail(reg.email)) return setRegError("Vul een geldig e-mailadres in.");
     if (allUsers.some((u) => u.email && u.email.toLowerCase() === reg.email.trim().toLowerCase())) return setRegError("Dit e-mailadres is al in gebruik.");
-    if (reg.wachtwoord.length < 4) return setRegError("Kies een wachtwoord van minstens 4 tekens.");
+    if (reg.wachtwoord.length < 6) return setRegError("Kies een wachtwoord van minstens 6 tekens.");
     if (reg.wachtwoord !== reg.wachtwoord2) return setRegError("Wachtwoorden komen niet overeen.");
     setRegError("");
     onRegister(reg);
@@ -953,7 +953,9 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
     return hits >= 2 || (wb.length > 0 && hits / wb.length >= 0.5);
   };
   const similarExisting = omschrijving.trim() ? openReports.find((r) => looksSimilar(omschrijving, r.omschrijving)) : null;
-  const STATUS_LABEL = { nieuw: "Nieuw", intake: "In behandeling", bezig: "In de werkplaats", wacht: "Wacht op onderdelen", klaar: "Klaar" };
+  // Labels afleiden uit KANBAN_COLS zodat de chauffeur nooit een ruwe statuscode
+  // (bv. "in_behandeling") ziet — altijd de nette tekst.
+  const STATUS_LABEL = Object.fromEntries(KANBAN_COLS.map((c) => [c.id, c.label]));
   // Banner met openstaande meldingen voor de gekozen wagen (render-helper, geen component).
   const openBanner = () => (
     openReports.length === 0 ? null : (
@@ -2237,6 +2239,8 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, 
   const [docCat, setDocCat] = useState("kentekenbewijs");
   const [docBusy, setDocBusy] = useState(false);
   const [docErr, setDocErr] = useState("");
+  const [confirmDoc, setConfirmDoc] = useState(null);
+  const [confirmCost, setConfirmCost] = useState(null);
   const documenten = Array.isArray(vehicle.documenten) ? vehicle.documenten : [];
   const [sched, setSched] = useState({ open: false, datum: TODAY, tijd: "09:00", duur: "60", taak: "", monteur: "" });
   const [toast, setToast] = useState("");
@@ -2432,8 +2436,14 @@ ${JSON.stringify(ctx)}`;
                   </div>
                 </button>
                 <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-                  <button onClick={() => openDoc(d)} title="Openen" style={{ color: "#3B82F6" }}><Download size={15} /></button>
-                  <button onClick={() => removeDoc(d)} title="Verwijderen" style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                  {confirmDoc === d.path ? (
+                    <span className="flex items-center gap-2"><button onClick={() => { removeDoc(d); setConfirmDoc(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmDoc(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                  ) : (
+                    <>
+                      <button onClick={() => openDoc(d)} aria-label="Document openen" title="Openen" style={{ color: "#3B82F6" }}><Download size={15} /></button>
+                      <button onClick={() => setConfirmDoc(d.path)} aria-label="Document verwijderen" title="Verwijderen" style={{ color: "#F0453F" }}><Trash2 size={15} /></button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -2545,7 +2555,11 @@ ${JSON.stringify(ctx)}`;
                     </div>
                     <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
                       <span style={{ fontFamily: "JetBrains Mono", fontSize: 13, fontWeight: 700, color: "#E7ECF3" }}>{fmt(c.bedrag)}</span>
-                      {isAdmin && <button onClick={() => onDeleteCost && onDeleteCost(c.id)} style={{ color: "#98A1B0" }}><X size={14} /></button>}
+                      {isAdmin && (confirmCost === c.id ? (
+                        <span className="flex items-center gap-2"><button onClick={() => { onDeleteCost && onDeleteCost(c.id); setConfirmCost(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmCost(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                      ) : (
+                        <button onClick={() => setConfirmCost(c.id)} aria-label="Kostenpost verwijderen" title="Verwijderen" style={{ color: "#98A1B0" }}><X size={14} /></button>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -2977,7 +2991,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Wrench size={22} color="#3B82F6" /> Voorspellend onderhoud</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Op basis van kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
+        <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Wrench size={22} color="#3B82F6" /> Onderhoudsschema's</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Geplande beurten op kilometerstand én tijd. Tik op de status om te wisselen.</p></div>
         <Button icon={Plus} onClick={() => setOpen(true)}>Nieuw schema</Button>
       </div>
       {open && (
@@ -3305,7 +3319,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
       {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><KanbanSquare size={22} color="#3B82F6" /> Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
-        {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
+        {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={async () => { const ok = await onRefresh(); setToast(ok === false ? "Verversen mislukt — controleer je verbinding." : "Bijgewerkt."); }} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
       </div>
       {reports.length === 0 ? <EmptyState icon={CheckCircle2} text="Niks meer te doen. Goed werk!" /> : (
         <div className="grid gap-4" style={{ gridTemplateColumns: device === "phone" ? "minmax(0, 1fr)" : device === "tablet" ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))" }}>
@@ -3436,8 +3450,8 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
       if (!validEmail(form.email)) return setError("Een e-mailadres is verplicht voor een e-mailuitnodiging.");
       setError(""); setBusy(true);
       try {
-        await onInviteEmail({ naam: form.naam.trim(), email: form.email.trim(), rol: form.rol, telefoon: form.telefoon });
-        onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "uitgenodigd", wachtwoord: null });
+        const created = await onInviteEmail({ naam: form.naam.trim(), email: form.email.trim(), rol: form.rol, telefoon: form.telefoon });
+        onAdd({ id: created?.id || "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "uitgenodigd", wachtwoord: null });
         setToast(`Uitnodiging gemaild naar ${form.email}. Zodra ze een wachtwoord kiezen, kunnen ze inloggen.`);
         reset();
       } catch (e) {
@@ -3454,8 +3468,8 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
       if (form.wachtwoord.length < 6) return setError("Kies een wachtwoord van minstens 6 tekens.");
       setError(""); setBusy(true);
       try {
-        await onCreateAccount({ naam: form.naam.trim(), email: form.email.trim(), wachtwoord: form.wachtwoord, rol: form.rol, telefoon: form.telefoon });
-        onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "actief", wachtwoord: null });
+        const created = await onCreateAccount({ naam: form.naam.trim(), email: form.email.trim(), wachtwoord: form.wachtwoord, rol: form.rol, telefoon: form.telefoon });
+        onAdd({ id: created?.id || "u" + Date.now(), naam: form.naam.trim(), email: form.email.trim(), telefoon: form.telefoon, rol: form.rol, status: "actief", wachtwoord: null });
         setToast(`${form.naam} kan nu inloggen met dit e-mailadres en wachtwoord.`);
         reset();
       } catch (e) {
@@ -3467,7 +3481,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
     }
 
     if (form.mode === "direct") {
-      if (form.wachtwoord.length < 4) return setError("Kies een wachtwoord van minstens 4 tekens.");
+      if (form.wachtwoord.length < 6) return setError("Kies een wachtwoord van minstens 6 tekens.");
       onAdd({ id: "u" + Date.now(), naam: form.naam.trim(), email: form.email, telefoon: form.telefoon, rol: form.rol, status: "actief", wachtwoord: form.wachtwoord });
       setToast(`${form.naam} is toegevoegd.`);
     } else {
@@ -3577,7 +3591,7 @@ function UsersView({ users, onAdd, onResend, onDelete, currentUserId, joinCode, 
           })()}
 
           {(form.mode === "direct" || form.mode === "account") && (
-            <div><FieldLabel>Wachtwoord *</FieldLabel><input type="password" placeholder={form.mode === "account" ? "Minstens 6 tekens" : "Minstens 4 tekens"} value={form.wachtwoord} onChange={(e) => setForm({ ...form, wachtwoord: e.target.value })} className="tg-input" style={{ width: isMobile ? "100%" : "50%" }} /></div>
+            <div><FieldLabel>Wachtwoord *</FieldLabel><input type="password" placeholder={form.mode === "account" ? "Minstens 6 tekens" : "Minstens 6 tekens"} value={form.wachtwoord} onChange={(e) => setForm({ ...form, wachtwoord: e.target.value })} className="tg-input" style={{ width: isMobile ? "100%" : "50%" }} /></div>
           )}
 
           {error && <div style={{ color: "#F0453F", fontFamily: "Inter", fontSize: 12.5 }}>{error}</div>}
@@ -4560,6 +4574,8 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete, onRefresh,
   const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [selectedDate, setSelectedDate] = useState(TODAY);
   const [open, setOpen] = useState(false);
+  const [confirmPl, setConfirmPl] = useState(null);
+  const [toast, setToast] = useState("");
   const [form, setForm] = useState({ vehicle: "", tijd: "09:00", duur: "60", taak: "", monteur: "", reportId: null });
 
   const year = cursor.getFullYear(), month = cursor.getMonth();
@@ -4604,13 +4620,14 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete, onRefresh,
 
   return (
     <div className="space-y-5">
+      {toast && <Toast message={toast} onDone={() => setToast("")} />}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><Calendar size={22} color="#3B82F6" /> Planning</h1>
           <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Tik een dag aan om de werkplaats-agenda te zien.</p>
         </div>
         <div className="flex items-center gap-2">
-          {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={onRefresh} disabled={refreshing}>{refreshing ? "..." : "Ververs"}</Button>}
+          {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={async () => { const ok = await onRefresh(); setToast(ok === false ? "Verversen mislukt — controleer je verbinding." : "Bijgewerkt."); }} disabled={refreshing}>{refreshing ? "..." : "Ververs"}</Button>}
           <Button variant="ghost" small onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)); setSelectedDate(TODAY); }}>Vandaag</Button>
           <Button icon={Plus} onClick={() => openForm()}>Inplannen</Button>
         </div>
@@ -4738,7 +4755,11 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete, onRefresh,
                     <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
                       <Kenteken value={p.vehicle} />
                       {p.reportId && <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "#3B82F6", border: "1px solid #3B82F655", flexShrink: 0 }}>melding</span>}
-                      {onDelete && <button onClick={() => onDelete(p.id)} title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0, padding: 4 }}><Trash2 size={16} /></button>}
+                      {onDelete && (confirmPl === p.id ? (
+                        <span className="flex items-center gap-2" style={{ marginLeft: "auto", flexShrink: 0 }}><button onClick={() => { onDelete(p.id); setConfirmPl(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button><button onClick={() => setConfirmPl(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button></span>
+                      ) : (
+                        <button onClick={() => setConfirmPl(p.id)} aria-label="Afspraak verwijderen" title="Afspraak verwijderen" style={{ marginLeft: "auto", color: "#F0453F", flexShrink: 0, padding: 4 }}><Trash2 size={16} /></button>
+                      ))}
                     </div>
                     <div style={{ fontFamily: "Inter", fontSize: 14, color: "#E7ECF3", fontWeight: 600, marginTop: 4 }}>{p.taak}</div>
                     <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 1 }}>Monteur: {p.monteur}</div>
@@ -6327,8 +6348,10 @@ export default function TruckGarageApp({ session, onLogout }) {
         // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
         if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
       }
+      return true;
     } catch (e) {
       console.error("Verversen mislukt:", e?.message || e);
+      return false;
     } finally {
       setRefreshing(false);
     }
@@ -6338,7 +6361,14 @@ export default function TruckGarageApp({ session, onLogout }) {
   refreshRef.current = refreshData;
 
   const addUser = (u) => setUsers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), u] }));
-  const deleteUser = (id) => setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+  const deleteUser = (id) => {
+    setUsers((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+    // Echt account (UUID)? Trek dan ook de login in via de server, anders kan de
+    // "verwijderde" medewerker gewoon blijven inloggen.
+    if (live && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(id))) {
+      deleteEmployeeAccount(id).catch((e) => console.error("Account verwijderen mislukt:", e?.message || e));
+    }
+  };
   const addPlanning = (p) => setPlanning((s) => ({ ...s, [companyId]: [...(s[companyId] || []), p] }));
   const deletePlanning = (id) => setPlanning((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const addDriver = (d) => setDrivers((s) => ({ ...s, [companyId]: [...(s[companyId] || []), d] }));

@@ -241,6 +241,21 @@ export async function inviteEmployeeByEmail({ naam, email, rol, telefoon }) {
   return data;
 }
 
+// Beheerder verwijdert een medewerker écht (trekt de login in) via de server.
+export async function deleteEmployeeAccount(id) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  if (!token) throw new Error("Niet ingelogd — log opnieuw in.");
+  const res = await fetch("/api/admin/delete-employee", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Kon de medewerker niet verwijderen.");
+  return data;
+}
+
 // Stelt een nieuw wachtwoord in voor de ingelogde (via invite/recovery) gebruiker.
 export async function setOwnPassword(nieuwWachtwoord) {
   const { error } = await supabase.auth.updateUser({ password: nieuwWachtwoord });

@@ -237,6 +237,15 @@ begin
            and not (c ->> 'id' = any(p_base_cost_ids))
        ), '[]'::jsonb));
 
+  -- De werkplaats (garage) krijgt de medewerkerslijst ZONDER contactgegevens
+  -- (PII-afscherming in load_company_state) en mag gebruikers niet beheren.
+  -- Zou een garage-opslag de gestripte lijst terugschrijven, dan raakten
+  -- e-mail/telefoon van iedereen permanent kwijt. Daarom: voor garage behouden
+  -- we de bestaande users-lijst uit de database ongewijzigd.
+  if v_rol = 'garage' then
+    final := final || jsonb_build_object('users', coalesce(existing -> 'users', '[]'::jsonb));
+  end if;
+
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
