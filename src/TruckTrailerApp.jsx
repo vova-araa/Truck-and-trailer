@@ -4088,7 +4088,79 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
   );
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, profiel = {}, onAddCost, onUsePart, onRefresh, refreshing }) {
+/* ---------------------------------------------------------------------
+   SCHADEDOSSIER: één PDF per melding met alle gegevens + foto's — klaar om
+   naar de verzekeraar of opdrachtgever te sturen.
+--------------------------------------------------------------------- */
+async function downloadSchadeDossier({ report, vehicle = null, profiel = {}, company = null }) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const M = 16, R = 210 - M; let y = 18;
+  const br = (need = 10) => { if (y > 278 - need) { doc.addPage(); y = 18; } };
+  const naam = profiel.bedrijfsnaam || company?.name || "";
+  if (profiel.logo) {
+    try { const props = doc.getImageProperties(profiel.logo); const w = 34, h = Math.min(24, (props.height / props.width) * w); doc.addImage(profiel.logo, "PNG", M, y, w, h); } catch { /* ongeldig logo */ }
+  }
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text(naam, R, y + 4, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+  let hy = y + 9;
+  [profiel.adres, [profiel.postcode, profiel.plaats].filter(Boolean).join("  "), profiel.telefoon, profiel.email, profiel.kvk ? "KvK " + profiel.kvk : ""].filter(Boolean).forEach((tl) => { doc.text(String(tl), R, hy, { align: "right" }); hy += 4; });
+  doc.setTextColor(0);
+  y = Math.max(y + 26, hy) + 4;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("SCHADEDOSSIER", M, y);
+  y += 3; doc.setDrawColor(200); doc.line(M, y, R, y); y += 8;
+  doc.setFontSize(10);
+  const row = (label, val) => { if (!val) return; br(8); doc.setFont("helvetica", "bold"); doc.text(label, M, y); doc.setFont("helvetica", "normal"); doc.text(String(val), M + 42, y); y += 6; };
+  row("Kenteken", report.vehicle);
+  if (vehicle) row("Voertuig", [vehicle.merk, vehicle.type, vehicle.bouwjaar].filter(Boolean).join(" · "));
+  row("Datum melding", report.datum);
+  row("Gemeld door", report.chauffeur);
+  row("Prioriteit", PRIO_META[report.prioriteit]?.label || report.prioriteit);
+  row("Plek op de wagen", report.zone ? (ZONES.find((z) => z.id === report.zone)?.label || report.zone) : "");
+  row("Wanneer", report.wanneer);
+  row("Nog veilig te rijden", report.veilig);
+  y += 2; doc.setFont("helvetica", "bold"); doc.text("Omschrijving", M, y); y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.splitTextToSize(report.omschrijving || "-", R - M).forEach((tl) => { br(6); doc.text(tl, M, y); y += 6; });
+  y += 2;
+  // Foto's ophalen (tijdelijke links) en inbedden. Video's kunnen niet in een
+  // PDF; die vermelden we alleen.
+  const media = Array.isArray(report.media) ? report.media : [];
+  let fotos = [], videos = 0;
+  if (media.length) {
+    try {
+      const urls = await signedMediaUrls(media);
+      for (const m of urls) {
+        if (m.type === "video") { videos++; continue; }
+        try {
+          const res = await fetch(m.url);
+          const blob = await res.blob();
+          const dataUrl = await new Promise((ok, fail) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = fail; fr.readAsDataURL(blob); });
+          fotos.push(dataUrl);
+        } catch { /* foto niet op te halen: overslaan */ }
+      }
+    } catch { /* geen links: dossier zonder foto's */ }
+  }
+  if (fotos.length) {
+    br(14); doc.setFont("helvetica", "bold"); doc.text(`Foto's (${fotos.length})`, M, y); y += 6;
+    for (const f of fotos) {
+      try {
+        const props = doc.getImageProperties(f);
+        const w = Math.min(120, R - M);
+        const h = (props.height / props.width) * w;
+        const hClamped = Math.min(h, 110);
+        const wFinal = hClamped < h ? (props.width / props.height) * hClamped : w;
+        br(hClamped + 6);
+        doc.addImage(f, props.fileType === "PNG" ? "PNG" : "JPEG", M, y, wFinal, hClamped);
+        y += hClamped + 6;
+      } catch { /* onleesbare foto: overslaan */ }
+    }
+  }
+  if (videos > 0) { br(8); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120); doc.text(`+ ${videos} video('s) bij deze melding (niet opneembaar in PDF — zie de app).`, M, y); doc.setTextColor(0); y += 6; }
+  doc.save(`schadedossier-${(report.vehicle || "melding").replace(/[^\w-]+/g, "_")}-${report.datum || ""}.pdf`);
+}
+
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, profiel = {}, onAddCost, onUsePart, onRefresh, refreshing, vehicles = [] }) {
   const isMobile = useIsMobile();
   const device = useDevice();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
@@ -4097,6 +4169,18 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
   const [werkbonFor, setWerkbonFor] = useState(null);
+  const [dossierBusy, setDossierBusy] = useState(null); // report id waarvoor het dossier wordt gemaakt
+
+  const makeDossier = async (r) => {
+    if (dossierBusy) return;
+    setDossierBusy(r.id);
+    try {
+      await downloadSchadeDossier({ report: r, vehicle: vehicles.find((v) => v.kenteken === r.vehicle) || null, profiel, company });
+      setToast("Schadedossier gedownload.");
+    } catch (e) {
+      setToast("Dossier maken mislukte — probeer opnieuw.");
+    } finally { setDossierBusy(null); }
+  };
 
   const openSchedule = (r) => {
     setMoveMenu(null);
@@ -4174,6 +4258,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
                         {col.id !== "klaar" && onAddCost && (
                           <button onClick={() => setWerkbonFor(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}><ClipboardList size={13} /> Werkbon</button>
                         )}
+                        <button onClick={() => makeDossier(r)} disabled={dossierBusy === r.id} title="Schadedossier: PDF met alle gegevens en foto's, voor de verzekeraar" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #A855F755", color: "#C99BFF", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5, opacity: dossierBusy === r.id ? 0.6 : 1 }}><FileText size={13} /> {dossierBusy === r.id ? "Bezig..." : "Dossier"}</button>
                         <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}>Verplaatsen <ChevronDown size={13} /></button>
                         {onDelete && (confirmDel === r.id ? (
                           <span className="flex items-center gap-2" style={{ marginLeft: "auto" }}><button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs px-2 py-1 rounded" style={{ color: "#fff", background: "#F0453F", fontFamily: "Inter", fontWeight: 700 }}>Verwijder</button><button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9", fontFamily: "Inter" }}>Nee</button></span>
@@ -7489,7 +7574,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} vehicles={cVehicles} />}
                 {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
