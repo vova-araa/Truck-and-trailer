@@ -386,10 +386,13 @@ function driverComplianceItems(d, today = TODAY) {
   // niet mee voor de status.
   if (!d.medischNvt) items.push({ key: "medisch", label: "Medische keuring", datum: d.medischTot });
   if (!d.adrNvt && d.adrTot) items.push({ key: "adr", label: "ADR-certificaat", datum: d.adrTot });
-  return items.filter((it) => it.datum).map((it) => ({ ...it, status: complianceStatus(it.datum, today), dagen: daysUntil(it.datum, today) }));
+  // Verplichte papieren zonder ingevulde datum tellen als "onbekend" (aandacht
+  // nodig) — NIET wegfilteren, anders lijkt een chauffeur zonder papieren "in orde".
+  return items.map((it) => ({ ...it, status: it.datum ? complianceStatus(it.datum, today) : "onbekend", dagen: it.datum ? daysUntil(it.datum, today) : null }));
 }
 function driverWorstCompliance(d, today = TODAY) {
-  const order = { verlopen: 3, binnenkort: 2, ok: 1, onbekend: 0 };
+  // 'onbekend' (ontbrekende verplichte datum) telt als aandacht, dus boven 'ok'.
+  const order = { verlopen: 4, binnenkort: 3, onbekend: 2, ok: 1 };
   return driverComplianceItems(d, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
 
@@ -3042,7 +3045,7 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
 function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {}, onClose, onComplete, onUsePart }) {
   const [monteur, setMonteur] = useState(mechanics[0]?.naam || "");
   const [uren, setUren] = useState("1");
-  const [tarief, setTarief] = useState("65");
+  const [tarief, setTarief] = useState(() => (profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "65"));
   const [lines, setLines] = useState([]);
   const [pick, setPick] = useState("");
   const [customNaam, setCustomNaam] = useState("");
@@ -3872,6 +3875,7 @@ function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast })
     telefoon: profiel.telefoon || "", email: profiel.email || "", website: profiel.website || "",
     kvk: profiel.kvk || "", btw: profiel.btw || "", iban: profiel.iban || "",
     btwPercentage: profiel.btwPercentage != null ? String(profiel.btwPercentage) : "21",
+    uurtarief: profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "",
     logo: profiel.logo || "",
   });
   const [busy, setBusy] = useState(false);
@@ -3905,7 +3909,7 @@ function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast })
 
   const save = () => {
     setBusy(true);
-    const clean = { ...form, btwPercentage: Math.max(0, Math.min(100, Number(form.btwPercentage) || 0)) };
+    const clean = { ...form, btwPercentage: Math.max(0, Math.min(100, Number(form.btwPercentage) || 0)), uurtarief: form.uurtarief === "" ? "" : Math.max(0, Number(form.uurtarief) || 0) };
     onSave(clean);
     setBusy(false);
     onToast && onToast("Bedrijfsgegevens opgeslagen.");
@@ -3951,7 +3955,11 @@ function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast })
         {f("IBAN", "iban", { placeholder: "NL00 BANK 0000 0000 00" })}
         <div>
           <FieldLabel>BTW-percentage (%)</FieldLabel>
-          <input className="tg-input" type="number" value={form.btwPercentage} onChange={(e) => set("btwPercentage", e.target.value)} placeholder="21" />
+          <input className="tg-input" type="number" inputMode="numeric" value={form.btwPercentage} onChange={(e) => set("btwPercentage", e.target.value)} placeholder="21" />
+        </div>
+        <div>
+          <FieldLabel>Standaard uurtarief werkplaats (€)</FieldLabel>
+          <input className="tg-input" type="number" inputMode="numeric" value={form.uurtarief} onChange={(e) => set("uurtarief", e.target.value)} placeholder="Bv. 65" />
         </div>
       </div>
       {err && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{err}</div>}
@@ -4108,7 +4116,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
             {selected && (
               <div className="space-y-2">
                 {WEEKDAYS.map((wd) => {
-                  const day = week[wd.key];
+                  const day = week[wd.key] || { on: false, van: "08:00", tot: "17:00" };
                   return (
                     <div key={wd.key} className="flex items-center gap-3 p-2.5 rounded-lg" style={{ background: "#161C25", border: "1px solid #232B38", opacity: day.on ? 1 : 0.6 }}>
                       {/* toggle */}
@@ -4247,8 +4255,8 @@ VOERTUIGEN:\n${JSON.stringify(vehicles)}\n\nMELDINGEN:\n${JSON.stringify(reports
         <div ref={endRef} />
       </Card>
       <div className="flex gap-2">
-        <input className="tg-input flex-1" style={{ minWidth: 0 }} placeholder="Stel een vraag of geef een opdracht..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-        <Button icon={Send} onClick={send} disabled={loading}>Vraag</Button>
+        <input className="tg-input flex-1" style={{ minWidth: 0 }} placeholder={aiReady ? "Stel een vraag of geef een opdracht..." : "AI staat uit — niet beschikbaar"} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && aiReady && send()} disabled={!aiReady} />
+        <Button icon={Send} onClick={send} disabled={loading || !aiReady}>Vraag</Button>
       </div>
     </div>
   );
