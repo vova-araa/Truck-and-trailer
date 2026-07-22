@@ -279,6 +279,25 @@ begin
   -- driver_add_check binnen en een client-snapshot mag ze nooit wegvagen.
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
 
+  -- Afgetekende ritten (Proof of Delivery) mogen door een client-snapshot nooit
+  -- terug naar "gepland": de bestaande pod/status van een afgeleverde rit wint.
+  if jsonb_typeof(final -> 'rides') = 'array' then
+    final := jsonb_set(final, '{rides}', coalesce((
+      select jsonb_agg(
+        case when exr.val is not null and exr.val ->> 'status' = 'afgeleverd'
+             then cl.val || jsonb_build_object('status', 'afgeleverd', 'pod', exr.val -> 'pod')
+             else cl.val end)
+      from jsonb_array_elements(final -> 'rides') as cl(val)
+      left join lateral (
+        select e.val from jsonb_array_elements(
+          case when jsonb_typeof(existing -> 'rides') = 'array' then existing -> 'rides' else '[]'::jsonb end
+        ) as e(val)
+        where e.val ->> 'id' = cl.val ->> 'id'
+        limit 1
+      ) exr on true
+    ), '[]'::jsonb));
+  end if;
+
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
@@ -327,6 +346,24 @@ begin
   -- Checks blijven ook hier server-authoritatief.
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
 
+  -- En ook hier: afgeleverde ritten behouden hun pod/status.
+  if jsonb_typeof(final -> 'rides') = 'array' then
+    final := jsonb_set(final, '{rides}', coalesce((
+      select jsonb_agg(
+        case when exr.val is not null and exr.val ->> 'status' = 'afgeleverd'
+             then cl.val || jsonb_build_object('status', 'afgeleverd', 'pod', exr.val -> 'pod')
+             else cl.val end)
+      from jsonb_array_elements(final -> 'rides') as cl(val)
+      left join lateral (
+        select e.val from jsonb_array_elements(
+          case when jsonb_typeof(existing -> 'rides') = 'array' then existing -> 'rides' else '[]'::jsonb end
+        ) as e(val)
+        where e.val ->> 'id' = cl.val ->> 'id'
+        limit 1
+      ) exr on true
+    ), '[]'::jsonb));
+  end if;
+
   insert into public.company_state (company_id, data, updated_at) values (p_company_id, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
@@ -368,7 +405,16 @@ begin
       where c ->> 'chauffeurId' = auth.uid()::text
       limit 20
     ) sub;
-  return jsonb_build_object('vehicles', vlist, 'reports', rlist, 'checks', clist);
+  -- Eigen ritten (alleen de aan deze chauffeur toegewezen; klantadressen van
+  -- andermans ritten blijven zo privé).
+  return jsonb_build_object('vehicles', vlist, 'reports', rlist, 'checks', clist,
+    'rides', coalesce((
+      select jsonb_agg(r) from (
+        select r from jsonb_array_elements(coalesce(d->'rides','[]'::jsonb)) r
+        where r ->> 'chauffeurId' = auth.uid()::text
+        limit 100
+      ) sub2
+    ), '[]'::jsonb));
 end $$;
 grant execute on function public.driver_bootstrap() to authenticated;
 
@@ -464,6 +510,36 @@ begin
       ));
 end $$;
 grant execute on function public.driver_add_check(jsonb) to authenticated;
+
+-- Chauffeur tekent een rit af (Proof of Delivery). Alleen een aan hém
+-- toegewezen rit; de server stempelt de chauffeursnaam en het tijdstip.
+-- De handtekening (data-URL) is begrensd zodat de rij niet ontploft.
+create or replace function public.driver_complete_ride(p_ride_id text, p_pod jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_naam text; pod jsonb; podc jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  if p_ride_id is null or length(p_ride_id) > 100 then raise exception 'BAD_RIDE_ID'; end if;
+  pod := coalesce(p_pod, '{}'::jsonb);
+  if length(pod::text) > 262144 then raise exception 'POD_TOO_LARGE'; end if;
+  select coalesce(jsonb_object_agg(k, pod -> k), '{}'::jsonb) into podc
+    from unnest(array['naam','opmerking','handtekening','tijd','datum']) as k
+    where pod ? k;
+  podc := podc || jsonb_build_object('door', coalesce(v_naam, 'Onbekend'), 'ts', now());
+  update public.company_state
+    set data = jsonb_set(data, '{rides}', coalesce((
+          select jsonb_agg(
+            case when r.val ->> 'id' = p_ride_id and r.val ->> 'chauffeurId' = auth.uid()::text
+                 then r.val || jsonb_build_object('status', 'afgeleverd', 'pod', podc)
+                 else r.val end)
+          from jsonb_array_elements(coalesce(data -> 'rides', '[]'::jsonb)) as r(val)
+        ), '[]'::jsonb)),
+        updated_at = now()
+    where company_id = cid and jsonb_typeof(data -> 'rides') = 'array';
+end $$;
+grant execute on function public.driver_complete_ride(text, jsonb) to authenticated;
 
 -- ---------- ABONNEMENTSCODE: een nieuw bedrijf activeren ----------
 -- Jij (platformbeheerder) geeft bij een abonnement een 12-cijferige code uit.

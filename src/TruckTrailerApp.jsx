@@ -4,9 +4,9 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
@@ -225,6 +225,17 @@ const seedChecks = {
   blex: [
     { id: "chk1", vehicle: "84-BSX-2", datum: TODAY, tijd: "07:45", chauffeur: "R. Postma", chauffeurId: "u2", issues: 0, items: CHECK_POINTS.map((p) => ({ p, ok: true, note: "" })) },
     { id: "chk2", vehicle: "VX-77-KL", datum: "2026-07-21", tijd: "06:50", chauffeur: "J. Bakker", chauffeurId: "u3", issues: 1, items: CHECK_POINTS.map((p, i) => (i === 1 ? { p, ok: false, note: "Achterlicht links kapot" } : { p, ok: true, note: "" })) },
+  ],
+  vandijk: [],
+};
+
+// Ritten met digitale aflevering (Proof of Delivery) — vooral voor koeriers-
+// en busjesbedrijven: de planner zet ritten klaar, de chauffeur tekent af.
+const seedRides = {
+  blex: [
+    { id: "rit1", datum: TODAY, vehicle: "GH-99-VB", chauffeurId: "u2", chauffeur: "R. Postma", klant: "Bakkerij Vermeulen", adres: "Dorpsstraat 12, Woerden", referentie: "ORD-2107", opmerking: "Achterom leveren, vóór 10:00", status: "gepland", pod: null },
+    { id: "rit2", datum: TODAY, vehicle: "GH-99-VB", chauffeurId: "u2", chauffeur: "R. Postma", klant: "Bouwbedrijf De Groot", adres: "Industrieweg 8, Utrecht", referentie: "ORD-2108", opmerking: "", status: "gepland", pod: null },
+    { id: "rit3", datum: "2026-07-21", vehicle: "GH-99-VB", chauffeurId: "u2", chauffeur: "R. Postma", klant: "Kwekerij Jansen", adres: "Veilingweg 3, Aalsmeer", referentie: "ORD-2101", opmerking: "", status: "afgeleverd", pod: { naam: "M. Jansen", tijd: "11:20", datum: "2026-07-21", opmerking: "" } },
   ],
   vandijk: [],
 };
@@ -1380,6 +1391,148 @@ function InstallCard() {
 }
 
 /* ---------------------------------------------------------------------
+   RITTEN + DIGITALE AFLEVERING (POD, chauffeur)
+   De planner zet ritten klaar; de chauffeur opent de route, levert af en
+   laat de ontvanger tekenen. Het afleverbewijs komt bij de rit te staan.
+--------------------------------------------------------------------- */
+
+// Klein handtekening-vlak (zelfde patroon als op de werkbon).
+function SigPad({ sigRef, label, clearLabel }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  useEffect(() => { sigRef.current = { canvas: canvasRef.current, signed: false }; }, [sigRef]);
+  const relPos = (e) => {
+    const c = canvasRef.current; const rect = c.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: ((t.clientX - rect.left) / rect.width) * c.width, y: ((t.clientY - rect.top) / rect.height) * c.height };
+  };
+  const start = (e) => { e.preventDefault(); drawing.current = true; const ctx = canvasRef.current.getContext("2d"); const p = relPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const move = (e) => { if (!drawing.current) return; e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = relPos(e); ctx.lineTo(p.x, p.y); ctx.strokeStyle = "#0A0E14"; ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.stroke(); if (sigRef.current) sigRef.current.signed = true; };
+  const end = () => { drawing.current = false; };
+  const clear = () => { const c = canvasRef.current; if (c) c.getContext("2d").clearRect(0, 0, c.width, c.height); if (sigRef.current) sigRef.current.signed = false; };
+  return (
+    <div>
+      <div className="flex items-center justify-between"><FieldLabel>{label}</FieldLabel><button onClick={clear} style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 12, background: "none", border: "none", cursor: "pointer" }}>{clearLabel}</button></div>
+      <canvas ref={canvasRef} width={480} height={150} style={{ width: "100%", height: 130, background: "#FFFFFF", borderRadius: 10, touchAction: "none", cursor: "crosshair" }}
+        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+        onTouchStart={start} onTouchMove={move} onTouchEnd={end} />
+    </div>
+  );
+}
+
+function RittenTab({ myRides = [], onCompleteRide }) {
+  const { t } = useT();
+  const [openId, setOpenId] = useState(null);
+  const [naam, setNaam] = useState("");
+  const [opm, setOpm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [justDone, setJustDone] = useState(null);
+  const sigRef = useRef(null);
+
+  const open = myRides.filter((r) => r.status !== "afgeleverd").sort((a, b) => (a.datum || "").localeCompare(b.datum || ""));
+  const done = myRides.filter((r) => r.status === "afgeleverd").slice(0, 10);
+
+  const startDeliver = (id) => { setOpenId(id); setNaam(""); setOpm(""); setErr(""); };
+
+  const confirm = async (ride) => {
+    if (!naam.trim()) { setErr(t("ritNaamVerplicht")); return; }
+    setBusy(true); setErr("");
+    const now = new Date();
+    const pod = {
+      naam: naam.trim(), opmerking: opm.trim(),
+      datum: toLocalKey(now), tijd: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      handtekening: sigRef.current?.signed && sigRef.current.canvas ? sigRef.current.canvas.toDataURL("image/png") : null,
+    };
+    try {
+      await onCompleteRide(ride.id, pod);
+      setJustDone(ride.id); setOpenId(null);
+      setTimeout(() => setJustDone(null), 3500);
+    } catch (e) {
+      setErr((e && e.message) || "Versturen mislukte — probeer opnieuw.");
+    } finally { setBusy(false); }
+  };
+
+  const mapsUrl = (adres) => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(adres || "");
+
+  return (
+    <div className="max-w-xl mx-auto space-y-4">
+      <div>
+        <Eyebrow>{t("ritOpen")}</Eyebrow>
+        {open.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
+            <MapPin size={24} color="#6B7585" />
+            <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>{t("ritGeen")}</span>
+          </div>
+        ) : (
+          <div className="space-y-2 mt-1">
+            {open.map((r) => (
+              <Card key={r.id} className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 14.5, fontWeight: 700, color: "#E7ECF3" }}>{r.klant}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginTop: 2 }}>{r.adres}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 2 }}>{r.datum}{r.referentie ? ` · ${t("ritRef")} ${r.referentie}` : ""}</div>
+                    {r.opmerking && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#8FB8FF", marginTop: 4 }}>{r.opmerking}</div>}
+                  </div>
+                  <a href={mapsUrl(r.adres)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 rounded-lg" style={{ flexShrink: 0, border: "1px solid #2A3340", color: "#8FB8FF", fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, textDecoration: "none" }}>
+                    <MapPin size={14} /> {t("ritRoute")}
+                  </a>
+                </div>
+                {openId === r.id ? (
+                  <div className="mt-3 space-y-3" style={{ borderTop: "1px solid #232B38", paddingTop: 12 }}>
+                    <div>
+                      <FieldLabel>{t("ritOntvanger")}</FieldLabel>
+                      <input className="tg-input w-full" placeholder={t("ritOntvangerPh")} value={naam} onChange={(e) => { setNaam(e.target.value); setErr(""); }} />
+                    </div>
+                    <input className="tg-input w-full" placeholder={t("ritNotePh")} value={opm} onChange={(e) => setOpm(e.target.value)} />
+                    <SigPad sigRef={sigRef} label={t("ritTeken")} clearLabel={t("ritWis")} />
+                    {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F" }}>{err}</div>}
+                    <div className="flex gap-2">
+                      <Button onClick={() => confirm(r)} disabled={busy} style={{ flex: 1, justifyContent: "center" }}>{busy ? t("ritBezig") : t("ritBevestig")}</Button>
+                      <Button variant="ghost" onClick={() => setOpenId(null)} disabled={busy}><X size={14} /></Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <Button onClick={() => startDeliver(r.id)} style={{ width: "100%", justifyContent: "center" }} icon={Check}>{t("ritAfleveren")}</Button>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+        {justDone && (
+          <div className="flex items-center gap-2 mt-3 px-3 py-2.5 rounded-lg" style={{ background: "#34D39918", border: "1px solid #34D39944" }}>
+            <CheckCircle2 size={15} color="#34D399" />
+            <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3" }}>{t("ritKlaar")}</span>
+          </div>
+        )}
+      </div>
+
+      {done.length > 0 && (
+        <div>
+          <Eyebrow>{t("ritDone")}</Eyebrow>
+          <div className="space-y-2 mt-1">
+            {done.map((r) => (
+              <Card key={r.id} className="p-3" style={{ borderLeft: "3px solid #34D399" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.klant}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>{r.pod?.datum || r.datum}{r.pod?.tijd ? ` · ${r.pod.tijd}` : ""}{r.pod?.naam ? ` · ${r.pod.naam}` : ""}</div>
+                  </div>
+                  <CheckCircle2 size={16} color="#34D399" style={{ flexShrink: 0 }} />
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
    DAGELIJKSE VOERTUIGCHECK (DVIR, chauffeur)
    Vóór vertrek 8 punten nalopen: alles "in orde" of "niet in orde" (met
    notitie). Afgekeurde punten worden automatisch een melding voor de
@@ -1742,7 +1895,7 @@ function UrenRegistratie({ currentUser }) {
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [] }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
   const firstName = currentUser?.naam?.split(" ")[0] || "";
@@ -1793,12 +1946,19 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
 
       <InstallCard />
 
-      {/* Segment: melding maken, dagelijkse check of eigen uren bijhouden */}
+      {/* Segment: melding, dagelijkse check, ritten (alleen als er ritten zijn
+          toegewezen) of eigen uren. Het aantal open ritten staat als badge. */}
       <div className="max-w-xl mx-auto flex gap-1.5 p-1 rounded-xl" style={{ background: "#10151D", border: "1px solid #232B38" }}>
-        {[{ id: "melding", label: t("segMelding"), icon: AlertTriangle }, { id: "check", label: t("segCheck"), icon: ShieldCheck }, { id: "uren", label: t("segUren"), icon: Clock }].map((s) => (
-          <button key={s.id} onClick={() => setTab(s.id)} aria-pressed={tab === s.id} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg"
-            style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, cursor: "pointer", border: "none", background: tab === s.id ? "linear-gradient(180deg,#4C8DFF,#3B82F6)" : "transparent", color: tab === s.id ? "#fff" : "#B4BCC9", boxShadow: tab === s.id ? "0 2px 10px rgba(59,130,246,0.35)" : "none", transition: "all .15s ease" }}>
-            <s.icon size={15} /> {s.label}
+        {[
+          { id: "melding", label: t("segMelding"), icon: AlertTriangle },
+          { id: "check", label: t("segCheck"), icon: ShieldCheck },
+          ...(myRides.length > 0 ? [{ id: "ritten", label: t("segRitten"), icon: MapPin, badge: myRides.filter((r) => r.status !== "afgeleverd").length }] : []),
+          { id: "uren", label: t("segUren"), icon: Clock },
+        ].map((s) => (
+          <button key={s.id} onClick={() => setTab(s.id)} aria-pressed={tab === s.id} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg"
+            style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: "none", minWidth: 0, background: tab === s.id ? "linear-gradient(180deg,#4C8DFF,#3B82F6)" : "transparent", color: tab === s.id ? "#fff" : "#B4BCC9", boxShadow: tab === s.id ? "0 2px 10px rgba(59,130,246,0.35)" : "none", transition: "all .15s ease" }}>
+            <s.icon size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
+            {s.badge > 0 && <span style={{ flexShrink: 0, minWidth: 17, height: 17, borderRadius: 999, background: tab === s.id ? "#FFFFFF33" : "#3B82F6", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 4px" }}>{s.badge}</span>}
           </button>
         ))}
       </div>
@@ -1806,6 +1966,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
       {/* De melding-tab blijft gemount (display:none) zodat een half ingevulde
           melding niet verloren gaat als de chauffeur even naar check/uren kijkt. */}
       {tab === "uren" && <UrenRegistratie currentUser={currentUser} />}
+      {tab === "ritten" && <RittenTab myRides={myRides} onCompleteRide={onCompleteRide} />}
       {tab === "check" && <VoertuigCheck vehicles={vehicles} currentUser={currentUser} myChecks={myChecks} onSaveCheck={onSaveCheck} onSubmitReport={onSubmit} />}
       <div className="space-y-6" style={{ display: tab !== "melding" ? "none" : undefined }}>
         <>
@@ -1846,6 +2007,172 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
 /* ---------------------------------------------------------------------
    ADMIN VIEWS (largely unchanged from v1, condensed)
 --------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------
+   RITTEN (beheerder): ritten plannen en afleverbewijzen inzien/downloaden
+--------------------------------------------------------------------- */
+function RidesView({ rides = [], vehicles = [], users = [], profiel = {}, company, onAdd, onDelete }) {
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("open"); // open | done | all
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [podView, setPodView] = useState(null); // rit waarvan we de aflevering tonen
+  const chauffeurs = users.filter((u) => u.rol === "chauffeur");
+  const [form, setForm] = useState({ datum: TODAY, klant: "", adres: "", referentie: "", vehicle: "", chauffeurId: "", opmerking: "" });
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    if (!form.klant.trim() || !form.adres.trim()) { setErr("Vul minimaal klant en adres in."); return; }
+    const ch = chauffeurs.find((c) => c.id === form.chauffeurId);
+    onAdd({
+      id: "rit" + Date.now(), datum: form.datum || TODAY,
+      klant: form.klant.trim(), adres: form.adres.trim(), referentie: form.referentie.trim(),
+      vehicle: form.vehicle || "", chauffeurId: form.chauffeurId || null, chauffeur: ch ? ch.naam : "",
+      opmerking: form.opmerking.trim(), status: "gepland", pod: null,
+    });
+    setForm({ datum: TODAY, klant: "", adres: "", referentie: "", vehicle: "", chauffeurId: "", opmerking: "" });
+    setErr(""); setOpen(false);
+  };
+
+  const shown = [...rides]
+    .filter((r) => filter === "all" ? true : filter === "done" ? r.status === "afgeleverd" : r.status !== "afgeleverd")
+    .sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || ""));
+  const openCount = rides.filter((r) => r.status !== "afgeleverd").length;
+  const doneCount = rides.length - openCount;
+
+  // Afleverbewijs als PDF — zelfde huisstijl-aanpak als de werkbon.
+  const downloadPod = async (r) => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const M = 16, R = 210 - M; let y = 18;
+    const naam = profiel.bedrijfsnaam || company?.name || "";
+    if (profiel.logo) {
+      try { const props = doc.getImageProperties(profiel.logo); const w = 34, h = Math.min(24, (props.height / props.width) * w); doc.addImage(profiel.logo, "PNG", M, y, w, h); } catch { /* ongeldig logo */ }
+    }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text(naam, R, y + 4, { align: "right" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    let hy = y + 9;
+    [profiel.adres, [profiel.postcode, profiel.plaats].filter(Boolean).join("  "), profiel.telefoon, profiel.email].filter(Boolean).forEach((tl) => { doc.text(String(tl), R, hy, { align: "right" }); hy += 4; });
+    doc.setTextColor(0);
+    y = Math.max(y + 26, hy) + 4;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("AFLEVERBEWIJS", M, y);
+    y += 3; doc.setDrawColor(200); doc.line(M, y, R, y); y += 8;
+    doc.setFontSize(10);
+    const row = (label, val) => { if (!val) return; doc.setFont("helvetica", "bold"); doc.text(label, M, y); doc.setFont("helvetica", "normal"); doc.text(String(val), M + 42, y); y += 6; };
+    row("Klant", r.klant);
+    row("Afleveradres", r.adres);
+    row("Referentie", r.referentie);
+    row("Ritdatum", r.datum);
+    row("Voertuig", r.vehicle);
+    row("Chauffeur", r.chauffeur || r.pod?.door);
+    y += 2; doc.setDrawColor(230); doc.line(M, y, R, y); y += 7;
+    row("Afgeleverd op", `${r.pod?.datum || ""} ${r.pod?.tijd || ""}`.trim());
+    row("Ontvangen door", r.pod?.naam);
+    row("Opmerking", r.pod?.opmerking);
+    if (r.pod?.handtekening) {
+      y += 3;
+      try { doc.addImage(r.pod.handtekening, "PNG", M, y, 60, 22); y += 24; } catch { /* geen geldige handtekening */ }
+      doc.setFontSize(9); doc.setTextColor(120); doc.text("Handtekening ontvanger", M, y + 3); doc.setTextColor(0);
+    }
+    doc.save(`afleverbewijs-${(r.referentie || r.klant || r.id).replace(/[^\w-]+/g, "_")}.pdf`);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><MapPin size={22} color="#3B82F6" /> Ritten</h1>
+          <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{openCount} open · {doneCount} afgeleverd. De chauffeur tekent digitaal af.</p>
+        </div>
+        {!open && <Button icon={Plus} onClick={() => setOpen(true)}>Nieuwe rit</Button>}
+      </div>
+
+      {open && (
+        <Card className="p-5">
+          <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: "#E7ECF3", marginBottom: 12 }}>Nieuwe rit</div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))" }}>
+            <div><FieldLabel>Klant</FieldLabel><input className="tg-input w-full" placeholder="Bv. Bakkerij Vermeulen" value={form.klant} onChange={(e) => setForm({ ...form, klant: e.target.value })} /></div>
+            <div><FieldLabel>Afleveradres</FieldLabel><input className="tg-input w-full" placeholder="Straat, plaats" value={form.adres} onChange={(e) => setForm({ ...form, adres: e.target.value })} /></div>
+            <div><FieldLabel>Datum</FieldLabel><input type="date" className="tg-input w-full" value={form.datum} onChange={(e) => setForm({ ...form, datum: e.target.value })} /></div>
+            <div><FieldLabel>Referentie (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="Ordernummer" value={form.referentie} onChange={(e) => setForm({ ...form, referentie: e.target.value })} /></div>
+            <div><FieldLabel>Voertuig</FieldLabel>
+              <select className="tg-input w-full" value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}>
+                <option value="">— Kies voertuig —</option>
+                {vehicles.map((v) => <option key={v.id} value={v.kenteken}>{v.kenteken} · {v.merk}</option>)}
+              </select>
+            </div>
+            <div><FieldLabel>Chauffeur</FieldLabel>
+              <select className="tg-input w-full" value={form.chauffeurId} onChange={(e) => setForm({ ...form, chauffeurId: e.target.value })}>
+                <option value="">— Kies chauffeur —</option>
+                {chauffeurs.map((c) => <option key={c.id} value={c.id}>{c.naam}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}><FieldLabel>Opmerking voor de chauffeur (optioneel)</FieldLabel><input className="tg-input w-full" placeholder="Bv. achterom leveren, vóór 10:00" value={form.opmerking} onChange={(e) => setForm({ ...form, opmerking: e.target.value })} /></div>
+          </div>
+          {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F", marginTop: 10 }}>{err}</div>}
+          <div className="flex gap-2 mt-4"><Button onClick={submit}>Rit toevoegen</Button><Button variant="ghost" onClick={() => { setOpen(false); setErr(""); }}>Annuleren</Button></div>
+          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 10 }}>De rit verschijnt direct bij de gekozen chauffeur onder "Ritten". Na aflevering staat het afleverbewijs (naam + handtekening) hier.</div>
+        </Card>
+      )}
+
+      <div className="flex gap-2 flex-wrap">
+        <Chip active={filter === "open"} onClick={() => setFilter("open")}>Open ({openCount})</Chip>
+        <Chip active={filter === "done"} onClick={() => setFilter("done")}>Afgeleverd ({doneCount})</Chip>
+        <Chip active={filter === "all"} onClick={() => setFilter("all")}>Alles</Chip>
+      </div>
+
+      {shown.length === 0 ? <EmptyState icon={MapPin} text={rides.length === 0 ? "Nog geen ritten. Voeg een rit toe — de chauffeur ziet 'm direct in de app en tekent digitaal af." : "Geen ritten in dit filter."} /> : (
+        <div className="space-y-2">
+          {shown.map((r) => {
+            const done = r.status === "afgeleverd";
+            return (
+              <Card key={r.id} className="p-4" style={{ borderLeft: `3px solid ${done ? "#34D399" : "#3B82F6"}` }}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ fontFamily: "Inter", fontSize: 14.5, fontWeight: 700, color: "#E7ECF3" }}>{r.klant}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: done ? "#34D399" : "#8FB8FF", background: done ? "#34D39918" : "#3B82F618", fontWeight: 600 }}>{done ? "Afgeleverd" : "Gepland"}</span>
+                    </div>
+                    <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginTop: 2 }}>{r.adres}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 2 }}>
+                      {r.datum}{r.referentie ? ` · Ref. ${r.referentie}` : ""}{r.vehicle ? ` · ${r.vehicle}` : ""}{r.chauffeur ? ` · ${r.chauffeur}` : ""}
+                    </div>
+                    {done && r.pod && (
+                      <div style={{ fontFamily: "Inter", fontSize: 12, color: "#34D399", marginTop: 4 }}>
+                        Ontvangen door {r.pod.naam || "—"} · {r.pod.datum || ""} {r.pod.tijd || ""}{r.pod.opmerking ? ` · ${r.pod.opmerking}` : ""}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap" style={{ flexShrink: 0 }}>
+                    {done && r.pod && (
+                      <>
+                        {r.pod.handtekening && <Button small variant="ghost" onClick={() => setPodView(podView === r.id ? null : r.id)}>{podView === r.id ? "Verberg" : "Handtekening"}</Button>}
+                        <Button small variant="ghost" icon={Download} onClick={() => downloadPod(r)}>PDF</Button>
+                      </>
+                    )}
+                    {confirmDel === r.id ? (
+                      <span className="flex items-center gap-2">
+                        <button onClick={() => { onDelete(r.id); setConfirmDel(null); }} className="text-xs" style={{ color: "#F0453F", fontWeight: 700 }}>Bevestig</button>
+                        <button onClick={() => setConfirmDel(null)} className="text-xs" style={{ color: "#B4BCC9" }}>Nee</button>
+                      </span>
+                    ) : (
+                      <button onClick={() => setConfirmDel(r.id)} aria-label="Rit verwijderen" title="Verwijderen" style={{ color: "#6B7585", background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={15} /></button>
+                    )}
+                  </div>
+                </div>
+                {podView === r.id && r.pod?.handtekening && (
+                  <div className="mt-3 p-3 rounded-lg" style={{ background: "#FFFFFF", maxWidth: 300 }}>
+                    <img src={r.pod.handtekening} alt={`Handtekening ${r.pod.naam || "ontvanger"}`} style={{ width: "100%", display: "block" }} />
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ClickableKpi({ label, value, icon: Icon, accent, onClick }) {
   return (
@@ -6095,6 +6422,7 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
 // Aan/uit te zetten onderdelen. Een bedrijf kiest bij de start (of later in
 // Instellingen) welke het gebruikt; uitgezette modules verdwijnen uit het menu.
 const MODULE_DEFS = [
+  { key: "rides", label: "Ritten & aflevering", desc: "Ritten plannen + digitaal afleverbewijs", icon: MapPin },
   { key: "planning", label: "Planning", desc: "Werkplaats-agenda inplannen", icon: Calendar },
   { key: "maintenance", label: "Voorspellend onderhoud", desc: "Onderhoud op km-stand & tijd", icon: Wrench },
   { key: "parts", label: "Voorraad", desc: "Onderdelen & voorraadbeheer", icon: Package },
@@ -6110,7 +6438,7 @@ const DEFAULT_MODULES = MODULE_DEFS.reduce((a, m) => { a[m.key] = true; return a
 // modules aan? (ontbrekende sleutel = aan, zodat bestaande bedrijven niks kwijtraken)
 const modOn = (modules, key) => !key || (modules ? modules[key] !== false : true);
 // welk scherm hoort bij welke module (voor de terugval als een module uit staat)
-const VIEW_MODULE = { planning: "planning", maintenance: "maintenance", parts: "parts", bakwagens: "bakwagens", bestelwagens: "bestelwagens", trailers: "trailers", drivers: "drivers", inspection: "inspection", costs: "costs", ai: "ai" };
+const VIEW_MODULE = { rides: "rides", planning: "planning", maintenance: "maintenance", parts: "parts", bakwagens: "bakwagens", bestelwagens: "bestelwagens", trailers: "trailers", drivers: "drivers", inspection: "inspection", costs: "costs", ai: "ai" };
 
 // --- Routing: elk scherm een eigen pad (bv. /werkvloer). Eén app, maar de URL
 // loopt mee zodat de terug-knop werkt, je kunt bookmarken en verversen op
@@ -6119,7 +6447,7 @@ const VIEW_MODULE = { planning: "planning", maintenance: "maintenance", parts: "
 // eigen subpad (bv. /app/werkvloer) zodat terug/delen/verversen blijft werken.
 const APP_PREFIX = "/app";
 const VIEW_SUBPATHS = {
-  dashboard: "", driver: "melding", ai: "ai", workfloor: "werkvloer",
+  dashboard: "", driver: "melding", ai: "ai", workfloor: "werkvloer", rides: "ritten",
   planning: "planning", maintenance: "onderhoud", parts: "voorraad",
   vehicles: "vrachtwagens", bakwagens: "bakwagens", bestelwagens: "bestelwagens",
   trailers: "trailers", drivers: "chauffeurs", inspection: "inspectie",
@@ -6155,6 +6483,7 @@ const NAV_GROUPS = [
   ]},
   { group: "Overzicht", roles: ["admin", "garage"], items: [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "rides", label: "Ritten", icon: MapPin, roles: ["admin"], module: "rides" },
     { id: "rapportage", label: "Rapportage", icon: BarChart3, roles: ["admin"] },
     { id: "ai", label: "AI Assistent", icon: Sparkles, module: "ai" },
   ]},
@@ -6528,6 +6857,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Dagelijkse voertuigchecks (DVIR). Server-authoritatief: alleen chauffeurs
   // voegen ze toe (driver_add_check); de save-dataset stuurt ze niet mee.
   const [checks, setChecks] = useState(() => initSlice("checks", seedChecks));
+  // Ritten + digitale aflevering (POD). De beheerder plant; de chauffeur tekent
+  // af via driver_complete_ride (de server beschermt afgeleverde ritten).
+  const [rides, setRides] = useState(() => initSlice("rides", seedRides));
   const [users, setUsers] = useState(() => {
     if (!live) return seedUsers;
     const base = initSlice("users", seedUsers, []);
@@ -6587,6 +6919,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       costs: costs[cid] || [],
       reports: reports[cid] || [],
       users: (users[cid] || []).filter((u) => u.id !== session.profile.id),
+      rides: rides[cid] || [],
       planning: planning[cid] || [],
       drivers: drivers[cid] || [],
       availability: availability[cid] || {},
@@ -6727,6 +7060,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cCosts = costs[companyId] || [];
   const cReports = reports[companyId] || [];
   const cChecks = checks[companyId] || [];
+  const cRides = rides[companyId] || [];
   const cUsers = users[companyId] || [];
   const cPlanning = planning[companyId] || [];
   const cDrivers = drivers[companyId] || [];
@@ -6803,6 +7137,13 @@ export default function TruckGarageApp({ session, onLogout }) {
     if (live && role === "chauffeur") await driverAddCheck(c);
     setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
   };
+  // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD).
+  const addRide = (r) => setRides((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+  const deleteRide = (id) => setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+  const completeRide = async (rideId, pod) => {
+    if (live && role === "chauffeur") await driverCompleteRide(rideId, pod);
+    setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === rideId ? { ...x, status: "afgeleverd", pod } : x)) }));
+  };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
   // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.
   const uploadMedia = async (reportId, items) => {
@@ -6818,7 +7159,7 @@ export default function TruckGarageApp({ session, onLogout }) {
     setRefreshing(true);
     try {
       let fresh;
-      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [], checks: b.checks || [] }; }
+      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [], checks: b.checks || [], rides: b.rides || [] }; }
       else if (role === "garage") fresh = await loadCompanyStateScoped();
       else fresh = await loadState(companyId);
       if (fresh) {
@@ -6826,6 +7167,7 @@ export default function TruckGarageApp({ session, onLogout }) {
         if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
         if (Array.isArray(fresh.checks)) setChecks((s) => ({ ...s, [companyId]: fresh.checks }));
+        if (Array.isArray(fresh.rides)) setRides((s) => ({ ...s, [companyId]: fresh.rides }));
         // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
         if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
       }
@@ -7036,13 +7378,14 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "rides" && isAdmin && modOn(cModules, "rides") && <RidesView rides={cRides} vehicles={cVehicles} users={cUsers} profiel={cProfiel} company={company} onAdd={addRide} onDelete={deleteRide} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
                 {view === "bestelwagens" && modOn(cModules, "bestelwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bestelwagen" title="Bestelwagens" />}

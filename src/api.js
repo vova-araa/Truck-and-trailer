@@ -415,6 +415,13 @@ export async function driverAddCheck(check) {
   if (error) throw error;
 }
 
+// Rit aftekenen (Proof of Delivery): naam ontvanger + handtekening. De server
+// controleert dat de rit aan déze chauffeur is toegewezen.
+export async function driverCompleteRide(rideId, pod) {
+  const { error } = await supabase.rpc("driver_complete_ride", { p_ride_id: rideId, p_pod: pod });
+  if (error) throw error;
+}
+
 // Huidige ingelogde gebruikers-id (of null). Faalt stil — ook offline bruikbaar.
 async function currentUserId() {
   try {

@@ -48,7 +48,7 @@ export default function Root() {
       let state;
       if (profile.rol === "chauffeur") {
         const boot = await driverBootstrap();
-        state = { vehicles: boot.vehicles || [], reports: boot.reports || [], checks: boot.checks || [] };
+        state = { vehicles: boot.vehicles || [], reports: boot.reports || [], checks: boot.checks || [], rides: boot.rides || [] };
       } else if (profile.rol === "garage") {
         state = await loadCompanyStateScoped();
       } else {
