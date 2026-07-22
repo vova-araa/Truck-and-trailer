@@ -2743,6 +2743,11 @@ ${JSON.stringify(ctx)}`;
             );
           })}
         </div>
+        {vehicle.rdwSync && (
+          <div className="flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11, color: "#34D399", marginTop: 8 }}>
+            <ShieldCheck size={12} /> APK-datum automatisch gecontroleerd bij de RDW op {vehicle.rdwSync}.
+          </div>
+        )}
         <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 8 }}>Tip: sinds 1 juli 2026 is de slimme tachograaf (SMT2) verplicht voor voertuigen vanaf 2.500 kg bij internationaal vervoer. Bewerk het voertuig om datums bij te werken.</div>
       </Card>
 

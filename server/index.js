@@ -409,6 +409,59 @@ function daysUntil(dateStr) {
   return Math.round((b - a) / 86400000);
 }
 
+// ---------- RDW-AUTOSYNC: APK-datums automatisch actueel houden ----------
+// Gratis open data van de RDW (geen key nodig). De cron haalt per bedrijf de
+// APK-vervaldatums op voor alle kentekens en werkt ze bij in company_state —
+// niemand hoeft ooit nog een APK-datum over te typen of te missen. Draait
+// VOOR de herinneringen, zodat die meteen op de verse datums werken.
+
+const RDW_URL = "https://opendata.rdw.nl/resource/m9d7-ebf2.json";
+const rdwPlate = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const rdwYmd = (s) => (s && s.length >= 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : "");
+
+// Haal RDW-records op voor een lijst kentekens (in blokken van 50).
+async function rdwFetchPlates(plates) {
+  const map = {};
+  for (let i = 0; i < plates.length; i += 50) {
+    const chunk = plates.slice(i, i + 50);
+    const where = `kenteken in(${chunk.map((p) => `'${p}'`).join(",")})`;
+    const url = `${RDW_URL}?$select=kenteken,vervaldatum_apk,merk,handelsbenaming,datum_eerste_toelating&$where=${encodeURIComponent(where)}`;
+    try {
+      const r = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!r.ok) continue; // RDW even niet bereikbaar: sla dit blok over
+      const rows = await r.json();
+      if (Array.isArray(rows)) rows.forEach((row) => { if (row.kenteken) map[row.kenteken] = row; });
+    } catch { /* netwerk: overslaan, volgende run opnieuw */ }
+  }
+  return map;
+}
+
+// Werk één lijst voertuigen/trailers bij met RDW-data. Muteert niets: geeft
+// een nieuwe lijst + het aantal wijzigingen terug. APK-datum is leidend
+// (de RDW wéét het); merk/bouwjaar alleen invullen als ze nog leeg zijn.
+function rdwApplyTo(list, rdwMap, todayIso) {
+  if (!Array.isArray(list)) return { list, changed: 0 };
+  let changed = 0;
+  const out = list.map((v) => {
+    const rec = rdwMap[rdwPlate(v?.kenteken)];
+    if (!rec) return v;
+    let nv = v;
+    const apk = rdwYmd(rec.vervaldatum_apk);
+    if (apk && apk !== (v.apkTot || "")) { nv = { ...nv, apkTot: apk }; }
+    if (!v.merk && (rec.merk || rec.handelsbenaming)) {
+      nv = nv === v ? { ...nv } : nv;
+      nv.merk = [rec.merk, rec.handelsbenaming].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    }
+    if (!v.bouwjaar && rec.datum_eerste_toelating) {
+      nv = nv === v ? { ...nv } : nv;
+      nv.bouwjaar = Number(String(rec.datum_eerste_toelating).slice(0, 4)) || v.bouwjaar;
+    }
+    if (nv !== v) { changed++; return { ...nv, rdwSync: todayIso }; }
+    return v;
+  });
+  return { list: out, changed };
+}
+
 app.all("/api/cron/reminders", async (req, res) => {
   const secret = process.env.CRON_SECRET || "";
   if (!secret) return res.status(503).json({ error: "CRON_SECRET niet ingesteld op de server." });
@@ -425,6 +478,37 @@ app.all("/api/cron/reminders", async (req, res) => {
     (admins || []).forEach((a) => { if (a.company_id && a.email && !adminByCompany[a.company_id]) adminByCompany[a.company_id] = a; });
 
     const { data: states } = await supaAdmin.from("company_state").select("company_id, data");
+
+    // STAP 1 — RDW-autosync: APK-datums (en ontbrekend merk/bouwjaar) verversen
+    // vanaf de officiële open data, per bedrijf. Fouten per bedrijf breken de
+    // rest niet; bij RDW-storing draait alleen de herinneringen-stap.
+    let rdwVehiclesUpdated = 0, rdwCompaniesUpdated = 0;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    for (const row of (states || [])) {
+      try {
+        const data = row.data || {};
+        const plates = [...(Array.isArray(data.vehicles) ? data.vehicles : []), ...(Array.isArray(data.trailers) ? data.trailers : [])]
+          .map((v) => rdwPlate(v?.kenteken)).filter(Boolean);
+        if (!plates.length) continue;
+        const rdwMap = await rdwFetchPlates([...new Set(plates)]);
+        if (!Object.keys(rdwMap).length) continue;
+        const veh = rdwApplyTo(data.vehicles, rdwMap, todayIso);
+        const trl = rdwApplyTo(data.trailers, rdwMap, todayIso);
+        if (veh.changed + trl.changed > 0) {
+          const newData = { ...data, vehicles: veh.list, trailers: trl.list };
+          const { error } = await supaAdmin.from("company_state")
+            .update({ data: newData, updated_at: new Date().toISOString() })
+            .eq("company_id", row.company_id);
+          if (!error) {
+            row.data = newData; // de herinneringen-stap hieronder gebruikt de verse datums
+            rdwVehiclesUpdated += veh.changed + trl.changed;
+            rdwCompaniesUpdated++;
+          }
+        }
+      } catch (e) { console.error("RDW-sync fout voor bedrijf:", row.company_id, e?.message || e); }
+    }
+
+    // STAP 2 — herinneringen op basis van de (zojuist ververste) datums.
     let companiesMailed = 0, itemsFound = 0;
     const CHECKS = [
       { veld: "apkTot", label: "APK" },
@@ -505,7 +589,7 @@ app.all("/api/cron/reminders", async (req, res) => {
         } catch { /* geen dedupe-log beschikbaar */ }
       }
     }
-    res.json({ ok: true, companiesMailed, itemsFound });
+    res.json({ ok: true, companiesMailed, itemsFound, rdwCompaniesUpdated, rdwVehiclesUpdated });
   } catch (err) {
     console.error("reminders-cron fout:", err);
     res.status(500).json({ error: "Onverwachte serverfout bij herinneringen." });
