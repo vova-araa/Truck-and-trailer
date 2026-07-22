@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
@@ -1236,7 +1236,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
                       </div>
                       {damageResult.onderdeel && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{damageResult.onderdeel}</div>}
                       <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 500, marginTop: 2 }}>{damageResult.schade}</div>
-                      {damageResult.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>💡 {damageResult.aanbeveling}</div>}
+                      {damageResult.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{damageResult.aanbeveling}</div>}
                       <button onClick={applyDamageToDescription} className="mt-2 flex items-center gap-1 text-xs" style={{ color: "#3B82F6", fontFamily: "Inter", fontWeight: 600 }}>{t("addToDesc")}</button>
                     </div>
                   );
@@ -1357,8 +1357,232 @@ function InstallCard() {
   );
 }
 
+/* ---------------------------------------------------------------------
+   URENREGISTRATIE (chauffeur)
+   Persoonlijk hulpmiddel: reken een werkdag uit (begin, einde, 45 min pauze)
+   en bewaar het. Chauffeurs zijn PII-afgeschermd en slaan geen company_state
+   op; hun uren blijven daarom lokaal op het toestel staan (offline-first) en
+   kunnen als CSV naar de baas worden gestuurd.
+--------------------------------------------------------------------- */
+
+// localStorage-sleutel per gebruiker (val terug op e-mail, dan 'anon').
+const urenKey = (u) => `tt_uren_${u?.id || u?.email || "anon"}`;
+function loadUren(u) {
+  try { const a = JSON.parse(localStorage.getItem(urenKey(u)) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function saveUren(u, list) {
+  try { localStorage.setItem(urenKey(u), JSON.stringify(list)); } catch { /* vol of privé-modus */ }
+}
+// "HH:MM" -> minuten sinds middernacht (of null bij ongeldige invoer).
+function hhmmToMin(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((s || "").trim());
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+// Gewerkte minuten. Eind <= begin => nachtdienst (+24u). Pauze (45 min) eraf.
+function workedMinutes(start, eind, pauze) {
+  const a = hhmmToMin(start), b = hhmmToMin(eind);
+  if (a == null || b == null) return null;
+  let d = b - a; if (d <= 0) d += 24 * 60;
+  d -= pauze ? 45 : 0;
+  return Math.max(0, d);
+}
+const isOvernight = (start, eind) => { const a = hhmmToMin(start), b = hhmmToMin(eind); return a != null && b != null && b <= a; };
+// Minuten -> "8:15" (taal-neutraal).
+function fmtHM(min) {
+  if (min == null) return "—";
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+}
+// Minuten -> decimale uren met komma, voor de CSV ("8,25").
+const fmtDecUur = (min) => (Math.round((min / 60) * 100) / 100).toFixed(2).replace(".", ",");
+// ISO-datum (lokale tijd) van een Date.
+const isoDay = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+// Maandag t/m zondag van de week waarin d valt.
+function weekRange(d) {
+  const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const mondayOffset = (dt.getDay() + 6) % 7; // ma=0 … zo=6
+  const mon = new Date(dt); mon.setDate(dt.getDate() - mondayOffset);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  return { from: isoDay(mon), to: isoDay(sun) };
+}
+// "2026-07-22" -> lokale, vertaalde dagweergave ("wo 22 jul").
+function fmtDay(iso, lang) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (!m) return iso || "";
+  try {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(lang || "nl", { weekday: "short", day: "numeric", month: "short" });
+  } catch { return iso; }
+}
+
+function UrenRegistratie({ currentUser }) {
+  const { t, lang } = useT();
+  const today = isoDay(new Date());
+  const [entries, setEntries] = useState(() => loadUren(currentUser));
+  const [form, setForm] = useState({ datum: today, start: "08:00", eind: "17:00", pauze: true, note: "" });
+  const [saved, setSaved] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  // Bij wisselen van gebruiker (bv. na herinloggen) opnieuw laden.
+  useEffect(() => { setEntries(loadUren(currentUser)); }, [currentUser?.id, currentUser?.email]);
+  // Elke wijziging meteen lokaal bewaren.
+  useEffect(() => { saveUren(currentUser, entries); }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const preview = workedMinutes(form.start, form.eind, form.pauze);
+  const canSave = preview != null && form.datum;
+
+  const add = () => {
+    if (!canSave) return;
+    const entry = { id: "u" + Date.now(), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() };
+    setEntries((list) => [entry, ...list].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || "")));
+    setForm((f) => ({ ...f, note: "" }));
+    setSaved(true); setTimeout(() => setSaved(false), 1800);
+  };
+  const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); setConfirmDel(null); };
+
+  // Optellen over een filter: totale minuten + aantal unieke dagen.
+  const sumOver = (pred) => {
+    const es = entries.filter(pred);
+    const min = es.reduce((a, e) => a + (workedMinutes(e.start, e.eind, e.pauze) || 0), 0);
+    const days = new Set(es.map((e) => e.datum)).size;
+    return { min, days };
+  };
+  const wk = weekRange(new Date());
+  const week = sumOver((e) => e.datum >= wk.from && e.datum <= wk.to);
+  const curMonth = today.slice(0, 7);
+  const month = sumOver((e) => (e.datum || "").slice(0, 7) === curMonth);
+
+  const exportCSV = () => {
+    const rows = [...entries]
+      .sort((a, b) => (a.datum || "").localeCompare(b.datum || ""))
+      .map((e) => {
+        const w = workedMinutes(e.start, e.eind, e.pauze);
+        return [e.datum, e.start, e.eind, e.pauze ? "45" : "0", w == null ? "" : fmtDecUur(w), e.note || ""];
+      });
+    downloadCSV(`uren-${(currentUser?.naam || "chauffeur").replace(/\s+/g, "_")}.csv`, ["Datum", "Begin", "Einde", "Pauze (min)", "Uren", "Notitie"], rows);
+  };
+
+  const inputStyle = { width: "100%" };
+
+  return (
+    <div className="max-w-xl mx-auto space-y-4">
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "#3B82F618" }}><Clock size={16} color="#3B82F6" /></div>
+          <div style={{ fontFamily: "Oswald", fontSize: 19, fontWeight: 600, color: "#E7ECF3" }}>{t("urenTitle")}</div>
+        </div>
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 14 }}>{t("urenSub")}</div>
+
+        {/* Invoer */}
+        <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <FieldLabel>{t("urenDatum")}</FieldLabel>
+            <input type="date" className="tg-input" style={inputStyle} value={form.datum} max={today} onChange={(e) => setForm({ ...form, datum: e.target.value })} />
+          </div>
+          <div>
+            <FieldLabel>{t("urenStart")}</FieldLabel>
+            <input type="time" className="tg-input" style={inputStyle} value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} />
+          </div>
+          <div>
+            <FieldLabel>{t("urenEind")}</FieldLabel>
+            <input type="time" className="tg-input" style={inputStyle} value={form.eind} onChange={(e) => setForm({ ...form, eind: e.target.value })} />
+          </div>
+        </div>
+
+        {/* Pauze-schakelaar (45 min) */}
+        <button onClick={() => setForm((f) => ({ ...f, pauze: !f.pauze }))} className="w-full flex items-center gap-2.5 mt-3 px-3 py-2.5 rounded-lg text-left"
+          style={{ border: `1px solid ${form.pauze ? "#3B82F6" : "#2A3340"}`, background: form.pauze ? "#3B82F614" : "#161C25", transition: "all .15s ease" }}>
+          <span className="flex items-center justify-center rounded" style={{ width: 20, height: 20, flexShrink: 0, border: `2px solid ${form.pauze ? "#3B82F6" : "#4A5568"}`, background: form.pauze ? "#3B82F6" : "transparent" }}>
+            {form.pauze && <Check size={13} color="#fff" />}
+          </span>
+          <Coffee size={15} color={form.pauze ? "#8FB8FF" : "#98A1B0"} />
+          <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: form.pauze ? "#E7ECF3" : "#B4BCC9" }}>{t("urenPauze")}</span>
+        </button>
+
+        {/* Notitie */}
+        <div className="mt-3">
+          <FieldLabel>{t("urenNote")}</FieldLabel>
+          <input className="tg-input" style={inputStyle} placeholder={t("urenNotePh")} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+        </div>
+
+        {/* Live berekening */}
+        <div className="flex items-center justify-between mt-4 px-3 py-2.5 rounded-lg" style={{ background: "#0E141C", border: "1px solid #232B38" }}>
+          <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>{t("urenGewerkt")}{isOvernight(form.start, form.eind) ? ` · ${t("urenNacht")}` : ""}</span>
+          <span style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: preview == null ? "#6B7585" : "#3B82F6", lineHeight: 1 }}>{fmtHM(preview)}</span>
+        </div>
+
+        <div className="mt-3">
+          <Button icon={saved ? Check : Plus} onClick={add} disabled={!canSave} style={{ width: "100%", justifyContent: "center", ...(saved ? { background: "linear-gradient(180deg,#34D399,#22C08A)" } : {}) }}>
+            {saved ? t("urenSaved") : t("urenSave")}
+          </Button>
+        </div>
+      </Card>
+
+      {/* Week/maand-totalen */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        {[{ label: t("urenWeek"), v: week }, { label: t("urenMaand"), v: month }].map((s, i) => (
+          <Card key={i} className="p-4">
+            <Eyebrow>{s.label}</Eyebrow>
+            <div style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 700, color: "#E7ECF3", lineHeight: 1.1 }}>{fmtHM(s.v.min)}</div>
+            <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{s.v.days} {s.v.days === 1 ? t("urenDag") : t("urenDagen")}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Lijst met opgeslagen dagen */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <Eyebrow>{t("urenTitle")}</Eyebrow>
+          {entries.length > 0 && <Button variant="ghost" small icon={Download} onClick={exportCSV}>{t("urenExport")}</Button>}
+        </div>
+        {entries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
+            <Clock size={24} color="#6B7585" />
+            <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>{t("urenGeen")}</span>
+          </div>
+        ) : (
+          <div className="space-y-2 mt-1">
+            {entries.map((e) => {
+              const w = workedMinutes(e.start, e.eind, e.pauze);
+              return (
+                <Card key={e.id} className="p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+                      <div style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", textTransform: "capitalize" }}>{fmtDay(e.datum, lang)}</div>
+                      <div className="flex items-center gap-1.5 flex-wrap" style={{ marginTop: 2 }}>
+                        <span style={{ fontFamily: "JetBrains Mono", fontSize: 12, color: "#B4BCC9" }}>{e.start}–{e.eind}</span>
+                        {e.pauze && <span style={{ fontFamily: "Inter", fontSize: 10.5, color: "#8FB8FF", border: "1px solid #3B82F644", borderRadius: 5, padding: "1px 5px" }}>45m {t("urenBadgePauze")}</span>}
+                        {isOvernight(e.start, e.eind) && <span style={{ fontFamily: "Inter", fontSize: 10.5, color: "#C4A24C", border: "1px solid #C4A24C55", borderRadius: 5, padding: "1px 5px" }}>{t("urenNacht")}</span>}
+                      </div>
+                      {e.note && <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.note}</div>}
+                    </div>
+                    <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                      <span style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 700, color: "#E7ECF3" }}>{fmtHM(w)}</span>
+                      {confirmDel === e.id ? (
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => remove(e.id)} aria-label={t("urenDel")} style={{ background: "#F0453F", color: "#fff", border: "none", borderRadius: 7, padding: "5px 8px", fontFamily: "Inter", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{t("urenDel")}</button>
+                          <button onClick={() => setConfirmDel(null)} aria-label="X" style={{ background: "#1A2129", color: "#B4BCC9", border: "1px solid #2A3340", borderRadius: 7, padding: 5, cursor: "pointer", display: "inline-flex" }}><X size={13} /></button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmDel(e.id)} aria-label={t("urenDel")} style={{ background: "transparent", border: "none", color: "#6B7585", cursor: "pointer", padding: 4, display: "inline-flex" }}><Trash2 size={15} /></button>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia }) {
   const { t } = useT();
+  const [tab, setTab] = useState("melding");
   const firstName = currentUser?.naam?.split(" ")[0] || "";
   const openCount = myReports.filter((r) => r.status !== "klaar").length;
   const doneCount = myReports.filter((r) => r.status === "klaar").length;
@@ -1379,7 +1603,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
     <div className="space-y-6">
       <div className="max-w-xl mx-auto">
         <div className="flex items-start justify-between gap-3">
-          <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3" }}>{t("greeting")}{firstName ? `, ${firstName}` : ""} 👋</h1>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3" }}>{t("greeting")}{firstName ? `, ${firstName}` : ""}</h1>
           <LangSwitcher compact />
         </div>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{t("greetingSub")}</p>
@@ -1407,34 +1631,50 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
 
       <InstallCard />
 
-      <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
-
-      <div className="max-w-xl mx-auto">
-        <Eyebrow>{t("yourReports")}</Eyebrow>
-        {myReports.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
-            <CheckCircle2 size={26} color="#6B7585" />
-            <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>{t("noReports")}</span>
-          </div>
-        ) : (
-          <div className="space-y-2 mt-1">
-            {myReports.map((r) => (
-              <Card key={r.id} className="p-3" style={{ borderLeft: `3px solid ${statusColor(r.status)}` }}>
-                <div className="flex items-start justify-between gap-2">
-                  <div style={{ minWidth: 0, flex: "1 1 0%" }}>
-                    <div className="flex items-center gap-2 mb-1"><Kenteken value={r.vehicle} />
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0 }}>{PRIO_META[r.prioriteit].label}</span>
-                    </div>
-                    <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.omschrijving}</div>
-                    <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 11 }}>{r.datum}</div>
-                  </div>
-                  <span className="text-xs px-2 py-1 rounded-full" style={{ color: statusColor(r.status), background: `${statusColor(r.status)}18`, fontFamily: "Inter", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{KANBAN_COLS.find((c) => c.id === r.status)?.label}</span>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+      {/* Segment: melding maken of eigen uren bijhouden */}
+      <div className="max-w-xl mx-auto flex gap-1.5 p-1 rounded-xl" style={{ background: "#10151D", border: "1px solid #232B38" }}>
+        {[{ id: "melding", label: t("segMelding"), icon: AlertTriangle }, { id: "uren", label: t("segUren"), icon: Clock }].map((s) => (
+          <button key={s.id} onClick={() => setTab(s.id)} aria-pressed={tab === s.id} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg"
+            style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, cursor: "pointer", border: "none", background: tab === s.id ? "linear-gradient(180deg,#4C8DFF,#3B82F6)" : "transparent", color: tab === s.id ? "#fff" : "#B4BCC9", boxShadow: tab === s.id ? "0 2px 10px rgba(59,130,246,0.35)" : "none", transition: "all .15s ease" }}>
+            <s.icon size={15} /> {s.label}
+          </button>
+        ))}
       </div>
+
+      {tab === "uren" ? (
+        <UrenRegistratie currentUser={currentUser} />
+      ) : (
+        <>
+          <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
+
+          <div className="max-w-xl mx-auto">
+            <Eyebrow>{t("yourReports")}</Eyebrow>
+            {myReports.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8" style={{ color: "#98A1B0" }}>
+                <CheckCircle2 size={26} color="#6B7585" />
+                <span style={{ fontFamily: "Inter", fontSize: 13, marginTop: 8 }}>{t("noReports")}</span>
+              </div>
+            ) : (
+              <div className="space-y-2 mt-1">
+                {myReports.map((r) => (
+                  <Card key={r.id} className="p-3" style={{ borderLeft: `3px solid ${statusColor(r.status)}` }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+                        <div className="flex items-center gap-2 mb-1"><Kenteken value={r.vehicle} />
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: PRIO_META[r.prioriteit].color, border: `1px solid ${PRIO_META[r.prioriteit].color}55`, fontWeight: 600, flexShrink: 0 }}>{PRIO_META[r.prioriteit].label}</span>
+                        </div>
+                        <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.omschrijving}</div>
+                        <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 11 }}>{r.datum}</div>
+                      </div>
+                      <span className="text-xs px-2 py-1 rounded-full" style={{ color: statusColor(r.status), background: `${statusColor(r.status)}18`, fontFamily: "Inter", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{KANBAN_COLS.find((c) => c.id === r.status)?.label}</span>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -4513,7 +4753,7 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
                       </div>
                       {result.onderdeel && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{result.onderdeel}</div>}
                       <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#E7ECF3", fontWeight: 500, marginTop: 2 }}>{result.schade}</div>
-                      {result.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>💡 {result.aanbeveling}</div>}
+                      {result.aanbeveling && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", marginTop: 3 }}>{result.aanbeveling}</div>}
                       <div className="flex gap-2 mt-2"><Button small onClick={saveFinding}>Bevinding opslaan</Button><Button small variant="ghost" onClick={() => setResult(null)}>Verwerpen</Button></div>
                     </div>
                   );
@@ -4532,7 +4772,7 @@ Zie je geen schade, zet dan schade op "Geen zichtbare schade" en ernst op "laag"
                           <div className="flex items-center gap-2"><span style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }}>{f.datum}</span><button onClick={() => deleteFinding(f.id)} style={{ color: "#F0453F" }}><Trash2 size={12} /></button></div>
                         </div>
                         <div style={{ color: "#E7ECF3", fontFamily: "Inter", fontSize: 13 }}>{f.schade}</div>
-                        {f.aanbeveling && <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">💡 {f.aanbeveling}</div>}
+                        {f.aanbeveling && <div style={{ color: "#B4BCC9", fontFamily: "Inter", fontSize: 11 }} className="mt-1">{f.aanbeveling}</div>}
                       </div>
                     ); })}
                   </div>
