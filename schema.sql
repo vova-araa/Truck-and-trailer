@@ -194,6 +194,7 @@ begin
   d := coalesce(d, '{}'::jsonb);
   if v_rol = 'garage' then
     d := d - 'costs'; -- werkplaats ziet geen kosten
+    d := d - 'uren';  -- en geen uren-registraties (loon-gerelateerd)
     -- Privacy: de werkplaats hoeft de persoonlijke contactgegevens van
     -- collega's/chauffeurs niet te zien. We strippen e-mail, telefoon en
     -- (voor de zekerheid) wachtwoord uit de medewerkerslijst. Naam en rol
@@ -279,6 +280,9 @@ begin
   -- driver_add_check binnen en een client-snapshot mag ze nooit wegvagen.
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
 
+  -- Uren-registraties idem: alleen via driver_save_hours/driver_delete_hours.
+  final := final || jsonb_build_object('uren', coalesce(existing -> 'uren', '[]'::jsonb));
+
   -- Afgetekende ritten (Proof of Delivery) mogen door een client-snapshot nooit
   -- terug naar "gepland": de bestaande pod/status van een afgeleverde rit wint.
   if jsonb_typeof(final -> 'rides') = 'array' then
@@ -343,8 +347,9 @@ begin
            and not (c ->> 'id' = any(p_base_cost_ids))
        ), '[]'::jsonb));
 
-  -- Checks blijven ook hier server-authoritatief.
+  -- Checks en uren blijven ook hier server-authoritatief.
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
+  final := final || jsonb_build_object('uren', coalesce(existing -> 'uren', '[]'::jsonb));
 
   -- En ook hier: afgeleverde ritten behouden hun pod/status.
   if jsonb_typeof(final -> 'rides') = 'array' then
@@ -406,7 +411,8 @@ begin
       limit 20
     ) sub;
   -- Eigen ritten (alleen de aan deze chauffeur toegewezen; klantadressen van
-  -- andermans ritten blijven zo privé).
+  -- andermans ritten blijven zo privé) + eigen uren-registraties (voor
+  -- synchronisatie tussen toestellen).
   return jsonb_build_object('vehicles', vlist, 'reports', rlist, 'checks', clist,
     'rides', coalesce((
       select jsonb_agg(r) from (
@@ -414,6 +420,13 @@ begin
         where r ->> 'chauffeurId' = auth.uid()::text
         limit 100
       ) sub2
+    ), '[]'::jsonb),
+    'uren', coalesce((
+      select jsonb_agg(u) from (
+        select u from jsonb_array_elements(coalesce(d->'uren','[]'::jsonb)) u
+        where u ->> 'chauffeurId' = auth.uid()::text
+        limit 200
+      ) sub3
     ), '[]'::jsonb));
 end $$;
 grant execute on function public.driver_bootstrap() to authenticated;
@@ -510,6 +523,69 @@ begin
       ));
 end $$;
 grant execute on function public.driver_add_check(jsonb) to authenticated;
+
+-- Chauffeur synchroniseert een uren-registratie (werkdag). De uren blijven
+-- offline-first op het toestel staan; dit is de kopie voor de beheerder
+-- (loonexport). Upsert op id, alleen eigen registraties, met limieten.
+create or replace function public.driver_save_hours(p_entry jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_naam text; entry jsonb; e jsonb; eid text;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  e := coalesce(p_entry, '{}'::jsonb);
+  if length(e::text) > 4096 then raise exception 'ENTRY_TOO_LARGE'; end if;
+  select coalesce(jsonb_object_agg(k, e -> k), '{}'::jsonb) into entry
+    from unnest(array['id','datum','start','eind','pauze','note']) as k
+    where e ? k;
+  eid := entry ->> 'id';
+  if eid is null or eid = '' then raise exception 'NO_ID'; end if;
+  entry := entry || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'));
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  update public.company_state
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{uren}', (
+          select coalesce(jsonb_agg(u), '[]'::jsonb) from (
+            -- Nieuwe/bijgewerkte registratie voorop; een bestaande rij met
+            -- hetzelfde id (van MIJZELF) valt weg. Andermans rij met dat id
+            -- blijft staan — dan voegen we niets dubbel toe (no-op filter).
+            select u from jsonb_array_elements(
+              jsonb_build_array(entry)
+              || coalesce((
+                   select jsonb_agg(x) from jsonb_array_elements(coalesce(data -> 'uren', '[]'::jsonb)) x
+                   where not (x ->> 'id' = eid and x ->> 'chauffeurId' = auth.uid()::text)
+                 ), '[]'::jsonb)
+            ) u
+            limit 5000
+          ) sub
+        )),
+        updated_at = now()
+    where company_id = cid
+      and not exists (
+        select 1 from jsonb_array_elements(coalesce(data -> 'uren', '[]'::jsonb)) x
+        where x ->> 'id' = eid and x ->> 'chauffeurId' is distinct from auth.uid()::text
+      );
+end $$;
+grant execute on function public.driver_save_hours(jsonb) to authenticated;
+
+-- Chauffeur verwijdert een eigen uren-registratie.
+create or replace function public.driver_delete_hours(p_id text)
+returns void language plpgsql security definer as $$
+declare cid uuid;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id into cid from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  if p_id is null or length(p_id) > 100 then raise exception 'BAD_ID'; end if;
+  update public.company_state
+    set data = jsonb_set(data, '{uren}', coalesce((
+          select jsonb_agg(u) from jsonb_array_elements(coalesce(data -> 'uren', '[]'::jsonb)) u
+          where not (u ->> 'id' = p_id and u ->> 'chauffeurId' = auth.uid()::text)
+        ), '[]'::jsonb)),
+        updated_at = now()
+    where company_id = cid and jsonb_typeof(data -> 'uren') = 'array';
+end $$;
+grant execute on function public.driver_delete_hours(text) to authenticated;
 
 -- Chauffeur tekent een rit af (Proof of Delivery). Alleen een aan hém
 -- toegewezen rit; de server stempelt de chauffeursnaam en het tijdstip.

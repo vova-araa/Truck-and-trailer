@@ -422,6 +422,17 @@ export async function driverCompleteRide(rideId, pod) {
   if (error) throw error;
 }
 
+// Uren-registratie synchroniseren naar de server (voor het loonoverzicht van
+// de beheerder + synchronisatie tussen toestellen). Upsert op id, eigen rijen.
+export async function driverSaveHours(entry) {
+  const { error } = await supabase.rpc("driver_save_hours", { p_entry: entry });
+  if (error) throw error;
+}
+export async function driverDeleteHours(id) {
+  const { error } = await supabase.rpc("driver_delete_hours", { p_id: id });
+  if (error) throw error;
+}
+
 // Huidige ingelogde gebruikers-id (of null). Faalt stil — ook offline bruikbaar.
 async function currentUserId() {
   try {

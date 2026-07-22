@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
@@ -225,6 +225,18 @@ const seedChecks = {
   blex: [
     { id: "chk1", vehicle: "84-BSX-2", datum: TODAY, tijd: "07:45", chauffeur: "R. Postma", chauffeurId: "u2", issues: 0, items: CHECK_POINTS.map((p) => ({ p, ok: true, note: "" })) },
     { id: "chk2", vehicle: "VX-77-KL", datum: "2026-07-21", tijd: "06:50", chauffeur: "J. Bakker", chauffeurId: "u3", issues: 1, items: CHECK_POINTS.map((p, i) => (i === 1 ? { p, ok: false, note: "Achterlicht links kapot" } : { p, ok: true, note: "" })) },
+  ],
+  vandijk: [],
+};
+
+// Uren-registraties van chauffeurs (gesynchroniseerde kopie voor het
+// loonoverzicht van de beheerder; de chauffeur houdt ze zelf bij).
+const CUR_MONTH = TODAY.slice(0, 7);
+const seedUren = {
+  blex: [
+    { id: "su1", chauffeurId: "u2", chauffeur: "R. Postma", datum: `${CUR_MONTH}-01`, start: "07:30", eind: "16:45", pauze: true, note: "" },
+    { id: "su2", chauffeurId: "u2", chauffeur: "R. Postma", datum: `${CUR_MONTH}-02`, start: "07:30", eind: "17:15", pauze: true, note: "Rit Duitsland" },
+    { id: "su3", chauffeurId: "u3", chauffeur: "J. Bakker", datum: `${CUR_MONTH}-01`, start: "06:00", eind: "14:30", pauze: true, note: "" },
   ],
   vandijk: [],
 };
@@ -1732,7 +1744,7 @@ function fmtDay(iso, lang) {
   } catch { return iso; }
 }
 
-function UrenRegistratie({ currentUser }) {
+function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete }) {
   const { t, lang } = useT();
   const today = isoDay(new Date());
   const [entries, setEntries] = useState(() => loadUren(currentUser));
@@ -1744,6 +1756,18 @@ function UrenRegistratie({ currentUser }) {
   useEffect(() => { setEntries(loadUren(currentUser)); }, [currentUser?.id, currentUser?.email]);
   // Elke wijziging meteen lokaal bewaren.
   useEffect(() => { saveUren(currentUser, entries); }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Server-kopie samenvoegen: registraties van een ánder toestel (onbekende
+  // ids) komen erbij, zodat de uren overal hetzelfde zijn.
+  useEffect(() => {
+    if (!serverUren.length) return;
+    setEntries((list) => {
+      const known = new Set(list.map((e) => e.id));
+      const extra = serverUren.filter((e) => e && e.id && !known.has(e.id));
+      if (!extra.length) return list;
+      return [...list, ...extra].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || ""));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverUren]);
 
   const preview = workedMinutes(form.start, form.eind, form.pauze);
   const canSave = preview != null && form.datum;
@@ -1752,10 +1776,11 @@ function UrenRegistratie({ currentUser }) {
     if (!canSave) return;
     const entry = { id: "u" + Date.now(), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() };
     setEntries((list) => [entry, ...list].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || "")));
+    if (onSyncAdd) onSyncAdd(entry);
     setForm((f) => ({ ...f, note: "" }));
     setSaved(true); setTimeout(() => setSaved(false), 1800);
   };
-  const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); setConfirmDel(null); };
+  const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); if (onSyncDelete) onSyncDelete(id); setConfirmDel(null); };
 
   // Optellen over een filter: totale minuten + aantal unieke dagen.
   const sumOver = (pred) => {
@@ -1895,7 +1920,7 @@ function UrenRegistratie({ currentUser }) {
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
   const firstName = currentUser?.naam?.split(" ")[0] || "";
@@ -1965,7 +1990,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
 
       {/* De melding-tab blijft gemount (display:none) zodat een half ingevulde
           melding niet verloren gaat als de chauffeur even naar check/uren kijkt. */}
-      {tab === "uren" && <UrenRegistratie currentUser={currentUser} />}
+      {tab === "uren" && <UrenRegistratie currentUser={currentUser} serverUren={myServerUren} onSyncAdd={onSyncUurAdd} onSyncDelete={onSyncUurDelete} />}
       {tab === "ritten" && <RittenTab myRides={myRides} onCompleteRide={onCompleteRide} />}
       {tab === "check" && <VoertuigCheck vehicles={vehicles} currentUser={currentUser} myChecks={myChecks} onSaveCheck={onSaveCheck} onSubmitReport={onSubmit} />}
       <div className="space-y-6" style={{ display: tab !== "melding" ? "none" : undefined }}>
@@ -6309,7 +6334,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
 /* ---------------------------------------------------------------------
    CHAUFFEURS — certificatenbeheer (rijbewijs, Code 95, ADR, medische keuring)
 --------------------------------------------------------------------- */
-function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
+function ChauffeursView({ drivers, onAdd, onUpdate, onDelete, uren = [], isAdmin = false }) {
   const isMobile = useIsMobile();
   const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "", adrNvt: false, medischNvt: false });
   const [open, setOpen] = useState(false);
@@ -6317,6 +6342,7 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
   const [form, setForm] = useState(blank());
   const [confirmDel, setConfirmDel] = useState(null);
   const [sort, setSort] = useState("naam"); // naam | nieuw | oud
+  const [urenMaand, setUrenMaand] = useState(TODAY.slice(0, 7)); // JJJJ-MM
 
   // Sorteervolgorde. 'nieuw'/'oud' op basis van id (dat bevat de aanmaaktijd: "d"+Date.now()).
   const idTime = (d) => Number(String(d.id || "").replace(/\D/g, "")) || 0;
@@ -6415,6 +6441,57 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete }) {
           })}
         </div>
       )}
+
+      {/* Urenoverzicht (loonexport) — chauffeurs registreren hun uren in de
+          app; hier ziet de beheerder per maand wie hoeveel werkte. */}
+      {isAdmin && (() => {
+        const maandUren = uren.filter((u) => (u.datum || "").slice(0, 7) === urenMaand);
+        const perChauffeur = {};
+        maandUren.forEach((u) => {
+          const key = u.chauffeurId || u.chauffeur || "?";
+          if (!perChauffeur[key]) perChauffeur[key] = { naam: u.chauffeur || "Onbekend", min: 0, dagen: new Set() };
+          perChauffeur[key].min += workedMinutes(u.start, u.eind, u.pauze) || 0;
+          perChauffeur[key].dagen.add(u.datum);
+        });
+        const rows = Object.values(perChauffeur).sort((a, b) => b.min - a.min);
+        const exportLoon = () => {
+          const data = [...maandUren]
+            .sort((a, b) => (a.chauffeur || "").localeCompare(b.chauffeur || "") || (a.datum || "").localeCompare(b.datum || ""))
+            .map((u) => { const w = workedMinutes(u.start, u.eind, u.pauze); return [u.chauffeur || "", u.datum, u.start, u.eind, u.pauze ? "45" : "0", w == null ? "" : fmtDecUur(w), u.note || ""]; });
+          downloadCSV(`loonexport-${urenMaand}.csv`, ["Chauffeur", "Datum", "Begin", "Einde", "Pauze (min)", "Uren", "Notitie"], data);
+        };
+        return (
+          <Card className="p-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#3B82F618" }}><Clock size={15} color="#3B82F6" /></div>
+                <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Urenregistratie</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="month" className="tg-input" style={{ padding: "6px 8px", fontSize: 12.5, width: "auto" }} value={urenMaand} onChange={(e) => setUrenMaand(e.target.value)} aria-label="Maand kiezen" />
+                <Button small variant="ghost" icon={Download} onClick={exportLoon} disabled={maandUren.length === 0}>Loonexport CSV</Button>
+              </div>
+            </div>
+            {rows.length === 0 ? (
+              <div style={{ fontFamily: "Inter", fontSize: 13, color: "#98A1B0" }}>
+                Nog geen uren in deze maand. Chauffeurs vullen hun uren in via het tabblad "Mijn uren" in de app — die verschijnen hier automatisch.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {rows.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 p-3 rounded-lg" style={{ background: "#161C25", border: "1px solid #232B38" }}>
+                    <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.naam}</span>
+                    <span style={{ flexShrink: 0 }}>
+                      <span style={{ fontFamily: "Oswald", fontSize: 17, fontWeight: 700, color: "#3B82F6" }}>{fmtHM(r.min)}</span>
+                      <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginLeft: 8 }}>{r.dagen.size} {r.dagen.size === 1 ? "dag" : "dagen"}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        );
+      })()}
     </div>
   );
 }
@@ -6860,6 +6937,8 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Ritten + digitale aflevering (POD). De beheerder plant; de chauffeur tekent
   // af via driver_complete_ride (de server beschermt afgeleverde ritten).
   const [rides, setRides] = useState(() => initSlice("rides", seedRides));
+  // Uren-registraties (gesynchroniseerde kopie voor het loonoverzicht).
+  const [uren, setUren] = useState(() => initSlice("uren", seedUren));
   const [users, setUsers] = useState(() => {
     if (!live) return seedUsers;
     const base = initSlice("users", seedUsers, []);
@@ -7061,6 +7140,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cReports = reports[companyId] || [];
   const cChecks = checks[companyId] || [];
   const cRides = rides[companyId] || [];
+  const cUren = uren[companyId] || [];
   const cUsers = users[companyId] || [];
   const cPlanning = planning[companyId] || [];
   const cDrivers = drivers[companyId] || [];
@@ -7137,6 +7217,16 @@ export default function TruckGarageApp({ session, onLogout }) {
     if (live && role === "chauffeur") await driverAddCheck(c);
     setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
   };
+  // Uren van de chauffeur: naar de gedeelde kopie (loonoverzicht) + live sync.
+  const syncUurAdd = (e) => {
+    const entry = { ...e, chauffeurId: currentUser?.id || null, chauffeur: currentUser?.naam || "Onbekend" };
+    setUren((s) => ({ ...s, [companyId]: [entry, ...(s[companyId] || []).filter((x) => x.id !== entry.id)] }));
+    if (live && role === "chauffeur") driverSaveHours(entry).catch((err) => console.error("Uren-sync mislukt:", err?.message || err));
+  };
+  const syncUurDelete = (id) => {
+    setUren((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
+    if (live && role === "chauffeur") driverDeleteHours(id).catch((err) => console.error("Uren-sync mislukt:", err?.message || err));
+  };
   // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD).
   const addRide = (r) => setRides((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
   const deleteRide = (id) => setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
@@ -7159,7 +7249,7 @@ export default function TruckGarageApp({ session, onLogout }) {
     setRefreshing(true);
     try {
       let fresh;
-      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [], checks: b.checks || [], rides: b.rides || [] }; }
+      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [], checks: b.checks || [], rides: b.rides || [], uren: b.uren || [] }; }
       else if (role === "garage") fresh = await loadCompanyStateScoped();
       else fresh = await loadState(companyId);
       if (fresh) {
@@ -7168,6 +7258,7 @@ export default function TruckGarageApp({ session, onLogout }) {
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
         if (Array.isArray(fresh.checks)) setChecks((s) => ({ ...s, [companyId]: fresh.checks }));
         if (Array.isArray(fresh.rides)) setRides((s) => ({ ...s, [companyId]: fresh.rides }));
+        if (Array.isArray(fresh.uren)) setUren((s) => ({ ...s, [companyId]: fresh.uren }));
         // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
         if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
       }
@@ -7378,13 +7469,13 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "rides" && isAdmin && modOn(cModules, "rides") && <RidesView rides={cRides} vehicles={cVehicles} users={cUsers} profiel={cProfiel} company={company} onAdd={addRide} onDelete={deleteRide} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
@@ -7403,7 +7494,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} onInviteEmail={live && canCreateAccounts ? inviteEmployeeByEmail : null} />}
-                {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} />}
+                {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} uren={cUren} isAdmin={isAdmin} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} profiel={cProfiel} onSaveProfiel={isAdmin ? saveBedrijfsprofiel : null} companyName={company.name} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
