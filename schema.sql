@@ -275,6 +275,10 @@ begin
     ), '[]'::jsonb));
   end if;
 
+  -- Dagelijkse voertuigchecks zijn server-authoritatief: ze komen alleen via
+  -- driver_add_check binnen en een client-snapshot mag ze nooit wegvagen.
+  final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
+
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
@@ -320,6 +324,9 @@ begin
            and not (c ->> 'id' = any(p_base_cost_ids))
        ), '[]'::jsonb));
 
+  -- Checks blijven ook hier server-authoritatief.
+  final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
+
   insert into public.company_state (company_id, data, updated_at) values (p_company_id, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
@@ -340,7 +347,7 @@ create trigger trg_touch_company_rev after insert or update on public.company_st
 -- Chauffeur: alleen minimale voertuiggegevens (om uit te kiezen) + eigen meldingen.
 create or replace function public.driver_bootstrap()
 returns jsonb language plpgsql stable security definer as $$
-declare cid uuid; d jsonb; vlist jsonb; rlist jsonb;
+declare cid uuid; d jsonb; vlist jsonb; rlist jsonb; clist jsonb;
 begin
   if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
   select company_id into cid from public.profiles where id = auth.uid();
@@ -353,7 +360,15 @@ begin
   select coalesce(jsonb_agg(r), '[]'::jsonb) into rlist
     from jsonb_array_elements(coalesce(d->'reports','[]'::jsonb)) r
     where r ->> 'chauffeurId' = auth.uid()::text;
-  return jsonb_build_object('vehicles', vlist, 'reports', rlist);
+  -- Eigen recente voertuigchecks (nieuwste eerst; driver_add_check prependt),
+  -- zodat de app "vandaag al gecheckt" kan tonen.
+  select coalesce(jsonb_agg(c), '[]'::jsonb) into clist
+    from (
+      select c from jsonb_array_elements(coalesce(d->'checks','[]'::jsonb)) c
+      where c ->> 'chauffeurId' = auth.uid()::text
+      limit 20
+    ) sub;
+  return jsonb_build_object('vehicles', vlist, 'reports', rlist, 'checks', clist);
 end $$;
 grant execute on function public.driver_bootstrap() to authenticated;
 
@@ -413,6 +428,42 @@ begin
       ));
 end $$;
 grant execute on function public.driver_add_report(jsonb) to authenticated;
+
+-- Chauffeur slaat een dagelijkse voertuigcheck (DVIR) op. Zelfde hardening als
+-- driver_add_report: identiteit afgedwongen, whitelist, groottelimiet en
+-- idempotent op check-id. We bewaren maximaal de 1000 nieuwste checks per
+-- bedrijf zodat de rij niet onbeperkt groeit.
+create or replace function public.driver_add_check(p_check jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_naam text; newchk jsonb; chk jsonb; kid text;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  chk := coalesce(p_check, '{}'::jsonb);
+  if length(chk::text) > 32768 then raise exception 'CHECK_TOO_LARGE'; end if;
+  select coalesce(jsonb_object_agg(k, chk -> k), '{}'::jsonb) into newchk
+    from unnest(array['id','vehicle','datum','tijd','items','issues','opmerking']) as k
+    where chk ? k;
+  newchk := newchk
+    || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'));
+  kid := newchk ->> 'id';
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  update public.company_state
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{checks}', (
+          select coalesce(jsonb_agg(c), '[]'::jsonb) from (
+            select c from jsonb_array_elements(jsonb_build_array(newchk) || coalesce(data -> 'checks', '[]'::jsonb)) c
+            limit 1000
+          ) sub
+        )),
+        updated_at = now()
+    where company_id = cid
+      and (kid is null or not exists (
+        select 1 from jsonb_array_elements(coalesce(data -> 'checks', '[]'::jsonb)) c
+        where c ->> 'id' = kid
+      ));
+end $$;
+grant execute on function public.driver_add_check(jsonb) to authenticated;
 
 -- ---------- ABONNEMENTSCODE: een nieuw bedrijf activeren ----------
 -- Jij (platformbeheerder) geeft bij een abonnement een 12-cijferige code uit.

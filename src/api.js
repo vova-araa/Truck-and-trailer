@@ -408,6 +408,13 @@ export async function driverAddReport(report) {
   }
 }
 
+// Dagelijkse voertuigcheck (DVIR) opslaan. Zelfde patroon als een melding:
+// de server dwingt de chauffeur-identiteit af en is idempotent op id.
+export async function driverAddCheck(check) {
+  const { error } = await supabase.rpc("driver_add_check", { p_check: check });
+  if (error) throw error;
+}
+
 // Huidige ingelogde gebruikers-id (of null). Faalt stil — ook offline bruikbaar.
 async function currentUserId() {
   try {

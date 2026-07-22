@@ -6,10 +6,10 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
-import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS } from "./i18n.js";
+import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
 import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, registerSW } from "./push.js";
 
 // Vertaal-hook: geeft t() terug en her-rendert bij een taalwissel.
@@ -213,6 +213,18 @@ const seedDrivers = {
     { id: "d1", naam: "R. Postma", telefoon: "+31 6 22222222", rijbewijsTot: "2028-05-01", code95Tot: "2026-08-12", adrTot: "2027-03-01", medischTot: "2028-05-01" },
     { id: "d2", naam: "J. Bakker", telefoon: "+31 6 33333333", rijbewijsTot: "2026-07-25", code95Tot: "2029-01-15", adrTot: "", medischTot: "2026-11-01" },
     { id: "d3", naam: "M. de Wit", telefoon: "+31 6 44444444", rijbewijsTot: "2027-09-10", code95Tot: "2027-09-10", adrTot: "2026-07-30", medischTot: "2030-02-01" },
+  ],
+  vandijk: [],
+};
+
+// Dagelijkse voertuigcheck (DVIR): de 8 controlepunten. Nederlandse tekst is
+// canoniek (de werkplaats leest NL); de chauffeur ziet ze vertaald via CHECK_KEYS.
+const CHECK_POINTS = ["Banden & wielen", "Verlichting & reflectoren", "Remmen", "Spiegels & ruiten", "Olie & vloeistoffen (lekkage)", "Schade rondom", "Lading, deuren & laadklep", "Boorddocumenten & tachograaf"];
+
+const seedChecks = {
+  blex: [
+    { id: "chk1", vehicle: "84-BSX-2", datum: TODAY, tijd: "07:45", chauffeur: "R. Postma", chauffeurId: "u2", issues: 0, items: CHECK_POINTS.map((p) => ({ p, ok: true, note: "" })) },
+    { id: "chk2", vehicle: "VX-77-KL", datum: "2026-07-21", tijd: "06:50", chauffeur: "J. Bakker", chauffeurId: "u3", issues: 1, items: CHECK_POINTS.map((p, i) => (i === 1 ? { p, ok: false, note: "Achterlicht links kapot" } : { p, ok: true, note: "" })) },
   ],
   vandijk: [],
 };
@@ -1368,6 +1380,145 @@ function InstallCard() {
 }
 
 /* ---------------------------------------------------------------------
+   DAGELIJKSE VOERTUIGCHECK (DVIR, chauffeur)
+   Vóór vertrek 8 punten nalopen: alles "in orde" of "niet in orde" (met
+   notitie). Afgekeurde punten worden automatisch een melding voor de
+   werkplaats — via de bestaande pijplijn (kanban, push, planning).
+--------------------------------------------------------------------- */
+function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSubmitReport }) {
+  const { t } = useT();
+  const [vehicle, setVehicle] = useState("");
+  const [answers, setAnswers] = useState({}); // { idx: "ok" | "fout" }
+  const [notes, setNotes] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null); // null | { issues }
+  const [err, setErr] = useState("");
+
+  const today = toLocalKey(new Date());
+  const todayDone = vehicle && myChecks.some((c) => c.vehicle === vehicle && c.datum === today);
+  const allAnswered = CHECK_POINTS.every((_, i) => answers[i] === "ok" || answers[i] === "fout");
+  const answeredCount = CHECK_POINTS.filter((_, i) => answers[i]).length;
+
+  const setAns = (i, val) => { setAnswers((a) => ({ ...a, [i]: val })); setErr(""); };
+
+  const submit = async () => {
+    if (!vehicle) return;
+    if (!allAnswered) { setErr(t("chkFillAll")); return; }
+    setBusy(true); setErr("");
+    const now = new Date();
+    const items = CHECK_POINTS.map((p, i) => ({ p, ok: answers[i] === "ok", note: answers[i] === "fout" ? (notes[i] || "").trim() : "" }));
+    const failed = items.filter((it) => !it.ok);
+    const check = {
+      id: "chk" + Date.now(),
+      vehicle, datum: today,
+      tijd: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null,
+      items, issues: failed.length,
+    };
+    try {
+      await onSaveCheck(check);
+      if (failed.length) {
+        // Afgekeurde punten als één melding doorzetten (NL — de werkplaats leest NL).
+        // Remmen of banden afgekeurd => kritiek.
+        const kritiek = failed.some((f) => f.p === CHECK_POINTS[0] || f.p === CHECK_POINTS[2]);
+        onSubmitReport({
+          id: "r" + Date.now(), vehicle,
+          chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null,
+          omschrijving: "Dagelijkse check: " + failed.map((f) => f.p + (f.note ? ` (${f.note})` : "")).join(", "),
+          prioriteit: kritiek ? "kritiek" : "gemiddeld",
+          status: "nieuw", datum: today,
+          zone: "", wanneer: "", hoelang: "Vandaag", veilig: kritiek ? "Twijfel" : "Ja",
+          media: [], mediaCount: 0,
+        });
+      }
+      setDone({ issues: failed.length });
+      setAnswers({}); setNotes({}); setVehicle("");
+    } catch (e) {
+      setErr((e && e.message) || "Opslaan mislukte — probeer opnieuw.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="max-w-xl mx-auto">
+        <Card className="p-6 text-center">
+          <div className="flex items-center justify-center rounded-full mx-auto mb-3" style={{ width: 54, height: 54, background: done.issues ? "#FF8A0018" : "#34D39918" }}>
+            {done.issues ? <AlertTriangle size={26} color="#FF8A00" /> : <CheckCircle2 size={26} color="#34D399" />}
+          </div>
+          <div style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 600, color: "#E7ECF3" }}>{t("chkDoneTitle")}</div>
+          <div style={{ fontFamily: "Inter", fontSize: 13.5, color: "#B4BCC9", marginTop: 6, lineHeight: 1.5 }}>{done.issues ? t("chkDoneIssues") : t("chkDoneOk")}</div>
+          <div className="mt-4"><Button variant="ghost" onClick={() => setDone(null)}>{t("chkNew")}</Button></div>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-xl mx-auto space-y-4">
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "#34D39918" }}><ShieldCheck size={16} color="#34D399" /></div>
+          <div style={{ fontFamily: "Oswald", fontSize: 19, fontWeight: 600, color: "#E7ECF3" }}>{t("chkTitle")}</div>
+        </div>
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 14 }}>{t("chkSub")}</div>
+
+        {/* Voertuigkeuze */}
+        <div className="space-y-2">
+          {vehicles.map((v) => (
+            <button key={v.id} onClick={() => { setVehicle(v.kenteken); setErr(""); }} className="w-full flex items-center gap-3 p-3 rounded-lg text-left"
+              style={{ border: `1px solid ${vehicle === v.kenteken ? "#3B82F6" : "#2A3340"}`, background: vehicle === v.kenteken ? "#3B82F614" : "#161C25", transition: "all .15s ease" }}>
+              <Kenteken value={v.kenteken} />
+              <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.merk}</span>
+              {vehicle === v.kenteken && <Check size={16} color="#3B82F6" style={{ marginLeft: "auto", flexShrink: 0 }} />}
+            </button>
+          ))}
+        </div>
+        {vehicles.length === 0 && <EmptyState icon={Truck} text="—" />}
+        {todayDone && (
+          <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg" style={{ background: "#34D39914", border: "1px solid #34D39944" }}>
+            <CheckCircle2 size={14} color="#34D399" style={{ flexShrink: 0 }} />
+            <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9" }}>{t("chkTodayDone")}</span>
+          </div>
+        )}
+      </Card>
+
+      {vehicle && (
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <Eyebrow>{t("chkTitle")}</Eyebrow>
+            <span style={{ fontFamily: "JetBrains Mono", fontSize: 12, color: answeredCount === CHECK_POINTS.length ? "#34D399" : "#98A1B0" }}>{answeredCount}/{CHECK_POINTS.length}</span>
+          </div>
+          <div className="space-y-2.5">
+            {CHECK_POINTS.map((p, i) => (
+              <div key={i} className="p-3 rounded-lg" style={{ background: "#161C25", border: `1px solid ${answers[i] === "fout" ? "#F0453F44" : answers[i] === "ok" ? "#34D39944" : "#232B38"}` }}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3" }}>{t(CHECK_KEYS[i])}</span>
+                  <div className="flex gap-1.5" style={{ flexShrink: 0 }}>
+                    <button onClick={() => setAns(i, "ok")} className="px-3 py-1.5 rounded-lg text-xs" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: `1px solid ${answers[i] === "ok" ? "#34D399" : "#2A3340"}`, background: answers[i] === "ok" ? "#34D39922" : "transparent", color: answers[i] === "ok" ? "#34D399" : "#B4BCC9" }}>{t("chkOk")}</button>
+                    <button onClick={() => setAns(i, "fout")} className="px-3 py-1.5 rounded-lg text-xs" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: `1px solid ${answers[i] === "fout" ? "#F0453F" : "#2A3340"}`, background: answers[i] === "fout" ? "#F0453F22" : "transparent", color: answers[i] === "fout" ? "#F0453F" : "#B4BCC9" }}>{t("chkFout")}</button>
+                  </div>
+                </div>
+                {answers[i] === "fout" && (
+                  <input className="tg-input w-full" style={{ marginTop: 8 }} placeholder={t("chkNotePh")} value={notes[i] || ""} onChange={(e) => setNotes((n) => ({ ...n, [i]: e.target.value }))} />
+                )}
+              </div>
+            ))}
+          </div>
+          {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F", marginTop: 10 }}>{err}</div>}
+          <div className="mt-4">
+            <Button onClick={submit} disabled={busy || !allAnswered} style={{ width: "100%", justifyContent: "center" }}>
+              {busy ? t("chkSending") : t("chkSend")}
+            </Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
    URENREGISTRATIE (chauffeur)
    Persoonlijk hulpmiddel: reken een werkdag uit (begin, einde, 45 min pauze)
    en bewaar het. Chauffeurs zijn PII-afgeschermd en slaan geen company_state
@@ -1591,7 +1742,7 @@ function UrenRegistratie({ currentUser }) {
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [] }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
   const firstName = currentUser?.naam?.split(" ")[0] || "";
@@ -1642,9 +1793,9 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
 
       <InstallCard />
 
-      {/* Segment: melding maken of eigen uren bijhouden */}
+      {/* Segment: melding maken, dagelijkse check of eigen uren bijhouden */}
       <div className="max-w-xl mx-auto flex gap-1.5 p-1 rounded-xl" style={{ background: "#10151D", border: "1px solid #232B38" }}>
-        {[{ id: "melding", label: t("segMelding"), icon: AlertTriangle }, { id: "uren", label: t("segUren"), icon: Clock }].map((s) => (
+        {[{ id: "melding", label: t("segMelding"), icon: AlertTriangle }, { id: "check", label: t("segCheck"), icon: ShieldCheck }, { id: "uren", label: t("segUren"), icon: Clock }].map((s) => (
           <button key={s.id} onClick={() => setTab(s.id)} aria-pressed={tab === s.id} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg"
             style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, cursor: "pointer", border: "none", background: tab === s.id ? "linear-gradient(180deg,#4C8DFF,#3B82F6)" : "transparent", color: tab === s.id ? "#fff" : "#B4BCC9", boxShadow: tab === s.id ? "0 2px 10px rgba(59,130,246,0.35)" : "none", transition: "all .15s ease" }}>
             <s.icon size={15} /> {s.label}
@@ -1652,10 +1803,11 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia 
         ))}
       </div>
 
-      {/* Beide tabbladen blijven gemount (display:none) zodat een half ingevulde
-          melding niet verloren gaat als de chauffeur even naar z'n uren kijkt. */}
+      {/* De melding-tab blijft gemount (display:none) zodat een half ingevulde
+          melding niet verloren gaat als de chauffeur even naar check/uren kijkt. */}
       {tab === "uren" && <UrenRegistratie currentUser={currentUser} />}
-      <div className="space-y-6" style={{ display: tab === "uren" ? "none" : undefined }}>
+      {tab === "check" && <VoertuigCheck vehicles={vehicles} currentUser={currentUser} myChecks={myChecks} onSaveCheck={onSaveCheck} onSubmitReport={onSubmit} />}
+      <div className="space-y-6" style={{ display: tab !== "melding" ? "none" : undefined }}>
         <>
           <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
 
@@ -2486,7 +2638,7 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
   );
 }
 
-function VehicleDetailView({ vehicle, reports, planning, costs = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete, aiReady, inspectionOn = true, companyId = null, live = false }) {
+function VehicleDetailView({ vehicle, reports, planning, costs = [], checks = [], onAddCost, onDeleteCost, onUpdate, onAddPlanning, onBack, onGoInspection, isAdmin, onDelete, aiReady, inspectionOn = true, companyId = null, live = false }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [showInsp, setShowInsp] = useState(false);
@@ -2743,6 +2895,23 @@ ${JSON.stringify(ctx)}`;
             );
           })}
         </div>
+        {/* Laatste dagelijkse voertuigcheck van een chauffeur (DVIR). */}
+        {checks.length > 0 && (() => {
+          const last = checks[0];
+          const fouten = (last.items || []).filter((it) => it && it.ok === false);
+          const okAll = fouten.length === 0;
+          return (
+            <div className="p-3 rounded-lg mt-3" style={{ background: "#161C25", border: `1px solid ${okAll ? "#34D39944" : "#FF8A0044"}` }}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span style={{ fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, color: "#E7ECF3" }}>Laatste voertuigcheck</span>
+                <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>{last.datum}{last.tijd ? ` · ${last.tijd}` : ""} · {last.chauffeur}</span>
+              </div>
+              <div style={{ fontFamily: "Inter", fontSize: 12, color: okAll ? "#34D399" : "#FF8A00", marginTop: 3 }}>
+                {okAll ? "Alles in orde" : `${fouten.length} punt(en) niet in orde: ${fouten.map((f) => f.p + (f.note ? ` (${f.note})` : "")).join(", ")}`}
+              </div>
+            </div>
+          );
+        })()}
         {vehicle.rdwSync && (
           <div className="flex items-center gap-1.5" style={{ fontFamily: "Inter", fontSize: 11, color: "#34D399", marginTop: 8 }}>
             <ShieldCheck size={12} /> APK-datum automatisch gecontroleerd bij de RDW op {vehicle.rdwSync}.
@@ -6356,6 +6525,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [maintenance, setMaintenance] = useState(() => initSlice("maintenance", seedMaintenance));
   const [costs, setCosts] = useState(() => initSlice("costs", seedCosts));
   const [reports, setReports] = useState(() => initSlice("reports", seedReports));
+  // Dagelijkse voertuigchecks (DVIR). Server-authoritatief: alleen chauffeurs
+  // voegen ze toe (driver_add_check); de save-dataset stuurt ze niet mee.
+  const [checks, setChecks] = useState(() => initSlice("checks", seedChecks));
   const [users, setUsers] = useState(() => {
     if (!live) return seedUsers;
     const base = initSlice("users", seedUsers, []);
@@ -6554,6 +6726,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const cMaintenance = maintenance[companyId] || [];
   const cCosts = costs[companyId] || [];
   const cReports = reports[companyId] || [];
+  const cChecks = checks[companyId] || [];
   const cUsers = users[companyId] || [];
   const cPlanning = planning[companyId] || [];
   const cDrivers = drivers[companyId] || [];
@@ -6623,6 +6796,13 @@ export default function TruckGarageApp({ session, onLogout }) {
       notifyCompany({ title: "Nieuwe melding", body: `${prio}${r.vehicle}: ${(r.omschrijving || "").slice(0, 120)}`, url: "/app/werkvloer" });
     }
   };
+  // Dagelijkse voertuigcheck opslaan. Live: via de veilige RPC (idempotent,
+  // identiteit afgedwongen); demo: alleen lokaal. Push naar beheer/werkplaats
+  // gebeurt via de melding die VoertuigCheck bij gebreken zelf indient.
+  const addCheck = async (c) => {
+    if (live && role === "chauffeur") await driverAddCheck(c);
+    setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
+  };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
   // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.
   const uploadMedia = async (reportId, items) => {
@@ -6638,13 +6818,14 @@ export default function TruckGarageApp({ session, onLogout }) {
     setRefreshing(true);
     try {
       let fresh;
-      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [] }; }
+      if (role === "chauffeur") { const b = await driverBootstrap(); fresh = { vehicles: b.vehicles || [], reports: b.reports || [], checks: b.checks || [] }; }
       else if (role === "garage") fresh = await loadCompanyStateScoped();
       else fresh = await loadState(companyId);
       if (fresh) {
         if (Array.isArray(fresh.reports)) setReports((s) => ({ ...s, [companyId]: fresh.reports }));
         if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
+        if (Array.isArray(fresh.checks)) setChecks((s) => ({ ...s, [companyId]: fresh.checks }));
         // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
         if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
       }
@@ -6855,13 +7036,13 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
                 {view === "bestelwagens" && modOn(cModules, "bestelwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bestelwagen" title="Bestelwagens" />}
@@ -6869,7 +7050,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "vehicles" && selectedVehicleId && (() => {
                   const veh = cVehicles.find((x) => x.id === selectedVehicleId);
                   if (!veh) { setSelectedVehicleId(null); return null; }
-                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} aiReady={aiReady} inspectionOn={modOn(cModules, "inspection")} companyId={companyId} live={live} />;
+                  return <VehicleDetailView vehicle={veh} reports={cReports} planning={cPlanning} costs={cCosts.filter((c) => c.vehicle === veh.kenteken)} checks={cChecks.filter((c) => c.vehicle === veh.kenteken)} onAddCost={addCost} onDeleteCost={deleteCost} onUpdate={updateVehicle} onAddPlanning={addPlanning} onBack={() => setSelectedVehicleId(null)} isAdmin={isAdmin} onDelete={(id) => { deleteVehicle(id); setSelectedVehicleId(null); }} aiReady={aiReady} inspectionOn={modOn(cModules, "inspection")} companyId={companyId} live={live} />;
                 })()}
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
