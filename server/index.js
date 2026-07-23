@@ -650,11 +650,16 @@ app.post("/api/push/notify", async (req, res) => {
   const me = await verifyUser(bearer(req));
   if (!me) return res.status(401).json({ error: "Sessie ongeldig." });
   if (rateLimited("push:" + me.userId)) return res.status(429).json({ error: "Te veel meldingen, wacht even." });
-  const { title, body, url } = req.body || {};
-  const { data: subs } = await supaAdmin.from("push_subscriptions")
+  const { title, body, url, toUserId } = req.body || {};
+  // Standaard gaat een push naar beheer/werkplaats van het eigen bedrijf.
+  // Met toUserId gaat hij naar één specifieke collega (zelfde bedrijf) — bv.
+  // de chauffeur die een nieuwe rit kreeg of wiens melding klaar is.
+  let q = supaAdmin.from("push_subscriptions")
     .select("endpoint, keys, user_id, rol")
-    .eq("company_id", me.company_id)
-    .in("rol", ["admin", "garage"]);
+    .eq("company_id", me.company_id);
+  if (toUserId && typeof toUserId === "string") q = q.eq("user_id", toUserId);
+  else q = q.in("rol", ["admin", "garage"]);
+  const { data: subs } = await q;
   // URL moet een intern pad zijn: precies één leading slash (geen "//evil.com"
   // en geen "http…"), anders kan een push naar een phishingdomein leiden.
   const safeUrl = typeof url === "string" && /^\/(?!\/)/.test(url) ? url : "/";

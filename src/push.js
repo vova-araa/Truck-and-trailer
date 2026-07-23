@@ -84,3 +84,12 @@ export async function notifyCompany(payload) {
     await fetch("/api/push/notify", { method: "POST", headers: await authHeaders(), body: JSON.stringify(payload) });
   } catch { /* stil: push is nooit blokkerend */ }
 }
+
+// Push naar één specifieke collega (zelfde bedrijf) — bv. de chauffeur die een
+// nieuwe rit kreeg of wiens melding is afgehandeld.
+export async function notifyUser(toUserId, payload) {
+  if (!toUserId) return;
+  try {
+    await fetch("/api/push/notify", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ ...payload, toUserId }) });
+  } catch { /* stil: push is nooit blokkerend */ }
+}

@@ -10,7 +10,7 @@ import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, creat
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
-import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, registerSW } from "./push.js";
+import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, notifyUser, registerSW } from "./push.js";
 
 // Vertaal-hook: geeft t() terug en her-rendert bij een taalwissel.
 function useT() {
@@ -1705,6 +1705,15 @@ function loadUren(u) {
 function saveUren(u, list) {
   try { localStorage.setItem(urenKey(u), JSON.stringify(list)); } catch { /* vol of privé-modus */ }
 }
+// Stempelklok: lopende dienst (datum + starttijd) per gebruiker op het toestel.
+const klokKey = (u) => `tt_klok_${u?.id || u?.email || "anon"}`;
+function loadKlok(u) {
+  try { const k = JSON.parse(localStorage.getItem(klokKey(u)) || "null"); return k && k.start && k.datum ? k : null; } catch { return null; }
+}
+function saveKlok(u, k) {
+  try { if (k) localStorage.setItem(klokKey(u), JSON.stringify(k)); else localStorage.removeItem(klokKey(u)); } catch { /* noop */ }
+}
+const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
 // "HH:MM" -> minuten sinds middernacht (of null bij ongeldige invoer).
 function hhmmToMin(s) {
   const m = /^(\d{1,2}):(\d{2})$/.exec((s || "").trim());
@@ -1775,16 +1784,50 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverUren]);
 
+  // Stempelklok: één tik 's ochtends, één 's avonds — geen tijden typen.
+  const [klok, setKlok] = useState(() => loadKlok(currentUser));
+  const [, setKlokTick] = useState(0);
+  useEffect(() => {
+    if (!klok) return;
+    const t = setInterval(() => setKlokTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, [klok]);
+  const klokElapsed = () => {
+    if (!klok) return 0;
+    const a = hhmmToMin(klok.start), b = hhmmToMin(nowHM());
+    if (a == null || b == null) return 0;
+    let d = b - a; if (d < 0) d += 24 * 60;
+    return d;
+  };
+
   const preview = workedMinutes(form.start, form.eind, form.pauze);
   const canSave = preview != null && form.datum;
 
-  const add = () => {
-    if (!canSave) return;
-    const entry = { id: uid("u"), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() };
+  const pushEntry = (entry) => {
     setEntries((list) => [entry, ...list].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || "")));
     if (onSyncAdd) onSyncAdd(entry);
-    setForm((f) => ({ ...f, note: "" }));
     setSaved(true); setTimeout(() => setSaved(false), 1800);
+  };
+
+  const startShift = () => { const k = { datum: isoDay(new Date()), start: nowHM() }; saveKlok(currentUser, k); setKlok(k); };
+  const stopShift = () => {
+    if (!klok) return;
+    let eind = nowHM();
+    // Zelfde minuut gestart en gestopt: rond af naar 1 minuut (0 min is ongeldig).
+    if (eind === klok.start) {
+      const m = (hhmmToMin(eind) + 1) % (24 * 60);
+      eind = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    }
+    // Pauze standaard aan bij een dienst van meer dan 6 uur.
+    const bruto = (() => { let d = hhmmToMin(eind) - hhmmToMin(klok.start); if (d < 0) d += 24 * 60; return d; })();
+    pushEntry({ id: uid("u"), datum: klok.datum, start: klok.start, eind, pauze: bruto > 360, note: "" });
+    saveKlok(currentUser, null); setKlok(null);
+  };
+
+  const add = () => {
+    if (!canSave) return;
+    pushEntry({ id: uid("u"), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() });
+    setForm((f) => ({ ...f, note: "" }));
   };
   const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); if (onSyncDelete) onSyncDelete(id); setConfirmDel(null); };
 
@@ -1820,6 +1863,30 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
           <div style={{ fontFamily: "Oswald", fontSize: 19, fontWeight: 600, color: "#E7ECF3" }}>{t("urenTitle")}</div>
         </div>
         <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 14 }}>{t("urenSub")}</div>
+
+        {/* Stempelklok: dienst starten/stoppen met één tik */}
+        {!klok ? (
+          <button onClick={startShift} className="w-full flex items-center justify-center gap-2 py-3 rounded-xl mb-4"
+            style={{ fontFamily: "Inter", fontSize: 15, fontWeight: 700, cursor: "pointer", border: "1px solid #34D39955", background: "linear-gradient(180deg,#34D39926,#34D39912)", color: "#34D399" }}>
+            <Clock size={17} /> {t("klokStart")}
+          </button>
+        ) : (
+          <div className="p-3.5 rounded-xl mb-4" style={{ border: "1px solid #34D39955", background: "#34D39910" }}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
+                <span className="rounded-full" style={{ width: 9, height: 9, background: "#34D399", boxShadow: "0 0 8px #34D399", animation: "tg-pulse 1.6s ease-in-out infinite", flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>{t("klokSinds")} {klok.start}</div>
+                  <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 700, color: "#34D399", lineHeight: 1.1 }}>{fmtHM(klokElapsed())}</div>
+                </div>
+              </div>
+              <button onClick={stopShift} className="px-4 py-2.5 rounded-lg" style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 700, cursor: "pointer", border: "none", background: "linear-gradient(180deg,#F0453F,#D63B36)", color: "#fff", flexShrink: 0 }}>
+                {t("klokStop")}
+              </button>
+            </div>
+          </div>
+        )}
+        <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0", marginBottom: 10 }}>{t("klokHandmatig")}</div>
 
         {/* Invoer */}
         <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -1929,6 +1996,25 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
 function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
+  // Push voor de chauffeur zelf: chip om meldingen aan te zetten (nieuwe rit,
+  // melding afgehandeld). Verbergt zichzelf als push niet kan of al aan staat.
+  const [pushChip, setPushChip] = useState("hidden"); // hidden | off
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!pushSupported()) return;
+        const cfg = await getPushConfig();
+        if (!cfg || !cfg.enabled) return;
+        const sub = await isPushSubscribed();
+        if (alive && !sub) setPushChip("off");
+      } catch { /* geen push beschikbaar */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+  const enablePush = async () => {
+    try { await registerSW(); await subscribeToPush(); setPushChip("hidden"); } catch { /* geweigerd */ }
+  };
   const firstName = currentUser?.naam?.split(" ")[0] || "";
   const openCount = myReports.filter((r) => r.status !== "klaar").length;
   const doneCount = myReports.filter((r) => r.status === "klaar").length;
@@ -1974,6 +2060,47 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
           </div>
         )}
       </div>
+
+      {/* Vandaag: de drie dagelijkse taken in één oogopslag — check, ritten,
+          uren. Elke rij is klikbaar en springt naar het juiste tabblad. */}
+      {(() => {
+        const today = toLocalKey(new Date());
+        const checkDone = myChecks.some((c) => c.datum === today);
+        const openRides = myRides.filter((r) => r.status !== "afgeleverd").length;
+        const klokActief = !!loadKlok(currentUser);
+        const urenDone = klokActief || loadUren(currentUser).some((e) => e.datum === today);
+        const rows = [
+          { id: "check", ok: checkDone, icon: ShieldCheck, label: checkDone ? t("vdCheckDone") : t("vdCheckTodo") },
+          ...(myRides.length ? [{ id: "ritten", ok: openRides === 0, icon: MapPin, label: openRides ? t("vdRittenOpen", { n: openRides }) : t("vdRittenDone") }] : []),
+          { id: "uren", ok: urenDone, icon: Clock, label: klokActief ? `${t("vdKlok")} · ${loadKlok(currentUser)?.start || ""}` : urenDone ? t("vdUrenDone") : t("vdUrenTodo") },
+        ];
+        return (
+          <div className="max-w-xl mx-auto">
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-2.5">
+                <Eyebrow>{t("vdTitle")}</Eyebrow>
+                {pushChip === "off" && (
+                  <button onClick={enablePush} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ fontFamily: "Inter", fontSize: 11.5, fontWeight: 600, cursor: "pointer", border: "1px solid #3B82F644", background: "#3B82F614", color: "#8FB8FF" }}>
+                    <BellRing size={12} /> {t("pushAan")}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {rows.map((r) => (
+                  <button key={r.id} onClick={() => setTab(r.id)} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg text-left"
+                    style={{ border: "1px solid #232B38", background: "#161C25", cursor: "pointer" }}>
+                    <span className="flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: r.ok ? "#34D39918" : "#FF8A0018", flexShrink: 0 }}>
+                      <r.icon size={15} color={r.ok ? "#34D399" : "#FF8A00"} />
+                    </span>
+                    <span style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 600, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 0%" }}>{r.label}</span>
+                    {r.ok ? <CheckCircle2 size={16} color="#34D399" style={{ flexShrink: 0 }} /> : <ChevronRight size={16} color="#6B7585" style={{ flexShrink: 0 }} />}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
 
       <InstallCard />
 
@@ -7371,8 +7498,12 @@ export default function TruckGarageApp({ session, onLogout }) {
     setUren((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
     if (live && role === "chauffeur") driverDeleteHours(id).catch((err) => console.error("Uren-sync mislukt:", err?.message || err));
   };
-  // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD).
-  const addRide = (r) => setRides((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+  // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD). De
+  // toegewezen chauffeur krijgt direct een pushmelding van de nieuwe rit.
+  const addRide = (r) => {
+    setRides((s) => ({ ...s, [companyId]: [r, ...(s[companyId] || [])] }));
+    if (live && r.chauffeurId) notifyUser(r.chauffeurId, { title: "Nieuwe rit", body: `${r.klant}${r.adres ? " — " + r.adres : ""}`, url: "/app/melding" });
+  };
   const deleteRide = (id) => setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const completeRide = async (rideId, pod) => {
     if (live && role === "chauffeur") await driverCompleteRide(rideId, pod);
@@ -7459,7 +7590,17 @@ export default function TruckGarageApp({ session, onLogout }) {
     setDrivers((s) => ({ ...s, [companyId]: [] }));
   };
   const resendInvite = () => {};
-  const moveReport = (id, targetStatus) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
+  const moveReport = (id, targetStatus) => {
+    // Melding klaar? Laat de chauffeur die 'm maakte het direct weten (push).
+    // Dat sluit de cirkel: melden heeft zichtbaar effect.
+    if (live && targetStatus === "klaar") {
+      const r = (reports[companyId] || []).find((x) => x.id === id);
+      if (r && r.chauffeurId && r.status !== "klaar") {
+        notifyUser(r.chauffeurId, { title: "Melding afgehandeld ✓", body: `${r.vehicle}: ${(r.omschrijving || "").slice(0, 100)}`, url: "/app/melding" });
+      }
+    }
+    setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).map((r) => (r.id === id ? { ...r, status: targetStatus } : r)) }));
+  };
   const deleteReport = (id) => setReports((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((r) => r.id !== id) }));
 
   return (
