@@ -285,6 +285,11 @@ begin
 
   -- Afgetekende ritten (Proof of Delivery) mogen door een client-snapshot nooit
   -- terug naar "gepland": de bestaande pod/status van een afgeleverde rit wint.
+  -- Stuurt een (oudere) client de sleutel helemaal niet mee, dan blijven de
+  -- bestaande ritten integraal staan.
+  if jsonb_typeof(final -> 'rides') is distinct from 'array' then
+    final := final || jsonb_build_object('rides', coalesce(existing -> 'rides', '[]'::jsonb));
+  end if;
   if jsonb_typeof(final -> 'rides') = 'array' then
     final := jsonb_set(final, '{rides}', coalesce((
       select jsonb_agg(
@@ -351,7 +356,11 @@ begin
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
   final := final || jsonb_build_object('uren', coalesce(existing -> 'uren', '[]'::jsonb));
 
-  -- En ook hier: afgeleverde ritten behouden hun pod/status.
+  -- En ook hier: afgeleverde ritten behouden hun pod/status, en een client
+  -- zonder rides-sleutel kan de bestaande ritten niet wegvagen.
+  if jsonb_typeof(final -> 'rides') is distinct from 'array' then
+    final := final || jsonb_build_object('rides', coalesce(existing -> 'rides', '[]'::jsonb));
+  end if;
   if jsonb_typeof(final -> 'rides') = 'array' then
     final := jsonb_set(final, '{rides}', coalesce((
       select jsonb_agg(
@@ -604,6 +613,18 @@ begin
     from unnest(array['naam','opmerking','handtekening','tijd','datum']) as k
     where pod ? k;
   podc := podc || jsonb_build_object('door', coalesce(v_naam, 'Onbekend'), 'ts', now());
+  -- Bestaat de rit niet (meer) of is hij niet aan déze chauffeur toegewezen?
+  -- Dan hard falen i.p.v. stil niets doen — anders denkt de chauffeur dat de
+  -- aflevering is vastgelegd terwijl de handtekening nergens staat.
+  if not exists (
+    select 1 from public.company_state cs,
+      jsonb_array_elements(coalesce(cs.data -> 'rides', '[]'::jsonb)) r(val)
+    where cs.company_id = cid
+      and r.val ->> 'id' = p_ride_id
+      and r.val ->> 'chauffeurId' = auth.uid()::text
+  ) then
+    raise exception 'RIDE_NOT_FOUND';
+  end if;
   update public.company_state
     set data = jsonb_set(data, '{rides}', coalesce((
           select jsonb_agg(

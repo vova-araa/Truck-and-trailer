@@ -197,6 +197,10 @@ function toLocalKey(d) {
 // meeschuiven — anders tonen planning/compliance de dag ervoor.
 let TODAY = toLocalKey(new Date());
 
+// Botsingsvrije id: Date.now() alleen kan tussen twee gebruikers botsen (de
+// server negeert dan stilletjes één van beide rijen). Random-staart lost dat op.
+const uid = (prefix) => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
 const seedPlanning = {
   blex: [
     { id: "pl0", vehicle: "GH-99-VB", datum: TODAY, tijd: "14:00", duur: 60, taak: "Bandencontrole", monteur: "M. Smit" },
@@ -1111,7 +1115,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
 
   const submit = async () => {
     if (!vehicle || !omschrijving.trim() || submitting) return;
-    const id = "r" + Date.now();
+    const id = uid("r");
     setSubmitting(true); setUploadWarn("");
     // Foto's/video's eerst uploaden (best effort). Lukt dat niet, dan sturen we
     // de melding alsnog door — met alleen het aantal — zodat er niets verloren gaat.
@@ -1576,7 +1580,7 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
     const items = CHECK_POINTS.map((p, i) => ({ p, ok: answers[i] === "ok", note: answers[i] === "fout" ? (notes[i] || "").trim() : "" }));
     const failed = items.filter((it) => !it.ok);
     const check = {
-      id: "chk" + Date.now(),
+      id: uid("chk"),
       vehicle, datum: today,
       tijd: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
       chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null,
@@ -1589,7 +1593,7 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
         // Remmen of banden afgekeurd => kritiek.
         const kritiek = failed.some((f) => f.p === CHECK_POINTS[0] || f.p === CHECK_POINTS[2]);
         onSubmitReport({
-          id: "r" + Date.now(), vehicle,
+          id: uid("r"), vehicle,
           chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null,
           omschrijving: "Dagelijkse check: " + failed.map((f) => f.p + (f.note ? ` (${f.note})` : "")).join(", "),
           prioriteit: kritiek ? "kritiek" : "gemiddeld",
@@ -1776,7 +1780,7 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
 
   const add = () => {
     if (!canSave) return;
-    const entry = { id: "u" + Date.now(), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() };
+    const entry = { id: uid("u"), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() };
     setEntries((list) => [entry, ...list].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || "")));
     if (onSyncAdd) onSyncAdd(entry);
     setForm((f) => ({ ...f, note: "" }));
@@ -2052,7 +2056,7 @@ function RidesView({ rides = [], vehicles = [], users = [], profiel = {}, compan
     if (!form.klant.trim() || !form.adres.trim()) { setErr("Vul minimaal klant en adres in."); return; }
     const ch = chauffeurs.find((c) => c.id === form.chauffeurId);
     onAdd({
-      id: "rit" + Date.now(), datum: form.datum || TODAY,
+      id: uid("rit"), datum: form.datum || TODAY,
       klant: form.klant.trim(), adres: form.adres.trim(), referentie: form.referentie.trim(),
       vehicle: form.vehicle || "", chauffeurId: form.chauffeurId || null, chauffeur: ch ? ch.naam : "",
       opmerking: form.opmerking.trim(), status: "gepland", pod: null,
@@ -4880,7 +4884,7 @@ function SettingsView({ mechanics, availability, hours, onSetMechanicWeek, onSet
       <div>
         <h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><SlidersHorizontal size={22} color="#3B82F6" /> Instellingen</h1>
         <p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Werkplaatstijden en beschikbaarheid van monteurs.</p>
-        {live && onReplayTutorial && (
+        {onReplayTutorial && (
           <button onClick={onReplayTutorial} className="mt-2 inline-flex items-center gap-1.5 text-xs" style={{ color: "#8FB8FF", fontFamily: "Inter", fontWeight: 600 }}>
             <LifeBuoy size={13} /> Uitleg opnieuw bekijken
           </button>
@@ -6718,36 +6722,46 @@ function OnboardingWizard({ company, onDone }) {
    UITLEG PER ROL — de eerste keer krijgt elke gebruiker (chauffeur,
    werkplaats, beheerder) een korte rondleiding voor zijn eigen rol.
 --------------------------------------------------------------------- */
+// Rondleiding per rol. Doel: iemand die de app nog nooit zag, weet na één keer
+// doorklikken precies hoe alles werkt. Chauffeur-stappen dragen een tKey en
+// worden in de taal van de chauffeur getoond; beheer/werkplaats is Nederlands.
 const TUTORIALS = {
   chauffeur: {
-    title: "Welkom, chauffeur!",
-    intro: "Zo maak je met je telefoon snel een melding als er iets is met je wagen.",
+    tKey: "tutc_",
     steps: [
-      { icon: AlertTriangle, accent: "#3B82F6", visual: "melding", title: "Melding maken", text: "Tik op 'Melding maken', kies je voertuig en beschrijf kort wat er aan de hand is." },
-      { icon: Camera, accent: "#A855F7", visual: "foto", title: "Foto erbij", text: "Maak een foto van het probleem. De app kan de schade zelfs automatisch herkennen." },
-      { icon: Mic, accent: "#22D3B0", visual: "spraak", title: "Inspreken kan ook", text: "Geen zin om te typen? Spreek je melding gewoon in — de app zet het om in tekst." },
-      { icon: CheckCircle2, accent: "#34D399", visual: "status", title: "Status volgen", text: "Onder 'Jouw meldingen' zie je of de werkplaats ermee bezig is: nieuw → in behandeling → klaar." },
+      { icon: AlertTriangle, accent: "#3B82F6", visual: "melding", tKey: "tutc1" },
+      { icon: Camera, accent: "#A855F7", visual: "foto", tKey: "tutc2" },
+      { icon: Mic, accent: "#22D3B0", visual: "spraak", tKey: "tutc3" },
+      { icon: CheckCircle2, accent: "#34D399", visual: "status", tKey: "tutc4" },
+      { icon: ShieldCheck, accent: "#34D399", visual: "check", tKey: "tutc5" },
+      { icon: MapPin, accent: "#F59E0B", visual: "rit", tKey: "tutc6" },
+      { icon: Clock, accent: "#3B82F6", visual: "uren", tKey: "tutc7" },
     ],
   },
   garage: {
     title: "Welkom bij de werkplaats!",
-    intro: "Hier houd je de werkvloer en de planning bij.",
+    intro: "In een paar stappen zie je hoe je werkdag door de app loopt — van binnenkomende melding tot afgeronde werkbon.",
     steps: [
-      { icon: KanbanSquare, accent: "#3B82F6", visual: "kanban", title: "Werkvloer", text: "Binnengekomen meldingen zie je als kaarten. Verplaats ze van Nieuw → In behandeling → Klaar." },
-      { icon: Calendar, accent: "#F59E0B", visual: "planning", title: "Inplannen", text: "Plan een klus in de agenda: kies bovenaan een openstaande melding, daarna dag, tijd en monteur." },
-      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot & onderhoud", text: "Bekijk voertuigen en trailers en houd APK- en onderhoudstermijnen in de gaten." },
-      { icon: Package, accent: "#A855F7", visual: "voorraad", title: "Voorraad", text: "Houd je onderdelen bij; bij een klus boek je gebruikte onderdelen meteen af." },
+      { icon: KanbanSquare, accent: "#3B82F6", visual: "kanban", title: "De werkvloer: alles komt hier binnen", text: "Elke melding van een chauffeur verschijnt hier vanzelf als kaart — met foto's, prioriteit en wie het meldde. Verplaats de kaart van Nieuw naar In behandeling naar Klaar; iedereen (ook de chauffeur) ziet direct de stand. Zet pushmeldingen aan bij Instellingen, dan hoor je het zelfs als de app dicht is." },
+      { icon: Calendar, accent: "#F59E0B", visual: "planning", title: "Inplannen in twee tikken", text: "Tik bij een melding op 'Inplannen', kies dag, tijd en monteur — klaar. De klus staat meteen in de agenda. In de Planning zie je per dag wat er ligt en verplaats je klussen als het uitloopt." },
+      { icon: ClipboardList, accent: "#34D399", visual: "kosten", title: "Werkbon in één minuut", text: "Klus klaar? Tik op 'Werkbon': uren, gebruikte onderdelen en eventuele extra's. Je krijgt een nette PDF met het bedrijfslogo, de klant kan op het scherm tekenen, de melding gaat op Klaar en de kosten worden automatisch geboekt." },
+      { icon: Package, accent: "#A855F7", visual: "voorraad", title: "Voorraad die zichzelf bijhoudt", text: "Onderdelen die je op een werkbon zet, worden automatisch afgeboekt. Bij elk onderdeel zie je hoeveel er nog liggen; bijbestellen doe je vóórdat je misgrijpt." },
+      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot & keuringen zonder gedoe", text: "Bij elk voertuig staan APK, tachograaf en verzekering met een kleur: groen is goed, oranje komt eraan, rood is verlopen. De APK-datums worden zelfs elke nacht automatisch bij de RDW gecontroleerd. Ook documenten (kentekenbewijs, verzekering) staan bij de wagen." },
+      { icon: LayoutDashboard, accent: "#3B82F6", visual: "dashboard", title: "Je dag begint op het dashboard", text: "Eén blik en je weet wat er speelt: de eerstvolgende afspraak, verse meldingen van chauffeurs en wagens die aandacht nodig hebben. Vanaf hier klik je overal direct naartoe." },
     ],
   },
   admin: {
     title: "Welkom, beheerder!",
-    intro: "Jij beheert het hele bedrijf. Dit zijn de belangrijkste plekken:",
+    intro: "Jij ziet en regelt alles. Deze rondleiding laat elk onderdeel kort zien — daarna wijst de app zich vanzelf.",
     steps: [
-      { icon: LayoutDashboard, accent: "#3B82F6", visual: "dashboard", title: "Dashboard", text: "Begint met de planning van vandaag en de punten die aandacht nodig hebben." },
-      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot & chauffeurs", text: "Beheer voertuigen, trailers en de papieren van chauffeurs (rijbewijs, Code 95, APK)." },
-      { icon: Euro, accent: "#F59E0B", visual: "kosten", title: "Kosten", text: "Zie uitgaven per voertuig en categorie, en exporteer naar CSV." },
-      { icon: Users, accent: "#A855F7", visual: "gebruikers", title: "Gebruikers", text: "Nodig chauffeurs uit met de bedrijfscode. Werkplaats- en beheerder-accounts maak je hier aan." },
-      { icon: SlidersHorizontal, accent: "#EC4899", visual: "instellingen", title: "Instellingen", text: "Zet onderdelen aan/uit die je wel of niet gebruikt, en meld problemen rechtstreeks bij ons." },
+      { icon: LayoutDashboard, accent: "#3B82F6", visual: "dashboard", title: "Dashboard: alles in één oogopslag", text: "De planning van vandaag, openstaande meldingen, kosten en de wagens die aandacht nodig hebben. Elke tegel is klikbaar en brengt je direct naar het juiste scherm." },
+      { icon: KanbanSquare, accent: "#F0453F", visual: "kanban", title: "Meldingen komen vanzelf binnen", text: "Chauffeurs melden een probleem in een paar tikken op hun telefoon — met foto, in hun eigen taal, zelfs offline. Elke melding verschijnt direct op de Werkvloer en je kunt een pushmelding op je telefoon krijgen. Vóór vertrek doen chauffeurs bovendien een dagelijkse voertuigcheck; afgekeurde punten worden automatisch een melding." },
+      { icon: MapPin, accent: "#F59E0B", visual: "rit", title: "Ritten met digitaal afleverbewijs", text: "Plan een rit (klant, adres, chauffeur) — die verschijnt direct op de telefoon van de chauffeur, met navigatie. Bij aflevering tekent de ontvanger op het scherm en heb jij meteen een afleverbewijs-PDF voor de opdrachtgever." },
+      { icon: Truck, accent: "#22D3B0", visual: "vloot", title: "Vloot die zichzelf actueel houdt", text: "Voeg een voertuig toe met alleen het kenteken: merk, type en APK-datum komen automatisch van de RDW — en worden daarna elke nacht gecontroleerd. Verloopt ergens de APK, verzekering of tachograaf, dan krijg je vanzelf een e-mail. Documenten bewaar je per voertuig." },
+      { icon: Contact, accent: "#A855F7", visual: "gebruikers", title: "Chauffeurs: papieren én uren", text: "Bewaak rijbewijs, Code 95, ADR en medische keuring per chauffeur. Chauffeurs houden in de app hun eigen uren bij — jij ziet per maand wie hoeveel werkte en downloadt de loonexport voor de administratie." },
+      { icon: Euro, accent: "#F59E0B", visual: "kosten", title: "Kosten, werkbonnen & rapportage", text: "Elke werkbon boekt automatisch kosten. Bij Rapportage zie je kosten per kilometer per wagen, de duurste voertuigen en de meldingen-trend — zo weet je precies welke wagen geld kost. Alles is te exporteren naar CSV." },
+      { icon: Users, accent: "#3B82F6", visual: "gebruikers", title: "Medewerkers toevoegen is zó gedaan", text: "Deel de bedrijfscode en chauffeurs maken zelf hun login. Werkplaats- en beheerderaccounts maak jij aan (met e-mailuitnodiging). Iedereen ziet alleen wat bij zijn rol hoort — chauffeurs zien nooit kosten of andermans gegevens." },
+      { icon: SlidersHorizontal, accent: "#EC4899", visual: "instellingen", title: "Maak 'm passend voor jouw bedrijf", text: "Zet modules aan of uit (bv. geen trailers of geen voorraad? weg ermee), stel je bedrijfsprofiel met logo in voor werkbonnen en afleverbewijzen, en regel pushmeldingen. Deze rondleiding terugkijken kan altijd via Instellingen." },
     ],
   },
 };
@@ -6787,6 +6801,37 @@ function TutorialVisual({ type, accent }) {
   else if (type === "status") inner = (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 7 }}>
       {pill("Nieuw", "#B4BCC9")}<ChevronRight size={15} color="#6B7585" />{pill("In behandeling", "#F59E0B")}<ChevronRight size={15} color="#6B7585" />{pill("Klaar", "#34D399")}
+    </div>
+  );
+  else if (type === "check") inner = (
+    <div style={{ width: "100%", maxWidth: 250, display: "grid", gap: 7, ...card, padding: 12 }}>
+      {[["#34D399", true], ["#34D399", true], ["#F0453F", false]].map(([c, ok], i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          {line(i === 2 ? "45%" : "60%")}
+          <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 6, background: `${c}22`, border: `1px solid ${c}` }}>{ok ? <Check size={12} color={c} /> : <X size={12} color={c} />}</span>
+        </div>
+      ))}
+      <span style={{ marginTop: 2, alignSelf: "flex-start", fontFamily: "Inter", fontSize: 10.5, fontWeight: 600, color: "#F0453F", border: "1px solid #F0453F66", borderRadius: 999, padding: "3px 9px" }}>→ werkplaats</span>
+    </div>
+  );
+  else if (type === "rit") inner = (
+    <div style={{ width: "100%", maxWidth: 250, display: "grid", gap: 9, ...card, padding: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{line("55%")}{pill("Route", accent)}</div>
+      {line("75%")}
+      <div style={{ height: 44, borderRadius: 8, background: "#FFFFFF", position: "relative", overflow: "hidden" }}>
+        <svg viewBox="0 0 200 40" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}><path d="M12 28 C 40 8, 60 34, 90 20 S 150 10, 185 24" fill="none" stroke="#0A0E14" strokeWidth="2.4" strokeLinecap="round" /></svg>
+      </div>
+      <span style={{ alignSelf: "flex-start", fontFamily: "Inter", fontSize: 10.5, fontWeight: 600, color: "#0A0E14", background: "#34D399", borderRadius: 999, padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Afgeleverd</span>
+    </div>
+  );
+  else if (type === "uren") inner = (
+    <div style={{ width: "100%", maxWidth: 250, display: "grid", gap: 9, ...card, padding: 12 }}>
+      <div style={{ display: "flex", gap: 8 }}>{chip("07:30")}<span style={{ color: "#6B7585", alignSelf: "center" }}>→</span>{chip("16:45")}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {pill("45 min pauze", accent)}
+        <span style={{ fontFamily: "Oswald", fontSize: 20, fontWeight: 700, color: accent }}>8:30</span>
+      </div>
+      {line("50%")}
     </div>
   );
   else if (type === "kanban") inner = (
@@ -6871,11 +6916,15 @@ function TutorialVisual({ type, accent }) {
 }
 
 function RoleTutorial({ role, onDone }) {
-  const t = TUTORIALS[role] || TUTORIALS.admin;
+  const { t: tr } = useT();
+  const tut = TUTORIALS[role] || TUTORIALS.admin;
   const [i, setI] = useState(0);
-  const step = t.steps[i];
-  const last = i === t.steps.length - 1;
+  const step = tut.steps[i];
+  const last = i === tut.steps.length - 1;
   const a = step.accent;
+  // Chauffeur-stappen zijn vertaald (tKey); beheer/werkplaats is Nederlands.
+  const stepTitle = step.tKey ? tr(step.tKey + "t") : step.title;
+  const stepText = step.tKey ? tr(step.tKey + "x") : step.text;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 85, background: "#0A0E14", overflowY: "auto", padding: 16, display: "flex", flexDirection: "column" }}>
       <style>{`@keyframes tut-in{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
@@ -6886,7 +6935,7 @@ function RoleTutorial({ role, onDone }) {
 
         {/* Voortgangsbalk: één segment per stap */}
         <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
-          {t.steps.map((_, idx) => (
+          {tut.steps.map((_, idx) => (
             <span key={idx} onClick={() => setI(idx)} style={{ flex: 1, height: 5, borderRadius: 3, cursor: "pointer", background: idx <= i ? a : "#232B38", transition: "background .3s" }} />
           ))}
         </div>
@@ -6899,22 +6948,22 @@ function RoleTutorial({ role, onDone }) {
               <step.icon size={20} color={a} />
             </span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: a, textTransform: "uppercase", letterSpacing: 0.6 }}>Stap {i + 1} van {t.steps.length}</div>
-              <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{step.title}</div>
+              <div style={{ fontFamily: "Inter", fontSize: 11, fontWeight: 700, color: a, textTransform: "uppercase", letterSpacing: 0.6 }}>{tr("tutStep")} {i + 1}/{tut.steps.length}</div>
+              <div style={{ fontFamily: "Oswald", fontSize: 22, fontWeight: 600, color: "#E7ECF3", lineHeight: 1.1 }}>{stepTitle}</div>
             </div>
           </div>
-          <p style={{ fontFamily: "Inter", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.55, marginTop: 12 }}>{step.text}</p>
+          <p style={{ fontFamily: "Inter", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.55, marginTop: 12 }}>{stepText}</p>
         </div>
 
         <div style={{ flex: 1 }} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 22 }}>
           <button onClick={() => (last ? onDone() : setI(i + 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 13, borderRadius: 12, border: "none", background: `linear-gradient(180deg, ${a}, ${a}CC)`, color: "#fff", fontFamily: "Inter", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
-            {last ? "Aan de slag →" : "Volgende"}
+            {last ? tr("tutStart") + " →" : tr("next")}
           </button>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <button onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0} style={{ fontFamily: "Inter", fontSize: 12.5, color: i === 0 ? "#3A4250" : "#98A1B0", padding: 6, background: "none", border: "none", cursor: i === 0 ? "default" : "pointer" }}>← Terug</button>
-            <button onClick={onDone} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6, background: "none", border: "none", cursor: "pointer" }}>Overslaan</button>
+            <button onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0} style={{ fontFamily: "Inter", fontSize: 12.5, color: i === 0 ? "#3A4250" : "#98A1B0", padding: 6, background: "none", border: "none", cursor: i === 0 ? "default" : "pointer" }}>← {tr("back")}</button>
+            <button onClick={onDone} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6, background: "none", border: "none", cursor: "pointer" }}>{tr("skip")}</button>
           </div>
         </div>
       </div>
@@ -7056,6 +7105,9 @@ export default function TruckGarageApp({ session, onLogout }) {
   const [saveStatus, setSaveStatus] = useState("saved"); // pending | saving | saved | error
   const firstSave = useRef(true);
   const lastCid = useRef(liveCompanyId);
+  // Zet de eerstvolgende autosave uit (gebruikt door refreshData; zie de guard
+  // in het save-effect hieronder).
+  const suppressSave = useRef(false);
   // Meldingen/kosten die bij het laden al bestonden. Bij het opslaan mogen
   // server-rijen die hier NIET in staan (dus nieuw sinds het laden, bv. een
   // chauffeursmelding) niet worden weggegooid — dat regelt save_company_state.
@@ -7070,6 +7122,10 @@ export default function TruckGarageApp({ session, onLogout }) {
     // meldingen gaan los via driver_add_report. Anders zou hun minimale weergave
     // de volledige bedrijfsdata overschrijven.
     if (session.profile.rol === "chauffeur") return;
+    // Na een (realtime-)refresh krijgen de slices verse referenties zonder dat
+    // de gebruiker iets wijzigde. Zonder deze guard ontstaat een lus:
+    // save → state_rev-trigger → realtime-event → refresh → save → …
+    if (suppressSave.current) { suppressSave.current = false; return; }
     // Sla niet meteen op bij het laden — pas na een echte wijziging.
     if (firstSave.current) { firstSave.current = false; lastCid.current = companyId; return; }
     // Alleen van bedrijf gewisseld (superadmin)? Dan niets opslaan.
@@ -7100,7 +7156,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       baseReportIds: baseIds.current.reports,
       baseCostIds: baseIds.current.costs,
     });
-  }, [vehicles, trailers, parts, maintenance, costs, reports, users, planning, drivers, availability, workshopHours, modules, onboarded, bedrijfsprofiel, live, companyId, session]);
+  }, [vehicles, trailers, parts, maintenance, costs, reports, users, rides, planning, drivers, availability, workshopHours, modules, onboarded, bedrijfsprofiel, live, companyId, session]);
 
   // Elke paginawissel begint bovenaan. Het scrollen gebeurt nu binnen <main>
   // (#tt-main), niet meer op het document.
@@ -7260,8 +7316,9 @@ export default function TruckGarageApp({ session, onLogout }) {
 
   // Korte rondleiding per rol, de eerste keer (chauffeur/werkplaats/beheerder).
   // De platform-superadmin slaan we over. Voor de admin komt dit ná de
-  // module-keuze hierboven.
-  if (live && !tutorialSeen && !(currentUser.superadmin || currentUser.is_superadmin)) {
+  // module-keuze hierboven. Ook in de demo te bekijken (via Instellingen →
+  // rondleiding terugkijken) — handig voor wie de app nog overweegt.
+  if (!tutorialSeen && !(currentUser.superadmin || currentUser.is_superadmin)) {
     return <RoleTutorial role={currentUser.rol} onDone={markTutorialSeen} />;
   }
   const mechanics = cUsers.filter((u) => u.rol === "garage");
@@ -7340,6 +7397,8 @@ export default function TruckGarageApp({ session, onLogout }) {
       else if (role === "garage") fresh = await loadCompanyStateScoped();
       else fresh = await loadState(companyId);
       if (fresh) {
+        // Verse serverdata is geen gebruikerswijziging: autosave-lus voorkomen.
+        suppressSave.current = true;
         if (Array.isArray(fresh.reports)) setReports((s) => ({ ...s, [companyId]: fresh.reports }));
         if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));

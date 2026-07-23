@@ -486,24 +486,36 @@ app.all("/api/cron/reminders", async (req, res) => {
     const todayIso = new Date().toISOString().slice(0, 10);
     for (const row of (states || [])) {
       try {
-        const data = row.data || {};
-        const plates = [...(Array.isArray(data.vehicles) ? data.vehicles : []), ...(Array.isArray(data.trailers) ? data.trailers : [])]
+        const plates = [...(Array.isArray(row.data?.vehicles) ? row.data.vehicles : []), ...(Array.isArray(row.data?.trailers) ? row.data.trailers : [])]
           .map((v) => rdwPlate(v?.kenteken)).filter(Boolean);
         if (!plates.length) continue;
         const rdwMap = await rdwFetchPlates([...new Set(plates)]);
         if (!Object.keys(rdwMap).length) continue;
+        // De RDW-fetches hierboven zijn traag; lees de rij daarom VLAK vóór het
+        // schrijven opnieuw en schrijf alleen als er intussen niets veranderde
+        // (voorwaarde op updated_at). Anders zouden we een net binnengekomen
+        // melding/check/POD overschrijven — precies wat de merge-RPC's voorkomen.
+        const { data: freshRow } = await supaAdmin.from("company_state")
+          .select("data, updated_at").eq("company_id", row.company_id).single();
+        if (!freshRow) continue;
+        const data = freshRow.data || {};
         const veh = rdwApplyTo(data.vehicles, rdwMap, todayIso);
         const trl = rdwApplyTo(data.trailers, rdwMap, todayIso);
         if (veh.changed + trl.changed > 0) {
           const newData = { ...data, vehicles: veh.list, trailers: trl.list };
-          const { error } = await supaAdmin.from("company_state")
+          const { data: updated, error } = await supaAdmin.from("company_state")
             .update({ data: newData, updated_at: new Date().toISOString() })
-            .eq("company_id", row.company_id);
-          if (!error) {
+            .eq("company_id", row.company_id)
+            .eq("updated_at", freshRow.updated_at)
+            .select("company_id");
+          // 0 rijen geraakt = er kwam nét iets tussendoor; volgende nacht opnieuw.
+          if (!error && Array.isArray(updated) && updated.length > 0) {
             row.data = newData; // de herinneringen-stap hieronder gebruikt de verse datums
             rdwVehiclesUpdated += veh.changed + trl.changed;
             rdwCompaniesUpdated++;
           }
+        } else {
+          row.data = data; // herinneringen op de meest actuele data
         }
       } catch (e) { console.error("RDW-sync fout voor bedrijf:", row.company_id, e?.message || e); }
     }

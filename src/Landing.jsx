@@ -23,47 +23,160 @@ const CONTACT_EMAIL = "info@truckandtrailer.nl";
 const CONTACT_TEL = "";  // bv. "+31 6 12345678"
 const WHATSAPP = "";     // internationaal, zonder + (bv. "31612345678")
 
-const FEATURES = [
-  { icon: AlertTriangle, kleur: "#F0453F", titel: "Meldingen van chauffeurs", tekst: "Chauffeurs melden onderweg een probleem in een paar tikken — met foto, spraak en AI-schadeherkenning. In 11 talen en zelfs offline." },
-  { icon: KanbanSquare, kleur: ACCENT, titel: "Digitale werkvloer & planning", tekst: "Alle meldingen op één overzichtelijk bord. Plan reparaties in, wijs monteurs toe en zie live wat er speelt." },
-  { icon: Euro, kleur: TEAL, titel: "Kosten, werkbonnen & facturen", tekst: "Registreer kosten per voertuig, maak werkbonnen met je eigen logo en BTW, en exporteer alles wanneer je wilt." },
-  { icon: Sparkles, kleur: "#A855F7", titel: "AI die meedenkt", tekst: "Schade herkennen op foto's en voorspellend onderhoud op basis van kilometers, leeftijd en terugkerende meldingen." },
-  { icon: FileText, kleur: "#F59E0B", titel: "Documenten per voertuig", tekst: "Kentekenbewijs, verzekering en APK veilig opgeslagen bij elk voertuig — altijd bij de hand." },
-  { icon: ShieldCheck, kleur: TEAL, titel: "APK & verzekering bewaakt", tekst: "Automatische herinneringen per e-mail vóórdat een keuring of verzekering verloopt. Nooit meer een boete." },
+// Iconen/kleuren per kaart; de teksten komen per taal uit LN (zelfde volgorde).
+const FEATURE_ICONS = [
+  { icon: AlertTriangle, kleur: "#F0453F" },
+  { icon: ShieldCheck, kleur: TEAL },
+  { icon: MessageCircle, kleur: "#F59E0B" },
+  { icon: KanbanSquare, kleur: ACCENT },
+  { icon: Euro, kleur: TEAL },
+  { icon: Sparkles, kleur: "#A855F7" },
 ];
+const VOOR_WIE_ICONS = [Truck, Users, Wrench];
+const TOUR_SRC = ["/landing/rapportage.webp", "/landing/kosten.webp"];
 
-const STAPPEN = [
-  { n: "1", titel: "Voeg je vloot toe", tekst: "Zet je vrachtwagens, trailers en bestelwagens in de app — handmatig of razendsnel via kenteken." },
-  { n: "2", titel: "Nodig je team uit", tekst: "Chauffeurs en monteurs krijgen hun eigen weergave. Chauffeurs melden, de werkplaats lost op." },
-  { n: "3", titel: "Alles onder controle", tekst: "Meldingen, planning, kosten en keuringen op één plek — op kantoor én onderweg op je telefoon." },
-];
-
-const STATS = [
-  { v: "11", l: "talen voor chauffeurs" },
-  { v: "1 app", l: "vloot + werkplaats" },
-  { v: "24/7", l: "onderweg bereikbaar" },
-  { v: "0", l: "installatie nodig" },
-];
-
-const VOOR_WIE = [
-  { icon: Truck, titel: "Transportbedrijven", tekst: "Overzicht over de hele vloot, van APK tot kosten per kilometer. Meerdere chauffeurs en monteurs, netjes gescheiden per rol." },
-  { icon: Users, titel: "Eigen rijders & kleine vloten", tekst: "Simpel starten met een paar wagens. Geen dure software of installatie — je werkt meteen vanaf je telefoon." },
-  { icon: Wrench, titel: "Werkplaatsen", tekst: "Meldingen binnen op één bord, plan reparaties in en lever een nette werkbon met je eigen logo en BTW op." },
-];
-
-const TOUR = [
-  { src: "/landing/rapportage.webp", titel: "Rapportage", tekst: "Kosten per kilometer, duurste voertuigen en de meldingen-trend — in één oogopslag." },
-  { src: "/landing/kosten.webp", titel: "Kosten & werkbonnen", tekst: "Elke uitgave bij het juiste voertuig, met export en werkbonnen per periode." },
-];
-
-const FAQ = [
-  { q: "Wat kost het?", a: "Aanmelden gaat op dit moment op aanvraag. Laat je gegevens achter via het formulier, dan bespreken we samen wat past bij jouw vloot." },
-  { q: "Moet ik iets installeren?", a: "Nee. Truck & Trailer draait in de browser en werkt op telefoon, tablet en computer. Je kunt de app wel op je beginscherm zetten voor snelle toegang en meldingen." },
-  { q: "Kunnen chauffeurs in hun eigen taal werken?", a: "Ja. De chauffeursschermen zijn beschikbaar in 11 talen, waaronder Pools, Roemeens, Oekraïens, Turks en meer. Ze kiezen zelf hun taal." },
-  { q: "Werkt het ook zonder internet?", a: "Chauffeurs kunnen onderweg een melding maken zonder verbinding. Zodra ze weer online zijn, wordt de melding automatisch verstuurd." },
-  { q: "Zijn mijn gegevens veilig?", a: "Ja. Toegang is afgeschermd per rol en per bedrijf, foto's en documenten staan in afgeschermde opslag en alle verbindingen zijn versleuteld." },
-  { q: "Kan ik facturen op mijn eigen naam maken?", a: "Zeker. Je stelt je bedrijfsprofiel met logo, adres, KvK, BTW en IBAN in; werkbonnen en facturen komen automatisch op je eigen huisstijl." },
-];
+// Alle marketingteksten per taal. NL en EN zijn compleet; extra talen zijn
+// hier één blok werk (zelfde sleutels invullen).
+const LN = {
+  nl: {
+    navActivate: "Bedrijf activeren", navLogin: "Inloggen",
+    badge: "Voor transport, koeriers en bestelbus-vloten",
+    h1a: "Eén app voor je wagenpark,", h1b: "chauffeurs en werkplaats",
+    heroSub: "Chauffeurs melden problemen met een foto, doen hun dagelijkse voertuigcheck, tekenen ritten digitaal af en houden hun uren bij — in hun eigen taal. Jij ziet op kantoor de planning, kosten, keuringen en werkbonnen. Alles in één app die overal werkt.",
+    ctaRequest: "Toegang aanvragen", ctaDemo: "Bekijk de demo", ctaLogin: "Inloggen",
+    heroTag1: "10 talen", heroTag2: "Werkt offline", heroTag3: "Push-meldingen",
+    stats: [["10", "talen voor chauffeurs"], ["1 app", "vloot + werkplaats + ritten"], ["24/7", "onderweg bereikbaar"], ["0", "installatie nodig"]],
+    featTitle: "Alles-in-één", featH2: "Wat Truck & Trailer voor je doet",
+    features: [
+      { titel: "Meldingen van chauffeurs", tekst: "Kapotte verlichting, rare geluiden, schade: chauffeurs melden het onderweg in een paar tikken — met foto, spraak en AI-schadeherkenning. In 10 talen en zelfs offline." },
+      { titel: "Dagelijkse voertuigcheck", tekst: "Vóór vertrek in 30 seconden banden, verlichting en remmen nalopen. Afgekeurde punten gaan automatisch naar de werkplaats — en jij bouwt een sluitend dossier op." },
+      { titel: "Ritten met digitaal afleverbewijs", tekst: "Plan een rit en hij staat direct op de telefoon van de chauffeur, mét navigatie. De ontvanger tekent op het scherm; jij hebt meteen een afleverbewijs-PDF." },
+      { titel: "Digitale werkvloer & planning", tekst: "Alle meldingen op één bord. Plan reparaties in, wijs monteurs toe, maak werkbonnen met je eigen logo en zie live wat er speelt." },
+      { titel: "Uren, kosten & loonexport", tekst: "Chauffeurs houden hun uren bij in de app; jij downloadt per maand de loonexport. Elke werkbon boekt automatisch kosten per voertuig." },
+      { titel: "APK automatisch bewaakt via RDW", tekst: "De app controleert de APK-datums van je hele vloot elke nacht bij de RDW en mailt je vóórdat een keuring of verzekering verloopt. Nooit meer een boete." },
+    ],
+    capsTitle: "En verder", capsH2: "Wat kan je er allemaal mee?",
+    caps: [
+      "Voertuig toevoegen met alleen het kenteken (RDW vult de rest in)",
+      "Kentekenbewijs, verzekering en APK-rapport per voertuig bewaren",
+      "Schadedossier-PDF per melding — klaar voor de verzekeraar",
+      "AI herkent schade op foto's en voorspelt onderhoud",
+      "Rijbewijs, Code 95, ADR en medische keuring per chauffeur bewaken",
+      "Kosten per kilometer en duurste voertuigen in beeld",
+      "Voorraad die automatisch afboekt via de werkbon",
+      "Pushmelding op je telefoon bij elke nieuwe melding",
+      "Trailers, bakwagens en bestelwagens apart bijhouden",
+      "Werkt op telefoon, tablet en computer — niets installeren",
+      "Iedereen ziet alleen wat bij zijn rol hoort",
+      "Modules aan/uit: alleen wat jouw bedrijf gebruikt",
+    ],
+    wieTitle: "Voor wie", wieH2: "Gemaakt voor bedrijven met wagens op de weg",
+    voorwie: [
+      { titel: "Transportbedrijven", tekst: "Overzicht over de hele vloot, van APK tot kosten per kilometer. Meerdere chauffeurs en monteurs, netjes gescheiden per rol." },
+      { titel: "Koeriers & bestelbus-vloten", tekst: "Ritten plannen, digitaal aftekenen bij de klant en uren bijhouden — ook zonder eigen werkplaats haal je hier alles uit." },
+      { titel: "Werkplaatsen", tekst: "Meldingen binnen op één bord, plan reparaties in en lever een nette werkbon met je eigen logo en BTW op." },
+    ],
+    showTitle: "Werkvloer & planning", showH2: "Van melding tot reparatie, zonder telefoontjes",
+    showText: "Een chauffeur meldt onderweg een probleem — met foto. De werkplaats ziet het direct op het bord, plant de reparatie in en maakt na afloop een werkbon. De kosten staan automatisch bij het juiste voertuig.",
+    showList: ["Meldingen live binnen — ook push als de app dicht is", "Planning per dag met monteurs en tijden", "Werkbon als PDF met je eigen logo & gegevens", "Kosten automatisch bij het juiste voertuig"],
+    stepTitle: "In 3 stappen live", stepH2: "Vandaag beginnen",
+    stappen: [
+      { titel: "Voeg je vloot toe", tekst: "Tik alleen de kentekens in — merk, type en APK-datum komen automatisch van de RDW." },
+      { titel: "Nodig je team uit", tekst: "Chauffeurs maken met de bedrijfscode zelf hun login en kiezen hun eigen taal. De werkplaats krijgt een eigen weergave." },
+      { titel: "Alles onder controle", tekst: "Meldingen, checks, ritten, uren, planning, kosten en keuringen op één plek — op kantoor én onderweg." },
+    ],
+    tourTitle: "Zie het in actie", tourH2: "Een blik in de app",
+    tour: [
+      { titel: "Rapportage", tekst: "Kosten per kilometer, duurste voertuigen en de meldingen-trend — in één oogopslag." },
+      { titel: "Kosten & werkbonnen", tekst: "Elke uitgave bij het juiste voertuig, met export en werkbonnen per periode." },
+    ],
+    faqTitle: "Veelgestelde vragen", faqH2: "Goed om te weten",
+    faq: [
+      { q: "Wat kost het?", a: "Aanmelden gaat op dit moment op aanvraag. Laat je gegevens achter via het formulier, dan bespreken we samen wat past bij jouw vloot." },
+      { q: "Moet ik iets installeren?", a: "Nee. Truck & Trailer draait in de browser en werkt op telefoon, tablet en computer. Je kunt de app wel op je beginscherm zetten voor snelle toegang en meldingen." },
+      { q: "Kunnen chauffeurs in hun eigen taal werken?", a: "Ja. De chauffeursschermen zijn beschikbaar in 10 talen, waaronder Pools, Roemeens, Oekraïens, Turks en meer. Ze kiezen zelf hun taal." },
+      { q: "Werkt het ook zonder internet?", a: "Ja. Chauffeurs kunnen onderweg een melding maken of hun uren invullen zonder verbinding. Zodra ze weer online zijn, wordt alles automatisch verstuurd." },
+      { q: "Zijn mijn gegevens veilig?", a: "Ja. Toegang is afgeschermd per rol en per bedrijf, foto's en documenten staan in afgeschermde opslag en alle verbindingen zijn versleuteld." },
+      { q: "Kan ik facturen op mijn eigen naam maken?", a: "Zeker. Je stelt je bedrijfsprofiel met logo, adres, KvK, BTW en IBAN in; werkbonnen, facturen en afleverbewijzen komen automatisch op je eigen huisstijl." },
+    ],
+    reqTitle: "Aanmelden op aanvraag", reqH2: "Vraag toegang aan",
+    reqText: "Laat je gegevens achter, dan nemen we contact op en zetten we je bedrijf klaar. Liever direct contact? Gebruik de knoppen hieronder.",
+    fNaam: "Jouw naam", fBedrijf: "Bedrijfsnaam", fEmail: "E-mailadres", fTel: "Telefoon (optioneel)", fBericht: "Vertel kort iets over je vloot (optioneel)",
+    fSend: "Aanvraag versturen", fBusy: "Versturen…",
+    fSentTitle: "Bedankt, we hebben je aanvraag ontvangen!", fSentText: "We nemen zo snel mogelijk contact met je op.",
+    errNaam: "Vul je naam in.", errEmail: "Vul een geldig e-mailadres in.", errSend: "Kon de aanvraag niet versturen. Mail ons gerust rechtstreeks.",
+    footer: "Vloot- en werkplaatsbeheer voor transportbedrijven.",
+  },
+  en: {
+    navActivate: "Activate company", navLogin: "Sign in",
+    badge: "For transport, couriers and van fleets",
+    h1a: "One app for your fleet,", h1b: "drivers and workshop",
+    heroSub: "Drivers report problems with a photo, do their daily vehicle check, sign off deliveries digitally and track their hours — in their own language. You see planning, costs, inspections and job sheets at the office. Everything in one app that works everywhere.",
+    ctaRequest: "Request access", ctaDemo: "View the demo", ctaLogin: "Sign in",
+    heroTag1: "10 languages", heroTag2: "Works offline", heroTag3: "Push notifications",
+    stats: [["10", "driver languages"], ["1 app", "fleet + workshop + trips"], ["24/7", "available on the road"], ["0", "installation needed"]],
+    featTitle: "All-in-one", featH2: "What Truck & Trailer does for you",
+    features: [
+      { titel: "Driver reports", tekst: "Broken lights, strange noises, damage: drivers report it on the road in a few taps — with photo, speech and AI damage detection. In 10 languages, even offline." },
+      { titel: "Daily vehicle check", tekst: "Tyres, lights and brakes checked in 30 seconds before departure. Failed points go to the workshop automatically — and you build a solid paper trail." },
+      { titel: "Trips with digital proof of delivery", tekst: "Plan a trip and it appears on the driver's phone instantly, with navigation. The receiver signs on screen; you get a delivery-note PDF right away." },
+      { titel: "Digital workshop board & planning", tekst: "All reports on one board. Schedule repairs, assign mechanics, create job sheets with your own logo and see live what's going on." },
+      { titel: "Hours, costs & payroll export", tekst: "Drivers track their hours in the app; you download the monthly payroll export. Every job sheet books costs to the right vehicle automatically." },
+      { titel: "MOT guarded automatically via RDW", tekst: "The app checks your whole fleet's MOT dates against the Dutch RDW registry every night and emails you before an inspection or insurance expires." },
+    ],
+    capsTitle: "And more", capsH2: "What else can you do with it?",
+    caps: [
+      "Add a vehicle with just the plate (RDW fills in the rest)",
+      "Store registration, insurance and MOT documents per vehicle",
+      "Damage-file PDF per report — ready for your insurer",
+      "AI detects damage on photos and predicts maintenance",
+      "Guard licences, Code 95, ADR and medicals per driver",
+      "Cost per kilometre and most expensive vehicles at a glance",
+      "Stock that deducts automatically via the job sheet",
+      "Push notification on your phone for every new report",
+      "Track trailers, box trucks and vans separately",
+      "Works on phone, tablet and computer — nothing to install",
+      "Everyone only sees what belongs to their role",
+      "Modules on/off: only what your company uses",
+    ],
+    wieTitle: "Who it's for", wieH2: "Built for companies with vehicles on the road",
+    voorwie: [
+      { titel: "Transport companies", tekst: "Overview of the whole fleet, from MOT to cost per kilometre. Multiple drivers and mechanics, neatly separated by role." },
+      { titel: "Couriers & van fleets", tekst: "Plan trips, get digital sign-off at the customer and track hours — even without your own workshop you get full value." },
+      { titel: "Workshops", tekst: "Reports arrive on one board, schedule repairs and deliver a clean job sheet with your own logo and VAT." },
+    ],
+    showTitle: "Workshop & planning", showH2: "From report to repair, without phone calls",
+    showText: "A driver reports a problem on the road — with a photo. The workshop sees it on the board instantly, schedules the repair and creates a job sheet afterwards. Costs land on the right vehicle automatically.",
+    showList: ["Reports arrive live — with push even when the app is closed", "Daily planning with mechanics and time slots", "Job sheet as PDF with your own logo & details", "Costs automatically on the right vehicle"],
+    stepTitle: "Live in 3 steps", stepH2: "Start today",
+    stappen: [
+      { titel: "Add your fleet", tekst: "Just type the plates — make, type and MOT date come from the RDW registry automatically." },
+      { titel: "Invite your team", tekst: "Drivers create their own login with the company code and pick their own language. The workshop gets its own view." },
+      { titel: "Everything under control", tekst: "Reports, checks, trips, hours, planning, costs and inspections in one place — at the office and on the road." },
+    ],
+    tourTitle: "See it in action", tourH2: "A look inside the app",
+    tour: [
+      { titel: "Reporting", tekst: "Cost per kilometre, most expensive vehicles and the reports trend — at a glance." },
+      { titel: "Costs & job sheets", tekst: "Every expense on the right vehicle, with exports and job sheets per period." },
+    ],
+    faqTitle: "Frequently asked questions", faqH2: "Good to know",
+    faq: [
+      { q: "What does it cost?", a: "Sign-up is currently by request. Leave your details in the form and we'll discuss what fits your fleet." },
+      { q: "Do I need to install anything?", a: "No. Truck & Trailer runs in the browser on phone, tablet and computer. You can add it to your home screen for quick access and notifications." },
+      { q: "Can drivers work in their own language?", a: "Yes. The driver screens are available in 10 languages, including Polish, Romanian, Ukrainian, Turkish and more. They pick their own language." },
+      { q: "Does it work without internet?", a: "Yes. Drivers can file a report or log their hours without a connection. As soon as they're back online, everything is sent automatically." },
+      { q: "Is my data safe?", a: "Yes. Access is separated per role and per company, photos and documents live in restricted storage and all connections are encrypted." },
+      { q: "Can I invoice under my own name?", a: "Absolutely. Set up your company profile with logo, address, registration, VAT and IBAN; job sheets, invoices and delivery notes automatically use your branding." },
+    ],
+    reqTitle: "Sign-up by request", reqH2: "Request access",
+    reqText: "Leave your details and we'll get in touch and set up your company. Prefer direct contact? Use the buttons below.",
+    fNaam: "Your name", fBedrijf: "Company name", fEmail: "Email address", fTel: "Phone (optional)", fBericht: "Tell us briefly about your fleet (optional)",
+    fSend: "Send request", fBusy: "Sending…",
+    fSentTitle: "Thanks, we've received your request!", fSentText: "We'll get in touch as soon as possible.",
+    errNaam: "Enter your name.", errEmail: "Enter a valid email address.", errSend: "Could not send the request. Feel free to email us directly.",
+    footer: "Fleet and workshop management for transport companies.",
+  },
+};
 
 // FAQ-item met eigen open/dicht-state (module-level → geen remounts).
 function FaqItem({ q, a }) {
@@ -138,6 +251,18 @@ function Phone({ src, alt, style }) {
 }
 
 export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
+  // Taal van de marketingpagina: NL of EN, onthouden in de browser. Eerste
+  // bezoek volgt de browsertaal.
+  const [lang, setLang] = useState(() => {
+    try {
+      const saved = localStorage.getItem("tt_landing_lang");
+      if (saved && LN[saved]) return saved;
+      return (navigator.language || "").toLowerCase().startsWith("en") ? "en" : "nl";
+    } catch { return "nl"; }
+  });
+  const L = LN[lang] || LN.nl;
+  const pickLang = (c) => { setLang(c); try { localStorage.setItem("tt_landing_lang", c); } catch { /* noop */ } };
+
   const [form, setForm] = useState({ naam: "", bedrijf: "", email: "", telefoon: "", bericht: "" });
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -147,11 +272,11 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
 
   const submit = async () => {
     setErr("");
-    if (!form.naam.trim()) { setErr("Vul je naam in."); return; }
-    if (!validEmail(form.email)) { setErr("Vul een geldig e-mailadres in."); return; }
+    if (!form.naam.trim()) { setErr(L.errNaam); return; }
+    if (!validEmail(form.email)) { setErr(L.errEmail); return; }
     setBusy(true);
     try { await sendContactRequest(form); setSent(true); }
-    catch (e) { setErr(e.message || "Kon de aanvraag niet versturen. Mail ons gerust rechtstreeks."); }
+    catch (e) { setErr(e.message || L.errSend); }
     finally { setBusy(false); }
   };
   const scrollToForm = () => { try { document.getElementById("aanvraag")?.scrollIntoView({ behavior: "smooth" }); } catch { /* noop */ } };
@@ -204,8 +329,14 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
             <span style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 19, letterSpacing: .5 }}>TRUCK <span style={{ color: ACCENT }}>&amp;</span> TRAILER</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button className="ln-btn ln-ghost ln-hide-sm" onClick={onActivate}><Ticket size={15} /> Bedrijf activeren</button>
-            <button className="ln-btn ln-ghost" onClick={onLogin}><LogIn size={15} /> Inloggen</button>
+            {/* Taalwissel NL/EN */}
+            <div style={{ display: "inline-flex", border: "1px solid #232B38", borderRadius: 9, overflow: "hidden" }} role="group" aria-label="Taal / Language">
+              {["nl", "en"].map((c) => (
+                <button key={c} onClick={() => pickLang(c)} style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, padding: "7px 11px", border: "none", cursor: "pointer", textTransform: "uppercase", background: lang === c ? ACCENT : "transparent", color: lang === c ? "#fff" : "#98A1B0" }}>{c}</button>
+              ))}
+            </div>
+            <button className="ln-btn ln-ghost ln-hide-sm" onClick={onActivate}><Ticket size={15} /> {L.navActivate}</button>
+            <button className="ln-btn ln-ghost" onClick={onLogin}><LogIn size={15} /> {L.navLogin}</button>
           </div>
         </div>
       </div>
@@ -218,29 +349,29 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
               {/* Geen nep-sterrenscore: dat wekt een reviewclaim die (nog) niet bestaat. */}
               <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 999, border: "1px solid #233047", background: "rgba(59,130,246,.08)", marginBottom: 18 }}>
                 <span style={{ width: 7, height: 7, borderRadius: 999, background: TEAL, boxShadow: `0 0 8px ${TEAL}` }} />
-                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#B4BCC9" }}>Voor Nederlandse transportbedrijven</span>
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#B4BCC9" }}>{L.badge}</span>
               </div>
             </Reveal>
             <Reveal delay={60}>
-              <h1 className="ln-h1">Je hele vloot en<br />werkplaats in <span className="ln-grad">één app</span></h1>
+              <h1 className="ln-h1">{L.h1a}<br /><span className="ln-grad">{L.h1b}</span></h1>
             </Reveal>
             <Reveal delay={120}>
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: 17, color: "#B4BCC9", maxWidth: 500, marginTop: 18, lineHeight: 1.6 }}>
-                Van de melding van een chauffeur onderweg tot de werkbon in de werkplaats — Truck &amp; Trailer houdt je wagenpark rijdend, je planning strak en je kosten inzichtelijk.
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: 17, color: "#B4BCC9", maxWidth: 520, marginTop: 18, lineHeight: 1.6 }}>
+                {L.heroSub}
               </p>
             </Reveal>
             <Reveal delay={180}>
               <div style={{ display: "flex", gap: 12, marginTop: 28, flexWrap: "wrap" }}>
-                <button className="ln-btn ln-primary" onClick={scrollToForm}>Toegang aanvragen <ArrowRight size={16} /></button>
-                {onDemo && <button className="ln-btn ln-ghost" onClick={onDemo}>Bekijk de demo</button>}
-                <button className="ln-btn ln-ghost" onClick={onLogin}>Inloggen</button>
+                <button className="ln-btn ln-primary" onClick={scrollToForm}>{L.ctaRequest} <ArrowRight size={16} /></button>
+                {onDemo && <button className="ln-btn ln-ghost" onClick={onDemo}>{L.ctaDemo}</button>}
+                <button className="ln-btn ln-ghost" onClick={onLogin}>{L.ctaLogin}</button>
               </div>
             </Reveal>
             <Reveal delay={240}>
               <div style={{ display: "flex", gap: 18, marginTop: 26, flexWrap: "wrap", fontFamily: "Inter, sans-serif", fontSize: 13, color: "#98A1B0" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Globe size={14} color={TEAL} /> 11 talen</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><WifiOff size={14} color={TEAL} /> Werkt offline</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BellRing size={14} color={TEAL} /> Push-meldingen</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Globe size={14} color={TEAL} /> {L.heroTag1}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><WifiOff size={14} color={TEAL} /> {L.heroTag2}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BellRing size={14} color={TEAL} /> {L.heroTag3}</span>
               </div>
             </Reveal>
           </div>
@@ -259,10 +390,10 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         {/* Stats-strip */}
         <Reveal delay={120}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 12, marginTop: 46 }}>
-            {STATS.map((s) => (
-              <div key={s.l} style={{ textAlign: "center", padding: "16px 8px", borderRadius: 14, border: "1px solid #1A2230", background: "rgba(255,255,255,.015)" }}>
-                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 26, color: "#E7ECF3" }}>{s.v}</div>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#98A1B0" }}>{s.l}</div>
+            {L.stats.map(([v, l]) => (
+              <div key={l} style={{ textAlign: "center", padding: "16px 8px", borderRadius: 14, border: "1px solid #1A2230", background: "rgba(255,255,255,.015)" }}>
+                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 26, color: "#E7ECF3" }}>{v}</div>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "#98A1B0" }}>{l}</div>
               </div>
             ))}
           </div>
@@ -272,38 +403,64 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
       {/* Features */}
       <div className="ln-wrap" style={{ paddingTop: 64, paddingBottom: 20 }}>
         <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
-          <div className="ln-eyebrow">Alles-in-één</div>
-          <h2 className="ln-h2" style={{ marginTop: 8 }}>Gemaakt voor de praktijk</h2>
+          <div className="ln-eyebrow">{L.featTitle}</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.featH2}</h2>
         </div></Reveal>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 16 }}>
-          {FEATURES.map((f, i) => (
-            <Reveal key={f.titel} delay={(i % 3) * 80}>
-              <div className="ln-card" style={{ height: "100%" }}>
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: f.kleur + "1e", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 15 }}><f.icon size={22} color={f.kleur} /></div>
-                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, marginBottom: 7 }}>{f.titel}</div>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{f.tekst}</div>
-              </div>
-            </Reveal>
-          ))}
+          {L.features.map((f, i) => {
+            const m = FEATURE_ICONS[i] || FEATURE_ICONS[0];
+            return (
+              <Reveal key={f.titel} delay={(i % 3) * 80}>
+                <div className="ln-card" style={{ height: "100%" }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: m.kleur + "1e", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 15 }}><m.icon size={22} color={m.kleur} /></div>
+                  <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, marginBottom: 7 }}>{f.titel}</div>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{f.tekst}</div>
+                </div>
+              </Reveal>
+            );
+          })}
         </div>
+      </div>
+
+      {/* Wat kan je er allemaal mee — complete checklist */}
+      <div className="ln-wrap" style={{ paddingTop: 64, paddingBottom: 20 }}>
+        <Reveal><div style={{ textAlign: "center", marginBottom: 30 }}>
+          <div className="ln-eyebrow">{L.capsTitle}</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.capsH2}</h2>
+        </div></Reveal>
+        <Reveal delay={80}>
+          <div className="ln-card" style={{ padding: "26px 28px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: "12px 26px" }}>
+              {L.caps.map((c) => (
+                <div key={c} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 14, color: "#D3DAE5", lineHeight: 1.5 }}>
+                  <span style={{ width: 20, height: 20, borderRadius: 999, background: TEAL + "1e", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}><Check size={12} color={TEAL} /></span>
+                  {c}
+                </div>
+              ))}
+            </div>
+          </div>
+        </Reveal>
       </div>
 
       {/* Voor wie */}
       <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
         <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
-          <div className="ln-eyebrow">Voor wie</div>
-          <h2 className="ln-h2" style={{ marginTop: 8 }}>Of je nu 2 of 200 wagens hebt</h2>
+          <div className="ln-eyebrow">{L.wieTitle}</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.wieH2}</h2>
         </div></Reveal>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 16 }}>
-          {VOOR_WIE.map((w, i) => (
-            <Reveal key={w.titel} delay={i * 90}>
-              <div className="ln-card" style={{ height: "100%" }}>
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: ACCENT + "1e", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}><w.icon size={22} color={ACCENT} /></div>
-                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, marginBottom: 7 }}>{w.titel}</div>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{w.tekst}</div>
-              </div>
-            </Reveal>
-          ))}
+          {L.voorwie.map((w, i) => {
+            const Icon = VOOR_WIE_ICONS[i] || Truck;
+            return (
+              <Reveal key={w.titel} delay={i * 90}>
+                <div className="ln-card" style={{ height: "100%" }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: ACCENT + "1e", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}><Icon size={22} color={ACCENT} /></div>
+                  <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, marginBottom: 7 }}>{w.titel}</div>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{w.tekst}</div>
+                </div>
+              </Reveal>
+            );
+          })}
         </div>
       </div>
 
@@ -314,13 +471,13 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
             <img src="/landing/werkvloer.webp" alt="Digitale werkvloer" loading="lazy" style={{ width: "100%", display: "block" }} />
           </div></Reveal>
           <Reveal delay={100}>
-            <div className="ln-eyebrow">Werkvloer &amp; planning</div>
-            <h2 className="ln-h2" style={{ marginTop: 8 }}>Overzicht dat rust geeft</h2>
+            <div className="ln-eyebrow">{L.showTitle}</div>
+            <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.showH2}</h2>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 15, color: "#B4BCC9", lineHeight: 1.65, marginTop: 12 }}>
-              Elke melding komt binnen op een helder bord. Sleep 'm door de werkplaats, plan de reparatie in en sluit af met een werkbon op je eigen briefpapier — inclusief BTW en handtekening.
+              {L.showText}
             </p>
             <div style={{ marginTop: 18, display: "grid", gap: 10 }}>
-              {["Meldingen live binnen — ook push als de app dicht is", "Planning per dag met monteurs en tijden", "Werkbon als PDF met je eigen logo & gegevens", "Kosten automatisch bij het juiste voertuig"].map((t) => (
+              {L.showList.map((t) => (
                 <div key={t} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 14, color: "#D3DAE5" }}>
                   <span style={{ width: 22, height: 22, borderRadius: 999, background: TEAL + "1e", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Check size={13} color={TEAL} /></span>
                   {t}
@@ -334,14 +491,14 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
       {/* Hoe werkt het */}
       <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
         <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
-          <div className="ln-eyebrow">In 3 stappen live</div>
-          <h2 className="ln-h2" style={{ marginTop: 8 }}>Zo werkt het</h2>
+          <div className="ln-eyebrow">{L.stepTitle}</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.stepH2}</h2>
         </div></Reveal>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 16 }}>
-          {STAPPEN.map((s, i) => (
-            <Reveal key={s.n} delay={i * 90}>
+          {L.stappen.map((s, i) => (
+            <Reveal key={s.titel} delay={i * 90}>
               <div className="ln-card" style={{ height: "100%" }}>
-                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 30, color: ACCENT }}>{s.n}</div>
+                <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 30, color: ACCENT }}>{i + 1}</div>
                 <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 18.5, margin: "6px 0" }}>{s.titel}</div>
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6 }}>{s.tekst}</div>
               </div>
@@ -353,13 +510,13 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
       {/* Product-tour: extra schermen */}
       <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
         <Reveal><div style={{ textAlign: "center", marginBottom: 34 }}>
-          <div className="ln-eyebrow"><span className="inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BarChart3 size={13} /> Zie het in actie</span></div>
-          <h2 className="ln-h2" style={{ marginTop: 8 }}>Grip op kosten en cijfers</h2>
+          <div className="ln-eyebrow"><span className="inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BarChart3 size={13} /> {L.tourTitle}</span></div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.tourH2}</h2>
         </div></Reveal>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 20 }}>
-          {TOUR.map((t, i) => (
+          {L.tour.map((t, i) => (
             <Reveal key={t.titel} delay={i * 100}>
-              <BrowserFrame src={t.src} alt={t.titel} />
+              <BrowserFrame src={TOUR_SRC[i]} alt={t.titel} />
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 17 }}>{t.titel}</div>
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: "#B4BCC9", lineHeight: 1.6, marginTop: 3 }}>{t.tekst}</div>
@@ -372,11 +529,11 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
       {/* FAQ */}
       <div className="ln-wrap" style={{ paddingTop: 72, paddingBottom: 20 }}>
         <Reveal><div style={{ textAlign: "center", marginBottom: 30 }}>
-          <div className="ln-eyebrow">Veelgestelde vragen</div>
-          <h2 className="ln-h2" style={{ marginTop: 8 }}>Goed om te weten</h2>
+          <div className="ln-eyebrow">{L.faqTitle}</div>
+          <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.faqH2}</h2>
         </div></Reveal>
         <div style={{ maxWidth: 760, margin: "0 auto", display: "grid", gap: 10 }}>
-          {FAQ.map((f, i) => (
+          {L.faq.map((f, i) => (
             <Reveal key={f.q} delay={Math.min(i, 4) * 50}><FaqItem q={f.q} a={f.a} /></Reveal>
           ))}
         </div>
@@ -387,10 +544,10 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         <Reveal>
           <div className="ln-card" style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "32px 28px", borderBottom: "1px solid #1E2733", background: "linear-gradient(135deg,rgba(30,79,176,.35),rgba(15,20,30,.2))" }}>
-              <div className="ln-eyebrow">Aanmelden op aanvraag</div>
-              <h2 className="ln-h2" style={{ marginTop: 8 }}>Vraag toegang aan</h2>
+              <div className="ln-eyebrow">{L.reqTitle}</div>
+              <h2 className="ln-h2" style={{ marginTop: 8 }}>{L.reqH2}</h2>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: 14.5, color: "#B4BCC9", lineHeight: 1.6, marginTop: 10, maxWidth: 580 }}>
-                Laat je gegevens achter, dan nemen we contact op en zetten we je bedrijf klaar. Liever direct contact? Gebruik de knoppen hieronder.
+                {L.reqText}
               </p>
               <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                 <a className="ln-btn ln-ghost" href={`mailto:${CONTACT_EMAIL}`}><Mail size={15} /> {CONTACT_EMAIL}</a>
@@ -402,22 +559,22 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
               {sent ? (
                 <div style={{ textAlign: "center", padding: "26px 0" }}>
                   <div style={{ width: 58, height: 58, borderRadius: "50%", background: "#12271C", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}><Check size={30} color="#34D399" /></div>
-                  <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 21 }}>Bedankt, we hebben je aanvraag ontvangen!</div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>We nemen zo snel mogelijk contact met je op.</div>
+                  <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 600, fontSize: 21 }}>{L.fSentTitle}</div>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>{L.fSentText}</div>
                 </div>
               ) : (
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-                  <div style={{ gridColumn: "1 / -1" }}><Field label="Naam *" value={form.naam} onChange={(v) => set("naam", v)} /></div>
-                  <Field label="Bedrijf" value={form.bedrijf} onChange={(v) => set("bedrijf", v)} />
-                  <Field label="Telefoon" value={form.telefoon} onChange={(v) => set("telefoon", v)} />
-                  <div style={{ gridColumn: "1 / -1" }}><Field label="E-mail *" type="email" value={form.email} onChange={(v) => set("email", v)} /></div>
+                  <div style={{ gridColumn: "1 / -1" }}><Field label={L.fNaam + " *"} value={form.naam} onChange={(v) => set("naam", v)} /></div>
+                  <Field label={L.fBedrijf} value={form.bedrijf} onChange={(v) => set("bedrijf", v)} />
+                  <Field label={L.fTel} value={form.telefoon} onChange={(v) => set("telefoon", v)} />
+                  <div style={{ gridColumn: "1 / -1" }}><Field label={L.fEmail + " *"} type="email" value={form.email} onChange={(v) => set("email", v)} /></div>
                   <div style={{ gridColumn: "1 / -1" }}>
-                    <label style={lbl}>Bericht</label>
-                    <textarea className="ln-input" rows={3} style={{ resize: "vertical" }} value={form.bericht} onChange={(e) => set("bericht", e.target.value)} placeholder="Bv. aantal voertuigen, wat je zoekt…" />
+                    <label style={lbl}>{L.fBericht}</label>
+                    <textarea className="ln-input" rows={3} style={{ resize: "vertical" }} value={form.bericht} onChange={(e) => set("bericht", e.target.value)} />
                   </div>
                   {err && <div style={{ gridColumn: "1 / -1", color: "#F0453F", fontFamily: "Inter, sans-serif", fontSize: 12.5 }}>{err}</div>}
                   <div style={{ gridColumn: "1 / -1" }}>
-                    <button className="ln-btn ln-primary" onClick={submit} disabled={busy} style={{ width: "100%", justifyContent: "center", opacity: busy ? 0.7 : 1 }}>{busy ? "Versturen…" : "Aanvraag versturen"}</button>
+                    <button className="ln-btn ln-primary" onClick={submit} disabled={busy} style={{ width: "100%", justifyContent: "center", opacity: busy ? 0.7 : 1 }}>{busy ? L.fBusy : L.fSend}</button>
                   </div>
                 </div>
               )}
@@ -431,12 +588,12 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         <div className="ln-wrap" style={{ padding: "22px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Truck size={15} color={ACCENT} />
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7585" }}>© {new Date().getFullYear()} Truck &amp; Trailer — vloot- en werkplaatsbeheer</span>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7585" }}>© {new Date().getFullYear()} Truck &amp; Trailer — {L.footer}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {onLegal && <button onClick={() => onLegal("/privacy")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Privacy</button>}
             {onLegal && <button onClick={() => onLegal("/voorwaarden")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Voorwaarden</button>}
-            <button onClick={onLogin} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Inloggen →</button>
+            <button onClick={onLogin} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>{L.navLogin} →</button>
           </div>
         </div>
       </div>
