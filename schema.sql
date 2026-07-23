@@ -219,8 +219,11 @@ grant execute on function public.load_company_state() to authenticated;
 -- Zo blijft financiële data ook voor de werkplaats bewaard (die kreeg 'm niet).
 -- Oudere 1-argument versie opruimen (voorkomt overload-conflict).
 drop function if exists public.save_company_state(jsonb);
+-- Oudere 3-argument versie opruimen (voorkomt PostgREST overload-conflict).
+drop function if exists public.save_company_state(jsonb, text[], text[]);
 create or replace function public.save_company_state(
-  p_data jsonb, p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}'
+  p_data jsonb, p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}',
+  p_base_ride_ids text[] default '{}'
 ) returns void language plpgsql security definer as $$
 declare cid uuid; v_rol text; existing jsonb;
         ex_reports jsonb; ex_costs jsonb; in_reports jsonb; in_costs jsonb;
@@ -305,20 +308,34 @@ begin
         limit 1
       ) exr on true
     ), '[]'::jsonb));
+    -- Zelfde merge-bescherming als meldingen/kosten: ritten die op de server
+    -- staan maar die de client niet kent (nieuw sinds z'n laatste laad-moment,
+    -- bv. door een collega gepland) blijven behouden. Bewust verwijderen werkt
+    -- nog steeds: een rit die de client wél kende (base) en weglaat, verdwijnt.
+    final := jsonb_set(final, '{rides}', (final -> 'rides') || coalesce((
+      select jsonb_agg(e.val) from jsonb_array_elements(
+        case when jsonb_typeof(existing -> 'rides') = 'array' then existing -> 'rides' else '[]'::jsonb end
+      ) as e(val)
+      where (e.val ->> 'id') is not null
+        and not exists (select 1 from jsonb_array_elements(final -> 'rides') c(val) where c.val ->> 'id' = e.val ->> 'id')
+        and not (e.val ->> 'id' = any(p_base_ride_ids))
+    ), '[]'::jsonb));
   end if;
 
   insert into public.company_state (company_id, data, updated_at) values (cid, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
-grant execute on function public.save_company_state(jsonb, text[], text[]) to authenticated;
+grant execute on function public.save_company_state(jsonb, text[], text[], text[]) to authenticated;
 
 -- Superadmin-variant: de platformbeheerder bewerkt vaak een ÁNDER bedrijf dan
 -- z'n eigen. Een kale upsert zou de merge-bescherming omzeilen en bv. een
 -- chauffeursmelding wegvagen die tijdens het meekijken binnenkwam. Daarom:
 -- dezelfde meldingen/kosten-merge, maar gescopeerd op een expliciet bedrijf.
+drop function if exists public.save_company_state_scoped(uuid, jsonb, text[], text[]);
 create or replace function public.save_company_state_scoped(
   p_company_id uuid, p_data jsonb,
-  p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}'
+  p_base_report_ids text[] default '{}', p_base_cost_ids text[] default '{}',
+  p_base_ride_ids text[] default '{}'
 ) returns void language plpgsql security definer as $$
 declare existing jsonb; ex_reports jsonb; ex_costs jsonb; in_reports jsonb; in_costs jsonb;
         cli_report_ids text[]; cli_cost_ids text[]; final jsonb;
@@ -376,12 +393,21 @@ begin
         limit 1
       ) exr on true
     ), '[]'::jsonb));
+    -- Nieuwe ritten van anderen behouden (zelfde merge als hierboven).
+    final := jsonb_set(final, '{rides}', (final -> 'rides') || coalesce((
+      select jsonb_agg(e.val) from jsonb_array_elements(
+        case when jsonb_typeof(existing -> 'rides') = 'array' then existing -> 'rides' else '[]'::jsonb end
+      ) as e(val)
+      where (e.val ->> 'id') is not null
+        and not exists (select 1 from jsonb_array_elements(final -> 'rides') c(val) where c.val ->> 'id' = e.val ->> 'id')
+        and not (e.val ->> 'id' = any(p_base_ride_ids))
+    ), '[]'::jsonb));
   end if;
 
   insert into public.company_state (company_id, data, updated_at) values (p_company_id, final, now())
     on conflict (company_id) do update set data = excluded.data, updated_at = now();
 end $$;
-grant execute on function public.save_company_state_scoped(uuid, jsonb, text[], text[]) to authenticated;
+grant execute on function public.save_company_state_scoped(uuid, jsonb, text[], text[], text[]) to authenticated;
 
 -- Elke wijziging aan company_state tikt de companies-rij aan, zodat de
 -- Realtime-luisteraar in de app (op tabel companies) daadwerkelijk vuurt.

@@ -1714,6 +1714,48 @@ function saveKlok(u, k) {
   try { if (k) localStorage.setItem(klokKey(u), JSON.stringify(k)); else localStorage.removeItem(klokKey(u)); } catch { /* noop */ }
 }
 const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
+// Mislukte uren-syncs (offline of serverfout) bewaren we hier en proberen we
+// automatisch opnieuw — anders mist het loonoverzicht stilletjes een dag.
+const urenRetryKey = (u) => `tt_urenretry_${u?.id || u?.email || "anon"}`;
+function loadUrenRetry(u) {
+  try { const a = JSON.parse(localStorage.getItem(urenRetryKey(u)) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function saveUrenRetry(u, list) {
+  try { localStorage.setItem(urenRetryKey(u), JSON.stringify(list.slice(0, 200))); } catch { /* noop */ }
+}
+function queueUrenOp(u, op) {
+  const list = loadUrenRetry(u);
+  list.push(op);
+  saveUrenRetry(u, list);
+}
+let urenFlushBusy = false;
+async function flushUrenRetry(u) {
+  if (urenFlushBusy) return;
+  const list = loadUrenRetry(u);
+  if (!list.length) return;
+  urenFlushBusy = true;
+  const rest = [];
+  for (let i = 0; i < list.length; i++) {
+    const op = list[i];
+    try {
+      if (op.t === "add" && op.e) await driverSaveHours(op.e);
+      else if (op.t === "del" && op.id) await driverDeleteHours(op.id);
+    } catch {
+      // Nog steeds geen verbinding/fout: dit én de rest bewaren voor later.
+      rest.push(...list.slice(i));
+      break;
+    }
+  }
+  saveUrenRetry(u, rest);
+  urenFlushBusy = false;
+}
+// Id's die nog op sync wachten (voor de server-reconciliatie hieronder).
+const pendingUrenIds = (u) => new Set(loadUrenRetry(u).map((op) => (op.t === "add" ? op.e?.id : op.id)).filter(Boolean));
+// Aanmaaktijd uit een uid()-id halen ("u" + ts36 + 5 tekens random).
+function uidTime(id, prefix) {
+  try { return parseInt(String(id).slice(prefix.length, -5), 36) || 0; } catch { return 0; }
+}
+
 // Klus-timer (werkvloer): welke klus loopt er en sinds wanneer, per gebruiker.
 const klusTimerKey = (u) => `tt_klustimer_${u?.id || u?.email || "anon"}`;
 function loadKlusTimer(u) {
@@ -1779,15 +1821,22 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
   useEffect(() => { setEntries(loadUren(currentUser)); }, [currentUser?.id, currentUser?.email]);
   // Elke wijziging meteen lokaal bewaren.
   useEffect(() => { saveUren(currentUser, entries); }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Server-kopie samenvoegen: registraties van een ánder toestel (onbekende
-  // ids) komen erbij, zodat de uren overal hetzelfde zijn.
+  // Server-kopie samenvoegen: registraties van een ánder toestel komen erbij,
+  // en dagen die daar verwijderd zijn verdwijnen hier ook — behalve wat nog op
+  // sync wacht of net (< 10 min) is aangemaakt. Alleen reconciliëren als de
+  // server überhaupt iets van deze gebruiker kent, zodat puur-lokale
+  // geschiedenis nooit wordt weggegooid.
   useEffect(() => {
     if (!serverUren.length) return;
     setEntries((list) => {
       const known = new Set(list.map((e) => e.id));
+      const serverIds = new Set(serverUren.map((e) => e && e.id).filter(Boolean));
+      const pending = pendingUrenIds(currentUser);
+      const cutoff = Date.now() - 10 * 60 * 1000;
       const extra = serverUren.filter((e) => e && e.id && !known.has(e.id));
-      if (!extra.length) return list;
-      return [...list, ...extra].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || ""));
+      const kept = list.filter((e) => serverIds.has(e.id) || pending.has(e.id) || uidTime(e.id, "u") > cutoff);
+      if (!extra.length && kept.length === list.length) return list;
+      return [...kept, ...extra].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || ""));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverUren]);
@@ -7329,6 +7378,7 @@ export default function TruckGarageApp({ session, onLogout }) {
   const baseIds = useRef({
     reports: live && Array.isArray(session.state?.reports) ? session.state.reports.map((r) => r && r.id).filter(Boolean) : [],
     costs: live && Array.isArray(session.state?.costs) ? session.state.costs.map((c) => c && c.id).filter(Boolean) : [],
+    rides: live && Array.isArray(session.state?.rides) ? session.state.rides.map((r) => r && r.id).filter(Boolean) : [],
   });
 
   useEffect(() => {
@@ -7370,6 +7420,7 @@ export default function TruckGarageApp({ session, onLogout }) {
       isSuperadmin: !!session.profile.is_superadmin,
       baseReportIds: baseIds.current.reports,
       baseCostIds: baseIds.current.costs,
+      baseRideIds: baseIds.current.rides,
     });
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, rides, planning, drivers, availability, workshopHours, modules, onboarded, bedrijfsprofiel, live, companyId, session]);
 
@@ -7468,6 +7519,17 @@ export default function TruckGarageApp({ session, onLogout }) {
     arm();
     return () => { if (timer) clearTimeout(timer); };
   }, []);
+
+  // Uren-retry: bij openen en zodra de verbinding terugkomt de wachtrij met
+  // mislukte uren-syncs legen, zodat het loonoverzicht nooit een dag mist.
+  useEffect(() => {
+    if (!live || (currentUser?.rol) !== "chauffeur") return;
+    flushUrenRetry(currentUser);
+    const on = () => flushUrenRetry(currentUser);
+    window.addEventListener("online", on);
+    return () => window.removeEventListener("online", on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, currentUser]);
 
   // Live-updates via Supabase Realtime. Deze hooks MOETEN vóór de vroege return
   // staan, anders verandert de hook-volgorde tussen inlogscherm en app (demo).
@@ -7577,14 +7639,16 @@ export default function TruckGarageApp({ session, onLogout }) {
     setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
   };
   // Uren van de chauffeur: naar de gedeelde kopie (loonoverzicht) + live sync.
+  // Mislukt de sync (offline, serverfout), dan komt de operatie in een
+  // retry-wachtrij die automatisch leegloopt zodra er weer verbinding is.
   const syncUurAdd = (e) => {
     const entry = { ...e, chauffeurId: currentUser?.id || null, chauffeur: currentUser?.naam || "Onbekend" };
     setUren((s) => ({ ...s, [companyId]: [entry, ...(s[companyId] || []).filter((x) => x.id !== entry.id)] }));
-    if (live && role === "chauffeur") driverSaveHours(entry).catch((err) => console.error("Uren-sync mislukt:", err?.message || err));
+    if (live && role === "chauffeur") driverSaveHours(entry).catch(() => queueUrenOp(currentUser, { t: "add", e: entry }));
   };
   const syncUurDelete = (id) => {
     setUren((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
-    if (live && role === "chauffeur") driverDeleteHours(id).catch((err) => console.error("Uren-sync mislukt:", err?.message || err));
+    if (live && role === "chauffeur") driverDeleteHours(id).catch(() => queueUrenOp(currentUser, { t: "del", id }));
   };
   // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD). De
   // toegewezen chauffeur krijgt direct een pushmelding van de nieuwe rit.
@@ -7624,8 +7688,9 @@ export default function TruckGarageApp({ session, onLogout }) {
         if (Array.isArray(fresh.checks)) setChecks((s) => ({ ...s, [companyId]: fresh.checks }));
         if (Array.isArray(fresh.rides)) setRides((s) => ({ ...s, [companyId]: fresh.rides }));
         if (Array.isArray(fresh.uren)) setUren((s) => ({ ...s, [companyId]: fresh.uren }));
-        // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen wist.
+        // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen/ritten wist.
         if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
+        if (Array.isArray(fresh.rides)) baseIds.current.rides = fresh.rides.map((r) => r && r.id).filter(Boolean);
       }
       return true;
     } catch (e) {

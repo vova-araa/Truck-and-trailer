@@ -449,7 +449,7 @@ const saveTimers = {};
 // werkplaats (role="garage") loopt het via save_company_state, die de kosten
 // server-side samenvoegt zodat de werkplaats de financiële data niet wist.
 export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
-  const { role, isSuperadmin = false, baseReportIds = [], baseCostIds = [] } = opts;
+  const { role, isSuperadmin = false, baseReportIds = [], baseCostIds = [], baseRideIds = [] } = opts;
   clearTimeout(saveTimers[companyId]);
   onStatus?.("pending");
   saveTimers[companyId] = setTimeout(async () => {
@@ -467,8 +467,8 @@ export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
       // variant. Beide voegen meldingen/kosten server-side samen, zodat een
       // save nooit een net binnengekomen chauffeursmelding wegvaagt.
       const { error } = isSuperadmin
-        ? await supabase.rpc("save_company_state_scoped", { p_company_id: companyId, p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds })
-        : await supabase.rpc("save_company_state", { p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds });
+        ? await supabase.rpc("save_company_state_scoped", { p_company_id: companyId, p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds, p_base_ride_ids: baseRideIds })
+        : await supabase.rpc("save_company_state", { p_data: toSave, p_base_report_ids: baseReportIds, p_base_cost_ids: baseCostIds, p_base_ride_ids: baseRideIds });
       onStatus?.(error ? "error" : "saved");
       if (error) console.error("Opslaan mislukt:", error.message);
     } catch (e) {
