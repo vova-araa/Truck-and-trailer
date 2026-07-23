@@ -216,7 +216,9 @@ export default function AuthScreen({ onAuthed, onBack = null, initialMode = "log
                 {(!codeInfo || !codeInfo.admin_naam || !codeInfo.admin_email) && <div style={{ ...sectionLabel, marginTop: 6 }}>Jouw beheerdersaccount</div>}
                 {(!codeInfo || !codeInfo.admin_naam) && <input style={input} name="name" autoComplete="name" placeholder="Jouw naam" value={reg.naam} onChange={(e) => setReg({ ...reg, naam: e.target.value })} />}
                 {(!codeInfo || !codeInfo.admin_email) && <input style={input} type="email" name="email" autoComplete="email" inputMode="email" placeholder="E-mailadres" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} />}
-                {(!codeInfo || !codeInfo.company_name) && <input style={input} type="tel" name="tel" autoComplete="tel" inputMode="tel" placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />}
+                {/* Telefoon hoort bij de beheerder-gegevens (niet bij de bedrijfsnaam):
+                    tonen zodra er nog beheerder-velden ingevuld moeten worden. */}
+                {(!codeInfo || !codeInfo.admin_naam || !codeInfo.admin_email) && <input style={input} type="tel" name="tel" autoComplete="tel" inputMode="tel" placeholder="Telefoon (optioneel)" value={reg.telefoon} onChange={(e) => setReg({ ...reg, telefoon: e.target.value })} />}
                 <div style={{ ...sectionLabel, marginTop: 2 }}>Kies een wachtwoord</div>
                 <input style={input} type="password" name="new-password" autoComplete="new-password" placeholder="Wachtwoord (min. 6 tekens)" value={reg.wachtwoord} onChange={(e) => setReg({ ...reg, wachtwoord: e.target.value })} />
                 <input style={input} type="password" name="confirm-password" autoComplete="new-password" placeholder="Herhaal wachtwoord" value={reg.wachtwoord2}

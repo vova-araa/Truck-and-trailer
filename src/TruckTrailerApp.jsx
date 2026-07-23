@@ -900,6 +900,7 @@ function ReportMedia({ media }) {
 // Safari: getUserMedia moet binnen het gebruikersgebaar) en hier meegegeven.
 // Valt netjes terug op de galerij als de camera niet mag/kan.
 function CameraCapture({ stream, error, onCapture, onClose, onFallback }) {
+  const { t } = useT();
   const videoRef = useRef(null);
   const [ready, setReady] = useState(false);
   const err = error || "";
@@ -930,19 +931,19 @@ function CameraCapture({ stream, error, onCapture, onClose, onFallback }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#000", display: "flex", flexDirection: "column" }}>
       <div className="flex items-center justify-between px-4 py-3" style={{ background: "#0A0E14" }}>
-        <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Foto maken</span>
-        <button onClick={() => { stop(); onClose(); }} aria-label="Sluiten"><X size={22} color="#E7ECF3" /></button>
+        <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>{t("takePhoto")}</span>
+        <button onClick={() => { stop(); onClose(); }} aria-label={t("close")}><X size={22} color="#E7ECF3" /></button>
       </div>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         {err ? (
           <div className="text-center px-6" style={{ maxWidth: 340 }}>
             <div style={{ fontFamily: "Inter", fontSize: 14, color: "#E7ECF3", marginBottom: 6 }}>
-              {err === "geen-toestemming" ? "De camera mag niet gebruikt worden." : "De camera kon niet gestart worden op dit apparaat."}
+              {err === "geen-toestemming" ? t("camNoPermTitle") : t("camFailTitle")}
             </div>
             <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 16 }}>
-              {err === "geen-toestemming" ? "Sta de camera toe in je browser-/telefooninstellingen, of kies een foto uit je galerij." : "Kies een foto uit je galerij."}
+              {err === "geen-toestemming" ? t("camNoPermSub") : t("camFailSub")}
             </div>
-            <button onClick={() => { stop(); onFallback(); }} className="px-4 py-2.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5 }}>Kies uit galerij</button>
+            <button onClick={() => { stop(); onFallback(); }} className="px-4 py-2.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 13.5 }}>{t("camPick")}</button>
           </div>
         ) : (
           <video ref={videoRef} playsInline muted autoPlay style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
@@ -950,8 +951,8 @@ function CameraCapture({ stream, error, onCapture, onClose, onFallback }) {
       </div>
       {!err && (
         <div className="flex items-center justify-center gap-6 py-5" style={{ background: "#0A0E14" }}>
-          <button onClick={() => { stop(); onFallback(); }} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>Galerij</button>
-          <button onClick={snap} disabled={!ready} aria-label="Foto maken" style={{ width: 66, height: 66, borderRadius: "50%", background: ready ? "#fff" : "#555", border: "4px solid #3B82F6", flexShrink: 0 }} />
+          <button onClick={() => { stop(); onFallback(); }} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0" }}>{t("camGallery")}</button>
+          <button onClick={snap} disabled={!ready} aria-label={t("takePhoto")} style={{ width: 66, height: 66, borderRadius: "50%", background: ready ? "#fff" : "#555", border: "4px solid #3B82F6", flexShrink: 0 }} />
           <span style={{ width: 48 }} />
         </div>
       )}
@@ -1031,9 +1032,9 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
   const startVoice = () => {
     if (listening && recognitionRef.current) { recognitionRef.current.stop(); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setVoiceError("Spraakherkenning wordt niet ondersteund in deze browser. Gebruik Chrome of typ je melding."); return; }
+    if (!SR) { setVoiceError(t("voiceNoSupport")); return; }
     let rec;
-    try { rec = new SR(); } catch (e) { setVoiceError("Kon microfoon niet starten."); return; }
+    try { rec = new SR(); } catch (e) { setVoiceError(t("voiceNoMic")); return; }
     // Spraakherkenning in de taal van de chauffeur (niet hardcoded Nederlands).
     const SPEECH_LANG = { nl: "nl-NL", en: "en-GB", pl: "pl-PL", ro: "ro-RO", bg: "bg-BG", uk: "uk-UA", ru: "ru-RU", tr: "tr-TR", hy: "hy-AM", ka: "ka-GE", lt: "lt-LT" };
     rec.lang = SPEECH_LANG[getLang()] || "nl-NL";
@@ -1047,13 +1048,13 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
     rec.onend = () => setListening(false);
     rec.onerror = (e) => {
       setListening(false);
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") setVoiceError("Microfoontoegang geblokkeerd. In een preview-venster kan dit niet — open de app in een eigen tabblad, of typ je melding.");
-      else if (e.error === "no-speech") setVoiceError("Niets gehoord, probeer opnieuw.");
-      else setVoiceError("Inspreken lukte niet. Typ je melding.");
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") setVoiceError(t("voiceBlocked"));
+      else if (e.error === "no-speech") setVoiceError(t("voiceNothing"));
+      else setVoiceError(t("voiceFail"));
     };
     recognitionRef.current = rec;
     try { rec.start(); setListening(true); setVoiceError(""); }
-    catch (e) { setVoiceError("Kon niet starten met luisteren."); }
+    catch (e) { setVoiceError(t("voiceNoMic")); }
   };
 
   const [camOpen, setCamOpen] = useState(false);
@@ -1083,7 +1084,7 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
 
   const analyzeDamage = async () => {
     const photo = media.find((m) => m.type === "foto" && m.file);
-    if (!photo) { setDamageError("Voeg eerst een foto toe."); return; }
+    if (!photo) { setDamageError(t("aiNeedPhoto")); return; }
     setDamageLoading(true); setDamageError(""); setDamageResult(null);
     try {
       const b64 = await fileToBase64(photo.file);
@@ -1094,7 +1095,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
       const parsed = parseAIJson(out);
       setDamageResult(parsed);
     } catch (err) {
-      setDamageError(`Kon foto niet analyseren (${err.message || "fout"}).`);
+      setDamageError(`${t("aiAnalyzeFail")} (${err.message || "?"})`);
     } finally {
       setDamageLoading(false);
     }
@@ -1118,7 +1119,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
     try {
       if (onUploadMedia && media.length) mediaOut = await onUploadMedia(id, media);
     } catch (e) {
-      setUploadWarn("Melding is verstuurd, maar de foto's konden niet worden opgeslagen.");
+      setUploadWarn(t("uploadWarnTxt"));
     }
     onSubmit({
       id, vehicle, chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null, omschrijving,
@@ -1353,6 +1354,7 @@ Als je geen duidelijke schade ziet, zet schade op "Geen duidelijke schade zichtb
 // installatieknop (beforeinstallprompt); iOS Safari kent dat event niet, dus
 // daar tonen we korte instructies. Verdwijnt zodra de app als PWA draait.
 function InstallCard() {
+  const { t } = useT();
   const [deferred, setDeferred] = useState(null);
   const [installed, setInstalled] = useState(false);
   const [showIOS, setShowIOS] = useState(false);
@@ -1382,19 +1384,19 @@ function InstallCard() {
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center rounded-lg" style={{ width: 38, height: 38, background: "#3B82F618", flexShrink: 0 }}><Download size={18} color="#3B82F6" /></div>
           <div style={{ minWidth: 0, flex: "1 1 0%" }}>
-            <div style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 700, color: "#E7ECF3" }}>App op je beginscherm</div>
-            <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA" }}>Sneller openen en meldingen ontvangen, net als een echte app.</div>
+            <div style={{ fontFamily: "Inter", fontSize: 13.5, fontWeight: 700, color: "#E7ECF3" }}>{t("instTitle")}</div>
+            <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#B9C6DA" }}>{t("instSub")}</div>
           </div>
-          <button onClick={dismiss} style={{ color: "#98A1B0", flexShrink: 0 }} aria-label="Sluiten"><X size={16} /></button>
+          <button onClick={dismiss} style={{ color: "#98A1B0", flexShrink: 0 }} aria-label={t("close")}><X size={16} /></button>
         </div>
         <div className="flex items-center gap-2 mt-3">
-          <Button small icon={Download} onClick={install}>{isIOS && !deferred ? "Hoe installeer ik dit?" : "Installeren"}</Button>
+          <Button small icon={Download} onClick={install}>{isIOS && !deferred ? t("instHow") : t("instBtn")}</Button>
         </div>
         {showIOS && isIOS && (
           <div className="mt-3 p-2.5 rounded-lg" style={{ background: "#0E1826", border: "1px solid #232B38", fontFamily: "Inter", fontSize: 12, color: "#B9C6DA", lineHeight: 1.6 }}>
-            1. Tik op het <b style={{ color: "#E7ECF3" }}>deel-icoon</b> (het vierkantje met pijltje omhoog) onderin Safari.<br />
-            2. Kies <b style={{ color: "#E7ECF3" }}>"Zet op beginscherm"</b>.<br />
-            3. Open de app voortaan via het nieuwe icoon — dan werken ook de push-meldingen.
+            {t("instIos1")}<br />
+            {t("instIos2")}<br />
+            {t("instIos3")}
           </div>
         )}
       </div>
