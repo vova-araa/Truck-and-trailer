@@ -39,6 +39,24 @@ export function enqueueReport(report, uid = null) {
 }
 
 const MAX_ATTEMPTS = 6; // na zoveel mislukte (niet-netwerk) pogingen: opgeven
+// Definitief mislukte meldingen: apart bewaard zodat de app het de gebruiker
+// kan laten zien in plaats van ze stilletjes weg te gooien.
+const FAILED_KEY = "tt_failed_reports_v1";
+export function failedCount() {
+  try { const a = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]"); return Array.isArray(a) ? a.length : 0; } catch { return 0; }
+}
+export function clearFailed() {
+  try { localStorage.removeItem(FAILED_KEY); } catch { /* noop */ }
+  notify();
+}
+function addFailed(item) {
+  try {
+    const a = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
+    (Array.isArray(a) ? a : []).push(item);
+    localStorage.setItem(FAILED_KEY, JSON.stringify((Array.isArray(a) ? a : [item]).slice(-20)));
+  } catch { /* noop */ }
+}
+
 let flushing = false;
 // Probeer de wachtrij te legen. Geeft het aantal succesvol verstuurde meldingen terug.
 export async function flushQueue() {
@@ -55,31 +73,32 @@ export async function flushQueue() {
   } catch { /* auth even niet bereikbaar */ }
   if (!uid) return 0;
   flushing = true;
-  const remaining = [];
+  // Per melding bijhouden wat ermee gebeurde; aan het einde mergen we dat
+  // tegen een VERSE read, zodat meldingen die tijdens deze (trage) flush
+  // werden toegevoegd nooit worden overschreven.
+  const outcome = new Map(); // id -> "sent" | "failed" | { attempts }
   let sent = 0;
   for (let i = 0; i < arr.length; i++) {
     const item = arr[i];
-    // Melding van een ándere gebruiker (of zonder eigenaar uit een oudere
-    // versie): bewaren, niet onder deze login versturen.
-    if (item.uid !== uid) { remaining.push(item); continue; }
+    const id = item.report?.id;
+    if (item.uid !== uid || !id) continue; // andermans/onbekende melding: laten staan
     try {
       const { error } = await supabase.rpc("driver_add_report", { p_report: item.report });
       if (error) throw error;
+      outcome.set(id, "sent");
       sent++;
     } catch (e) {
-      if (isNetworkError(e)) {
-        // Verbinding weg: dit én de rest bewaren en later opnieuw proberen.
-        remaining.push(item, ...arr.slice(i + 1));
-        break;
-      }
-      // Echte (server)fout: teller ophogen; na te veel pogingen droppen zodat
-      // één kapotte melding de wachtrij niet blokkeert.
+      if (isNetworkError(e)) break; // verbinding weg: rest later opnieuw
       const attempts = (item.attempts || 0) + 1;
-      if (attempts < MAX_ATTEMPTS) remaining.push({ ...item, attempts });
-      else console.error("Melding definitief niet verstuurd (opgegeven):", item.report?.id);
+      if (attempts < MAX_ATTEMPTS) outcome.set(id, { attempts });
+      else { outcome.set(id, "failed"); addFailed(item); console.error("Melding definitief niet verstuurd:", id); }
     }
   }
-  write(remaining);
+  const fresh = read();
+  const merged = fresh
+    .filter((it) => { const o = outcome.get(it.report?.id); return o !== "sent" && o !== "failed"; })
+    .map((it) => { const o = outcome.get(it.report?.id); return o && typeof o === "object" ? { ...it, attempts: o.attempts } : it; });
+  write(merged);
   flushing = false;
   notify();
   return sent;

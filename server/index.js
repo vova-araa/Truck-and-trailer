@@ -499,6 +499,10 @@ app.all("/api/cron/reminders", async (req, res) => {
           .select("data, updated_at").eq("company_id", row.company_id).single();
         if (!freshRow) continue;
         const data = freshRow.data || {};
+        // Ook als de update straks niet doorgaat: stap 2 (herinneringen) hoort
+        // op de meest actuele data te draaien, niet op de bulk-read van vóór
+        // de trage RDW-fetches.
+        row.data = data;
         const veh = rdwApplyTo(data.vehicles, rdwMap, todayIso);
         const trl = rdwApplyTo(data.trailers, rdwMap, todayIso);
         if (veh.changed + trl.changed > 0) {
@@ -623,6 +627,20 @@ app.post("/api/push/subscribe", async (req, res) => {
   if (!me) return res.status(401).json({ error: "Log in om push aan te zetten." });
   const sub = req.body?.subscription;
   if (!sub?.endpoint || !sub?.keys) return res.status(400).json({ error: "Ongeldige subscription." });
+  // Alleen echte push-diensten accepteren: anders zou de server bij elke
+  // notify blind POST'en naar een door de gebruiker gekozen (intern) adres.
+  let host = "";
+  try { const u = new URL(sub.endpoint); if (u.protocol !== "https:") throw new Error(); host = u.hostname; } catch { return res.status(400).json({ error: "Ongeldig endpoint." }); }
+  const okHost = ["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"].includes(host)
+    || host.endsWith(".googleapis.com") || host.endsWith(".notify.windows.com") || host.endsWith(".push.apple.com")
+    || host.endsWith(".push.services.mozilla.com");
+  if (!okHost) return res.status(400).json({ error: "Onbekende push-dienst." });
+  // Eigendomscheck: een bestaand endpoint van een ándere gebruiker mag je niet
+  // overschrijven (anders kap je andermans meldingen af).
+  const { data: existing } = await supaAdmin.from("push_subscriptions").select("user_id").eq("endpoint", sub.endpoint).maybeSingle();
+  if (existing && existing.user_id && existing.user_id !== me.userId) {
+    return res.status(403).json({ error: "Dit endpoint is al aan een andere gebruiker gekoppeld." });
+  }
   const { error } = await supaAdmin.from("push_subscriptions").upsert(
     { endpoint: sub.endpoint, user_id: me.userId, company_id: me.company_id, rol: me.rol, keys: sub.keys },
     { onConflict: "endpoint" }

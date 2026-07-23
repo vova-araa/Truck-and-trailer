@@ -23,7 +23,7 @@ alter table public.companies add column if not exists state_rev bigint not null 
 -- Bestaat de tabel al van een eerdere versie? Voeg de kolom dan alsnog toe
 -- (bestaande rijen krijgen elk een eigen willekeurige code) en borg uniekheid.
 alter table public.companies
-  add column if not exists join_code text not null default upper(substr(md5(random()::text || clock_timestamp()::text), 1, 10));
+  add column if not exists join_code text not null default upper(substr(md5(gen_random_uuid()::text), 1, 10));
 create unique index if not exists companies_join_code_key on public.companies (upper(join_code));
 
 -- Abonnement-velden per bedrijf. plan_paid = betaalt het bedrijf (true) of is het
@@ -511,9 +511,15 @@ begin
     || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'), 'status', 'nieuw');
   rid := newrep ->> 'id';
   insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  -- Maximaal de 2000 nieuwste meldingen bewaren, zodat één account de
+  -- bedrijfsrij niet onbeperkt kan laten groeien (insider-DoS).
   update public.company_state
-    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{reports}',
-          jsonb_build_array(newrep) || coalesce(data -> 'reports', '[]'::jsonb)),
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{reports}', (
+          select coalesce(jsonb_agg(r), '[]'::jsonb) from (
+            select r from jsonb_array_elements(jsonb_build_array(newrep) || coalesce(data -> 'reports', '[]'::jsonb)) r
+            limit 2000
+          ) sub
+        )),
         updated_at = now()
     where company_id = cid
       and (rid is null or not exists (
