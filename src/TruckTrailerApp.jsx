@@ -1714,6 +1714,14 @@ function saveKlok(u, k) {
   try { if (k) localStorage.setItem(klokKey(u), JSON.stringify(k)); else localStorage.removeItem(klokKey(u)); } catch { /* noop */ }
 }
 const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
+// Klus-timer (werkvloer): welke klus loopt er en sinds wanneer, per gebruiker.
+const klusTimerKey = (u) => `tt_klustimer_${u?.id || u?.email || "anon"}`;
+function loadKlusTimer(u) {
+  try { const k = JSON.parse(localStorage.getItem(klusTimerKey(u)) || "null"); return k && k.klusId && k.startTs ? k : null; } catch { return null; }
+}
+function saveKlusTimer(u, k) {
+  try { if (k) localStorage.setItem(klusTimerKey(u), JSON.stringify(k)); else localStorage.removeItem(klusTimerKey(u)); } catch { /* noop */ }
+}
 // "HH:MM" -> minuten sinds middernacht (of null bij ongeldige invoer).
 function hhmmToMin(s) {
   const m = /^(\d{1,2}):(\d{2})$/.exec((s || "").trim());
@@ -3967,9 +3975,10 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
 /* ---------------------------------------------------------------------
    WERKBON — melding afronden met ondertekende PDF + kosten naar overzicht
 --------------------------------------------------------------------- */
-function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {}, onClose, onComplete, onUsePart }) {
-  const [monteur, setMonteur] = useState(mechanics[0]?.naam || "");
-  const [uren, setUren] = useState("1");
+function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {}, onClose, onComplete, onUsePart, initUren = null, initMonteur = "" }) {
+  const [monteur, setMonteur] = useState(initMonteur || mechanics[0]?.naam || "");
+  // initUren: vooraf ingevuld door de klus-timer op de werkvloer.
+  const [uren, setUren] = useState(initUren != null ? String(initUren) : "1");
   const [tarief, setTarief] = useState(() => (profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "65"));
   const [lines, setLines] = useState([]);
   const [pick, setPick] = useState("");
@@ -4293,7 +4302,7 @@ async function downloadSchadeDossier({ report, vehicle = null, profiel = {}, com
   doc.save(`schadedossier-${(report.vehicle || "melding").replace(/[^\w-]+/g, "_")}-${report.datum || ""}.pdf`);
 }
 
-function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, profiel = {}, onAddCost, onUsePart, onRefresh, refreshing, vehicles = [] }) {
+function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], availability = {}, hours, parts = [], company, profiel = {}, onAddCost, onUsePart, onRefresh, refreshing, vehicles = [], planning = [], currentUser = null }) {
   const isMobile = useIsMobile();
   const device = useDevice();
   const [moveMenu, setMoveMenu] = useState(null); // report id whose menu is open
@@ -4302,7 +4311,43 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
   const [toast, setToast] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
   const [werkbonFor, setWerkbonFor] = useState(null);
+  const [werkbonInit, setWerkbonInit] = useState(null); // { uren, monteur } vanuit de klus-timer
   const [dossierBusy, setDossierBusy] = useState(null); // report id waarvoor het dossier wordt gemaakt
+
+  // Klus-timer: start bij het begin van een klus, stop opent de werkbon met de
+  // gewerkte tijd (afgerond op kwartieren) alvast ingevuld.
+  const [klusTimer, setKlusTimer] = useState(() => loadKlusTimer(currentUser));
+  const [, setTimerTick] = useState(0);
+  useEffect(() => {
+    if (!klusTimer) return;
+    const t = setInterval(() => setTimerTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, [klusTimer]);
+  const timerElapsedMin = klusTimer ? Math.max(0, Math.round((Date.now() - klusTimer.startTs) / 60000)) : 0;
+  const startKlus = (p) => {
+    if (klusTimer && klusTimer.klusId !== p.id) { setToast("Er loopt al een timer voor een andere klus — stop die eerst."); return; }
+    const k = { klusId: p.id, startTs: Date.now() };
+    saveKlusTimer(currentUser, k); setKlusTimer(k);
+  };
+  const stopKlus = (p, linkedReport) => {
+    const min = klusTimer ? Math.max(0, (Date.now() - klusTimer.startTs) / 60000) : 0;
+    const urenVal = Math.max(0.25, Math.round(min / 15) * 0.25); // kwartieren, minimaal 15 min
+    saveKlusTimer(currentUser, null); setKlusTimer(null);
+    const naam = currentUser?.naam || "";
+    setWerkbonInit({ uren: urenVal, monteur: mechanics.some((m) => m.naam === naam) ? naam : "" });
+    // Geen gekoppelde melding (vrij ingeplande klus)? Dan een werkbon op basis
+    // van de planningsregel zelf.
+    setWerkbonFor(linkedReport || { id: "pl-" + p.id, vehicle: p.vehicle, omschrijving: p.taak, chauffeur: "—", prioriteit: "laag", status: "in_behandeling" });
+  };
+
+  // "Mijn dag": de klussen van vandaag voor déze monteur. Wijs het bedrijf geen
+  // monteurs toe, dan tonen we gewoon alles van vandaag.
+  const vandaagKlussen = (() => {
+    const today = planning.filter((p) => p.datum === TODAY);
+    const naam = currentUser?.naam || "";
+    const mijn = today.filter((p) => p.monteur === naam);
+    return (mijn.length ? mijn : today).slice().sort((a, b) => (a.tijd || "").localeCompare(b.tijd || ""));
+  })();
 
   const makeDossier = async (r) => {
     if (dossierBusy) return;
@@ -4339,6 +4384,48 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2"><KanbanSquare size={22} color="#3B82F6" /> Werkvloer</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>Meldingen van chauffeurs, direct in beeld.</p></div>
         {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={async () => { const ok = await onRefresh(); setToast(ok === false ? "Verversen mislukt — controleer je verbinding." : "Bijgewerkt."); }} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
       </div>
+
+      {/* Mijn dag: de klussen van vandaag als afvinklijst, met klus-timer.
+          Start bij het beginnen, stop bij het einde — de werkbon staat dan
+          alvast klaar met de gewerkte tijd. */}
+      {vandaagKlussen.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-2.5">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, background: "#34D39918" }}><ClipboardList size={15} color="#34D399" /></div>
+            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Mijn dag</span>
+            <span style={{ fontFamily: "Inter", fontSize: 11.5, color: "#98A1B0" }}>· {vandaagKlussen.length} klus{vandaagKlussen.length === 1 ? "" : "sen"} vandaag</span>
+          </div>
+          <div className="space-y-1.5">
+            {vandaagKlussen.map((p) => {
+              const linked = p.reportId ? reports.find((x) => x.id === p.reportId) : null;
+              const done = linked ? linked.status === "klaar" : false;
+              const running = klusTimer && klusTimer.klusId === p.id;
+              return (
+                <div key={p.id} className="flex items-center gap-2.5 p-2.5 rounded-lg flex-wrap" style={{ background: "#161C25", border: `1px solid ${running ? "#34D39955" : "#232B38"}`, opacity: done ? 0.65 : 1 }}>
+                  <span style={{ fontFamily: "JetBrains Mono", fontSize: 12.5, fontWeight: 700, color: "#8FB8FF", flexShrink: 0, width: 44 }}>{p.tijd}</span>
+                  <Kenteken value={p.vehicle} size="sm" />
+                  <span style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 120px", textDecoration: done ? "line-through" : "none" }}>{p.taak}</span>
+                  {!isMobile && p.monteur && p.monteur !== "—" && <span style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", flexShrink: 0 }}>{p.monteur}</span>}
+                  <span style={{ flexShrink: 0, marginLeft: "auto" }} className="flex items-center gap-2">
+                    {done ? (
+                      <span className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-full" style={{ color: "#34D399", background: "#34D39918", fontFamily: "Inter", fontWeight: 600 }}><Check size={12} /> Klaar</span>
+                    ) : running ? (
+                      <>
+                        <span style={{ fontFamily: "Oswald", fontSize: 15, fontWeight: 700, color: "#34D399" }}>{fmtHM(timerElapsedMin)}</span>
+                        <button onClick={() => stopKlus(p, linked)} className="text-xs px-3 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 700, cursor: "pointer", border: "none", background: "linear-gradient(180deg,#34D399,#22C08A)", color: "#04120C" }}>Stop &amp; werkbon</button>
+                      </>
+                    ) : (
+                      <button onClick={() => startKlus(p)} className="text-xs px-3 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: "1px solid #34D39955", background: "#34D39914", color: "#34D399" }}>▶ Start</button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0", marginTop: 8 }}>Start de timer bij het beginnen — bij "Stop &amp; werkbon" staat de gewerkte tijd (per kwartier) alvast op de werkbon.</div>
+        </Card>
+      )}
+
       {reports.length === 0 ? <EmptyState icon={CheckCircle2} text="Niks meer te doen. Goed werk!" /> : (
         <div className="grid gap-4" style={{ gridTemplateColumns: device === "phone" ? "minmax(0, 1fr)" : device === "tablet" ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))" }}>
           {KANBAN_COLS.map((col) => { const items = reports.filter((r) => r.status === col.id); return (
@@ -4389,7 +4476,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
                           <button onClick={() => openSchedule(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "linear-gradient(180deg,#4C8DFF,#3B82F6)", color: "#fff", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5, boxShadow: "0 1px 6px rgba(59,130,246,0.3)" }}><Calendar size={13} /> Inplannen</button>
                         )}
                         {col.id !== "klaar" && onAddCost && (
-                          <button onClick={() => setWerkbonFor(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}><ClipboardList size={13} /> Werkbon</button>
+                          <button onClick={() => { setWerkbonInit(null); setWerkbonFor(r); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #34D39955", color: "#34D399", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}><ClipboardList size={13} /> Werkbon</button>
                         )}
                         <button onClick={() => makeDossier(r)} disabled={dossierBusy === r.id} title="Schadedossier: PDF met alle gegevens en foto's, voor de verzekeraar" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #A855F755", color: "#C99BFF", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5, opacity: dossierBusy === r.id ? 0.6 : 1 }}><FileText size={13} /> {dossierBusy === r.id ? "Bezig..." : "Dossier"}</button>
                         <button onClick={() => setMoveMenu(moveMenu === r.id ? null : r.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: "#1A2129", border: "1px solid #2A3340", color: "#E7ECF3", fontFamily: "Inter", fontWeight: 600, fontSize: 12.5 }}>Verplaatsen <ChevronDown size={13} /></button>
@@ -4424,7 +4511,8 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
       )}
       {werkbonFor && (
         <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} profiel={profiel} onUsePart={onUsePart}
-          onClose={() => setWerkbonFor(null)}
+          initUren={werkbonInit?.uren ?? null} initMonteur={werkbonInit?.monteur || ""}
+          onClose={() => { setWerkbonFor(null); setWerkbonInit(null); }}
           onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
       )}
     </div>
@@ -7776,7 +7864,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} vehicles={cVehicles} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} vehicles={cVehicles} planning={cPlanning} currentUser={currentUser} />}
                 {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
