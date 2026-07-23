@@ -1725,8 +1725,13 @@ function saveUrenRetry(u, list) {
 }
 function queueUrenOp(u, op) {
   const list = loadUrenRetry(u);
-  list.push(op);
+  list.push({ ...op, k: uid("op") });
   saveUrenRetry(u, list);
+}
+// Een nog-gequeude 'add' voor dit id schrappen (bij verwijderen): anders zou
+// een latere flush de net verwijderde dag weer op de server zetten.
+function dropQueuedUrenAdd(u, id) {
+  saveUrenRetry(u, loadUrenRetry(u).filter((op) => !(op.t === "add" && op.e?.id === id)));
 }
 let urenFlushBusy = false;
 async function flushUrenRetry(u) {
@@ -1734,27 +1739,41 @@ async function flushUrenRetry(u) {
   const list = loadUrenRetry(u);
   if (!list.length) return;
   urenFlushBusy = true;
-  const rest = [];
+  const doneKeys = new Set();
   for (let i = 0; i < list.length; i++) {
     const op = list[i];
     try {
-      if (op.t === "add" && op.e) await driverSaveHours(op.e);
+      if (op.t === "add" && op.e) { await driverSaveHours(op.e); markUrenSynced(u, op.e.id); }
       else if (op.t === "del" && op.id) await driverDeleteHours(op.id);
+      doneKeys.add(op.k || JSON.stringify(op));
     } catch {
-      // Nog steeds geen verbinding/fout: dit én de rest bewaren voor later.
-      rest.push(...list.slice(i));
-      break;
+      break; // nog steeds geen verbinding/fout: rest blijft staan voor later
     }
   }
-  saveUrenRetry(u, rest);
+  // Mergen tegen een VERSE read: ops die tijdens deze flush zijn gequeued
+  // blijven behouden (geen lost-update).
+  saveUrenRetry(u, loadUrenRetry(u).filter((op) => !doneKeys.has(op.k || JSON.stringify(op))));
   urenFlushBusy = false;
 }
 // Id's die nog op sync wachten (voor de server-reconciliatie hieronder).
 const pendingUrenIds = (u) => new Set(loadUrenRetry(u).map((op) => (op.t === "add" ? op.e?.id : op.id)).filter(Boolean));
-// Aanmaaktijd uit een uid()-id halen ("u" + ts36 + 5 tekens random).
-function uidTime(id, prefix) {
-  try { return parseInt(String(id).slice(prefix.length, -5), 36) || 0; } catch { return 0; }
+// Welke uren-ids ooit bevestigd op de server stonden. Alleen dié mogen bij de
+// reconciliatie worden opgeruimd als de server ze niet meer kent (= elders
+// verwijderd). Puur-lokale of oude regels raken zo nooit kwijt.
+const urenSyncedKey = (u) => `tt_urensynced_${u?.id || u?.email || "anon"}`;
+function loadSyncedUrenIds(u) {
+  try { const a = JSON.parse(localStorage.getItem(urenSyncedKey(u)) || "[]"); return new Set(Array.isArray(a) ? a : []); } catch { return new Set(); }
 }
+function markUrenSynced(u, ids) {
+  try {
+    const s = loadSyncedUrenIds(u);
+    (Array.isArray(ids) ? ids : [ids]).forEach((id) => { if (id) s.add(id); });
+    localStorage.setItem(urenSyncedKey(u), JSON.stringify([...s].slice(-500)));
+  } catch { /* noop */ }
+}
+// Uren-melding aan andere open schermen (bv. de Vandaag-kaart) dat er iets
+// wijzigde in klok of registraties.
+const pokeUren = () => { try { window.dispatchEvent(new CustomEvent("tt-uren")); } catch { /* noop */ } };
 
 // Klus-timer (werkvloer): welke klus loopt er en sinds wanneer, per gebruiker.
 const klusTimerKey = (u) => `tt_klustimer_${u?.id || u?.email || "anon"}`;
@@ -1763,6 +1782,16 @@ function loadKlusTimer(u) {
 }
 function saveKlusTimer(u, k) {
   try { if (k) localStorage.setItem(klusTimerKey(u), JSON.stringify(k)); else localStorage.removeItem(klusTimerKey(u)); } catch { /* noop */ }
+}
+// Vrij ingeplande klussen (zonder gekoppelde melding) hebben geen melding-status
+// om op "Klaar" te zetten; afgeronde exemplaren onthouden we per gebruiker op
+// het toestel, zodat ze in "Mijn dag" afgevinkt blijven.
+const klusDoneKey = (u) => `tt_klusdone_${u?.id || u?.email || "anon"}`;
+function loadKlusDone(u) {
+  try { const a = JSON.parse(localStorage.getItem(klusDoneKey(u)) || "[]"); return new Set(Array.isArray(a) ? a : []); } catch { return new Set(); }
+}
+function markKlusDone(u, id) {
+  try { const s = loadKlusDone(u); s.add(id); localStorage.setItem(klusDoneKey(u), JSON.stringify([...s].slice(-200))); } catch { /* noop */ }
 }
 // "HH:MM" -> minuten sinds middernacht (of null bij ongeldige invoer).
 function hhmmToMin(s) {
@@ -1822,24 +1851,27 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
   // Elke wijziging meteen lokaal bewaren.
   useEffect(() => { saveUren(currentUser, entries); }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
   // Server-kopie samenvoegen: registraties van een ánder toestel komen erbij,
-  // en dagen die daar verwijderd zijn verdwijnen hier ook — behalve wat nog op
-  // sync wacht of net (< 10 min) is aangemaakt. Alleen reconciliëren als de
-  // server überhaupt iets van deze gebruiker kent, zodat puur-lokale
-  // geschiedenis nooit wordt weggegooid.
+  // en dagen die elders verwijderd zijn verdwijnen hier ook. Opruimen doen we
+  // ALLEEN voor regels waarvan we zéker weten dat ze ooit op de server stonden
+  // (de synced-administratie) — puur-lokale, oude of nog-niet-gesyncte
+  // geschiedenis raakt zo nooit kwijt.
+  const serverKey = serverUren.map((e) => e && e.id).filter(Boolean).join(",");
   useEffect(() => {
     if (!serverUren.length) return;
+    // Alles wat de server nu geeft, staat bewezen op de server.
+    markUrenSynced(currentUser, serverUren.map((e) => e && e.id));
     setEntries((list) => {
       const known = new Set(list.map((e) => e.id));
       const serverIds = new Set(serverUren.map((e) => e && e.id).filter(Boolean));
       const pending = pendingUrenIds(currentUser);
-      const cutoff = Date.now() - 10 * 60 * 1000;
+      const synced = loadSyncedUrenIds(currentUser);
       const extra = serverUren.filter((e) => e && e.id && !known.has(e.id));
-      const kept = list.filter((e) => serverIds.has(e.id) || pending.has(e.id) || uidTime(e.id, "u") > cutoff);
+      const kept = list.filter((e) => serverIds.has(e.id) || pending.has(e.id) || !synced.has(e.id));
       if (!extra.length && kept.length === list.length) return list;
       return [...kept, ...extra].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || ""));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverUren]);
+  }, [serverKey]);
 
   // Stempelklok: één tik 's ochtends, één 's avonds — geen tijden typen.
   const [klok, setKlok] = useState(() => loadKlok(currentUser));
@@ -1851,11 +1883,25 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
   }, [klok]);
   const klokElapsed = () => {
     if (!klok) return 0;
+    // Nieuwe klokken bewaren het starttijdstip in ms (ts): dat blijft ook bij
+    // een dienst van meer dan 24 uur kloppen. Oude klokken (alleen HH:MM in
+    // localStorage) vallen terug op het klok-rekenwerk met +24u-wrap.
+    if (klok.ts) return Math.max(0, Math.round((Date.now() - klok.ts) / 60000));
     const a = hhmmToMin(klok.start), b = hhmmToMin(nowHM());
     if (a == null || b == null) return 0;
     let d = b - a; if (d < 0) d += 24 * 60;
     return d;
   };
+
+  // Blijft de app 's nachts open staan, dan schuift de standaarddatum mee naar
+  // de nieuwe dag — maar alleen zolang de chauffeur 'm zelf niet aanpaste.
+  const lastDefaultDatum = useRef(today);
+  useEffect(() => {
+    if (today !== lastDefaultDatum.current) {
+      setForm((f) => (f.datum === lastDefaultDatum.current ? { ...f, datum: today } : f));
+      lastDefaultDatum.current = today;
+    }
+  }, [today]);
 
   const preview = workedMinutes(form.start, form.eind, form.pauze);
   const canSave = preview != null && form.datum;
@@ -1864,9 +1910,10 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
     setEntries((list) => [entry, ...list].sort((a, b) => (b.datum || "").localeCompare(a.datum || "") || (b.id || "").localeCompare(a.id || "")));
     if (onSyncAdd) onSyncAdd(entry);
     setSaved(true); setTimeout(() => setSaved(false), 1800);
+    pokeUren();
   };
 
-  const startShift = () => { const k = { datum: isoDay(new Date()), start: nowHM() }; saveKlok(currentUser, k); setKlok(k); };
+  const startShift = () => { const k = { datum: isoDay(new Date()), start: nowHM(), ts: Date.now() }; saveKlok(currentUser, k); setKlok(k); pokeUren(); };
   const stopShift = () => {
     if (!klok) return;
     let eind = nowHM();
@@ -1876,9 +1923,9 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
       eind = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
     }
     // Pauze standaard aan bij een dienst van meer dan 6 uur.
-    const bruto = (() => { let d = hhmmToMin(eind) - hhmmToMin(klok.start); if (d < 0) d += 24 * 60; return d; })();
+    const bruto = klok.ts ? Math.max(0, Math.round((Date.now() - klok.ts) / 60000)) : (() => { let d = hhmmToMin(eind) - hhmmToMin(klok.start); if (d < 0) d += 24 * 60; return d; })();
     pushEntry({ id: uid("u"), datum: klok.datum, start: klok.start, eind, pauze: bruto > 360, note: "" });
-    saveKlok(currentUser, null); setKlok(null);
+    saveKlok(currentUser, null); setKlok(null); pokeUren();
   };
 
   const add = () => {
@@ -1886,7 +1933,7 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
     pushEntry({ id: uid("u"), datum: form.datum, start: form.start, eind: form.eind, pauze: !!form.pauze, note: (form.note || "").trim() });
     setForm((f) => ({ ...f, note: "" }));
   };
-  const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); if (onSyncDelete) onSyncDelete(id); setConfirmDel(null); };
+  const remove = (id) => { setEntries((list) => list.filter((x) => x.id !== id)); if (onSyncDelete) onSyncDelete(id); setConfirmDel(null); pokeUren(); };
 
   // Optellen over een filter: totale minuten + aantal unieke dagen.
   const sumOver = (pred) => {
@@ -2050,17 +2097,18 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete, live = false }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
   // Push voor de chauffeur zelf: chip om meldingen aan te zetten (nieuwe rit,
   // melding afgehandeld). Verbergt zichzelf als push niet kan of al aan staat.
+  // In de demo nooit tonen: er is dan geen account om op te abonneren.
   const [pushChip, setPushChip] = useState("hidden"); // hidden | off
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        if (!pushSupported()) return;
+        if (!live || !pushSupported()) return;
         const cfg = await getPushConfig();
         if (!cfg || !cfg.enabled) return;
         const sub = await isPushSubscribed();
@@ -2068,6 +2116,15 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
       } catch { /* geen push beschikbaar */ }
     })();
     return () => { alive = false; };
+  }, [live]);
+  // De Vandaag-kaart leest klok/uren rechtstreeks uit localStorage; dit event
+  // (pokeUren) dwingt een her-render af zodra de urenregistratie iets wijzigt,
+  // anders blijft de kaart de oude stand tonen.
+  const [, setUrenTick] = useState(0);
+  useEffect(() => {
+    const fn = () => setUrenTick((x) => x + 1);
+    window.addEventListener("tt-uren", fn);
+    return () => window.removeEventListener("tt-uren", fn);
   }, []);
   const enablePush = async () => {
     try { await registerSW(); await subscribeToPush(); setPushChip("hidden"); } catch { /* geweigerd */ }
@@ -4366,6 +4423,8 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
   // Klus-timer: start bij het begin van een klus, stop opent de werkbon met de
   // gewerkte tijd (afgerond op kwartieren) alvast ingevuld.
   const [klusTimer, setKlusTimer] = useState(() => loadKlusTimer(currentUser));
+  // Afgeronde vrije klussen (planning zonder gekoppelde melding), lokaal per gebruiker.
+  const [doneKlusIds, setDoneKlusIds] = useState(() => loadKlusDone(currentUser));
   const [, setTimerTick] = useState(0);
   useEffect(() => {
     if (!klusTimer) return;
@@ -4397,6 +4456,13 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
     const mijn = today.filter((p) => p.monteur === naam);
     return (mijn.length ? mijn : today).slice().sort((a, b) => (a.tijd || "").localeCompare(b.tijd || ""));
   })();
+  const isKlusDone = (p) => (p.reportId ? reports.find((x) => x.id === p.reportId)?.status === "klaar" : doneKlusIds.has(p.id));
+  // Wees-timer: er loopt een timer, maar de bijbehorende klus staat niet (meer)
+  // als open klus in "Mijn dag" — verwijderd, van een vorige dag, of al klaar.
+  // Zonder uitweg zou die timer elke nieuwe start voorgoed blokkeren.
+  const orphanKlus = klusTimer ? planning.find((p) => p.id === klusTimer.klusId) || null : null;
+  const orphanTimer = !!klusTimer && !vandaagKlussen.some((p) => p.id === klusTimer.klusId && !isKlusDone(p));
+  const discardTimer = () => { saveKlusTimer(currentUser, null); setKlusTimer(null); };
 
   const makeDossier = async (r) => {
     if (dossierBusy) return;
@@ -4434,6 +4500,23 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         {onRefresh && <Button variant="ghost" small icon={RefreshCw} onClick={async () => { const ok = await onRefresh(); setToast(ok === false ? "Verversen mislukt — controleer je verbinding." : "Bijgewerkt."); }} disabled={refreshing}>{refreshing ? "Ophalen..." : "Ververs"}</Button>}
       </div>
 
+      {/* Wees-timer: nog een lopende timer van een verdwenen/afgeronde klus.
+          Netjes laten afronden (werkbon) of weggooien, anders zit de monteur vast. */}
+      {orphanTimer && (
+        <Card className="p-4" style={{ border: "1px solid #F59E0B55" }}>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <AlertTriangle size={16} color="#F59E0B" style={{ flexShrink: 0 }} />
+            <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3", flex: "1 1 200px" }}>
+              Er loopt nog een klus-timer ({fmtHM(timerElapsedMin)}){orphanKlus ? ` voor "${orphanKlus.taak}"${orphanKlus.datum !== TODAY ? ` van ${orphanKlus.datum}` : ""}` : " voor een klus die niet meer bestaat"}.
+            </span>
+            <span className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+              {orphanKlus && <button onClick={() => stopKlus(orphanKlus, orphanKlus.reportId ? reports.find((x) => x.id === orphanKlus.reportId) : null)} className="text-xs px-3 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 700, cursor: "pointer", border: "none", background: "linear-gradient(180deg,#34D399,#22C08A)", color: "#04120C" }}>Stop &amp; werkbon</button>}
+              <button onClick={discardTimer} className="text-xs px-3 py-1.5 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: "1px solid #2A3340", background: "#161C25", color: "#B4BCC9" }}>Weggooien</button>
+            </span>
+          </div>
+        </Card>
+      )}
+
       {/* Mijn dag: de klussen van vandaag als afvinklijst, met klus-timer.
           Start bij het beginnen, stop bij het einde — de werkbon staat dan
           alvast klaar met de gewerkte tijd. */}
@@ -4447,7 +4530,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
           <div className="space-y-1.5">
             {vandaagKlussen.map((p) => {
               const linked = p.reportId ? reports.find((x) => x.id === p.reportId) : null;
-              const done = linked ? linked.status === "klaar" : false;
+              const done = isKlusDone(p);
               const running = klusTimer && klusTimer.klusId === p.id;
               return (
                 <div key={p.id} className="flex items-center gap-2.5 p-2.5 rounded-lg flex-wrap" style={{ background: "#161C25", border: `1px solid ${running ? "#34D39955" : "#232B38"}`, opacity: done ? 0.65 : 1 }}>
@@ -4562,7 +4645,21 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
         <WerkbonModal report={werkbonFor} parts={parts} mechanics={mechanics} company={company} profiel={profiel} onUsePart={onUsePart}
           initUren={werkbonInit?.uren ?? null} initMonteur={werkbonInit?.monteur || ""}
           onClose={() => { setWerkbonFor(null); setWerkbonInit(null); }}
-          onComplete={(cost) => { onAddCost && onAddCost(cost); onMove(werkbonFor.id, "klaar"); const v = werkbonFor.vehicle; setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`); }} />
+          onComplete={(cost) => {
+            onAddCost && onAddCost(cost);
+            const v = werkbonFor.vehicle;
+            if (String(werkbonFor.id).startsWith("pl-")) {
+              // Vrije klus zonder melding: er valt niets op "Klaar" te zetten,
+              // dus vink 'm lokaal af zodat hij niet opnieuw te starten is.
+              const pid = String(werkbonFor.id).slice(3);
+              markKlusDone(currentUser, pid);
+              setDoneKlusIds((s) => { const n = new Set(s); n.add(pid); return n; });
+              setToast(`Werkbon voor ${v} opgeslagen — kosten toegevoegd.`);
+            } else {
+              onMove(werkbonFor.id, "klaar");
+              setToast(`Werkbon voor ${v} opgeslagen — melding op Klaar, kosten toegevoegd.`);
+            }
+          }} />
       )}
     </div>
   );
@@ -7372,14 +7469,22 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Zet de eerstvolgende autosave uit (gebruikt door refreshData; zie de guard
   // in het save-effect hieronder).
   const suppressSave = useRef(false);
-  // Meldingen/kosten die bij het laden al bestonden. Bij het opslaan mogen
-  // server-rijen die hier NIET in staan (dus nieuw sinds het laden, bv. een
-  // chauffeursmelding) niet worden weggegooid — dat regelt save_company_state.
-  const baseIds = useRef({
-    reports: live && Array.isArray(session.state?.reports) ? session.state.reports.map((r) => r && r.id).filter(Boolean) : [],
-    costs: live && Array.isArray(session.state?.costs) ? session.state.costs.map((c) => c && c.id).filter(Boolean) : [],
-    rides: live && Array.isArray(session.state?.rides) ? session.state.rides.map((r) => r && r.id).filter(Boolean) : [],
-  });
+  // Meldingen/kosten/ritten die bij het laden al bestonden, PER BEDRIJF. Bij
+  // het opslaan mogen server-rijen die hier NIET in staan (dus nieuw sinds het
+  // laden, bv. een chauffeursmelding) niet worden weggegooid — dat regelt
+  // save_company_state. Per bedrijf, omdat de superadmin tussen bedrijven
+  // wisselt: één gedeelde lijst zou een delete in bedrijf A laten "herrijzen"
+  // op basis van de lijst van bedrijf B.
+  const baseIds = useRef(null);
+  if (baseIds.current === null) {
+    const idsOf = (arr) => (Array.isArray(arr) ? arr.map((x) => x && x.id).filter(Boolean) : []);
+    const m = {};
+    if (live) {
+      (superList || []).forEach((x) => { m[x.company.id] = { reports: idsOf(x.state?.reports), costs: idsOf(x.state?.costs), rides: idsOf(x.state?.rides) }; });
+      m[liveCompanyId] = { reports: idsOf(session.state?.reports), costs: idsOf(session.state?.costs), rides: idsOf(session.state?.rides) };
+    }
+    baseIds.current = m;
+  }
 
   useEffect(() => {
     if (!live) return;
@@ -7415,12 +7520,15 @@ export default function TruckGarageApp({ session, onLogout }) {
       onboarded: onboarded[cid] === true,
       bedrijfsprofiel: bedrijfsprofiel[cid] || {},
     };
+    // Onbekend bedrijf zonder basislijst: lege lijsten zijn de veilige kant op
+    // (de server bewaart dan alles wat niet in de basis staat).
+    const base = baseIds.current[cid] || { reports: [], costs: [], rides: [] };
     saveStateDebounced(cid, dataset, setSaveStatus, {
       role: session.profile.rol,
       isSuperadmin: !!session.profile.is_superadmin,
-      baseReportIds: baseIds.current.reports,
-      baseCostIds: baseIds.current.costs,
-      baseRideIds: baseIds.current.rides,
+      baseReportIds: base.reports,
+      baseCostIds: base.costs,
+      baseRideIds: base.rides,
     });
   }, [vehicles, trailers, parts, maintenance, costs, reports, users, rides, planning, drivers, availability, workshopHours, modules, onboarded, bedrijfsprofiel, live, companyId, session]);
 
@@ -7644,11 +7752,20 @@ export default function TruckGarageApp({ session, onLogout }) {
   const syncUurAdd = (e) => {
     const entry = { ...e, chauffeurId: currentUser?.id || null, chauffeur: currentUser?.naam || "Onbekend" };
     setUren((s) => ({ ...s, [companyId]: [entry, ...(s[companyId] || []).filter((x) => x.id !== entry.id)] }));
-    if (live && role === "chauffeur") driverSaveHours(entry).catch(() => queueUrenOp(currentUser, { t: "add", e: entry }));
+    if (live && role === "chauffeur") {
+      driverSaveHours(entry)
+        .then(() => markUrenSynced(currentUser, entry.id))
+        .catch(() => queueUrenOp(currentUser, { t: "add", e: entry }));
+    }
   };
   const syncUurDelete = (id) => {
     setUren((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
-    if (live && role === "chauffeur") driverDeleteHours(id).catch(() => queueUrenOp(currentUser, { t: "del", id }));
+    if (live && role === "chauffeur") {
+      // Eventueel nog wachtende 'add' voor deze dag eerst schrappen, anders
+      // zet een latere flush de verwijderde dag weer terug op de server.
+      dropQueuedUrenAdd(currentUser, id);
+      driverDeleteHours(id).catch(() => queueUrenOp(currentUser, { t: "del", id }));
+    }
   };
   // Ritten: beheerder plant/verwijdert; chauffeur tekent af (POD). De
   // toegewezen chauffeur krijgt direct een pushmelding van de nieuwe rit.
@@ -7681,16 +7798,23 @@ export default function TruckGarageApp({ session, onLogout }) {
       else fresh = await loadState(companyId);
       if (fresh) {
         // Verse serverdata is geen gebruikerswijziging: autosave-lus voorkomen.
-        suppressSave.current = true;
+        // Maar alleen dempen als er ook echt een autosave-relevante slice wordt
+        // vervangen — anders blijft de demper gewapend staan en slikt hij de
+        // eerstvolgende échte wijziging van de gebruiker in.
+        if ([fresh.reports, fresh.planning, fresh.vehicles, fresh.rides, fresh.costs].some(Array.isArray)) suppressSave.current = true;
         if (Array.isArray(fresh.reports)) setReports((s) => ({ ...s, [companyId]: fresh.reports }));
         if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
         if (Array.isArray(fresh.checks)) setChecks((s) => ({ ...s, [companyId]: fresh.checks }));
         if (Array.isArray(fresh.rides)) setRides((s) => ({ ...s, [companyId]: fresh.rides }));
         if (Array.isArray(fresh.uren)) setUren((s) => ({ ...s, [companyId]: fresh.uren }));
-        // Basis-ids bijwerken zodat een volgende opslag geen nieuwe meldingen/ritten wist.
-        if (Array.isArray(fresh.reports)) baseIds.current.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
-        if (Array.isArray(fresh.rides)) baseIds.current.rides = fresh.rides.map((r) => r && r.id).filter(Boolean);
+        if (Array.isArray(fresh.costs)) setCosts((s) => ({ ...s, [companyId]: fresh.costs }));
+        // Basis-ids bijwerken zodat een volgende opslag geen nieuwe
+        // meldingen/ritten/kosten wist die sinds het laden zijn bijgekomen.
+        const b = baseIds.current[companyId] || (baseIds.current[companyId] = { reports: [], costs: [], rides: [] });
+        if (Array.isArray(fresh.reports)) b.reports = fresh.reports.map((r) => r && r.id).filter(Boolean);
+        if (Array.isArray(fresh.rides)) b.rides = fresh.rides.map((r) => r && r.id).filter(Boolean);
+        if (Array.isArray(fresh.costs)) b.costs = fresh.costs.map((c) => c && c.id).filter(Boolean);
       }
       return true;
     } catch (e) {
@@ -7909,13 +8033,13 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
-                {view === "driver" && <DriverHome vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "rides" && isAdmin && modOn(cModules, "rides") && <RidesView rides={cRides} vehicles={cVehicles} users={cUsers} profiel={cProfiel} company={company} onAdd={addRide} onDelete={deleteRide} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
