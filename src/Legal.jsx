@@ -10,8 +10,8 @@ import { Truck, ArrowLeft } from "lucide-react";
 const ACCENT = "#3B82F6";
 const BEDRIJF = "Truck & Trailer";
 const EMAIL = "info@truckandtrailer.nl";
-const KVK = "00000000";                    // vul je KvK-nummer in
-const ADRES = "Adres, Postcode Plaats";    // vul je vestigingsadres in
+const KVK = "42075426";
+const ADRES = ""; // vestigingsadres (optioneel; wordt pas getoond als het is ingevuld)
 const UPDATED = "juli 2026";
 
 function Shell({ title, onBack, children }) {
@@ -61,7 +61,7 @@ export function PrivacyPage({ onBack }) {
       <P>{BEDRIJF} vindt jouw privacy belangrijk. In dit beleid leggen we uit welke persoonsgegevens we verwerken wanneer je onze vloot- en werkplaatsbeheer-app gebruikt, waarom we dat doen en welke rechten je hebt.</P>
 
       <H>1. Wie zijn wij</H>
-      <P>{BEDRIJF} (KvK {KVK}), {ADRES}, is de verwerkingsverantwoordelijke voor de verwerking van je gegevens. Contact: {EMAIL}.</P>
+      <P>{BEDRIJF} (KvK {KVK}){ADRES ? `, ${ADRES},` : ""} is de verwerkingsverantwoordelijke voor de verwerking van je gegevens. Contact: {EMAIL}.</P>
 
       <H>2. Welke gegevens we verwerken</H>
       <UL items={[
