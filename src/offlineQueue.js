@@ -49,6 +49,24 @@ export function clearFailed() {
   try { localStorage.removeItem(FAILED_KEY); } catch { /* noop */ }
   notify();
 }
+// Definitief mislukte meldingen terug in de wachtrij zetten voor een nieuwe
+// ronde pogingen (bv. nadat de storing bij de server voorbij is).
+export function retryFailed() {
+  try {
+    const a = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
+    if (!Array.isArray(a) || !a.length) return 0;
+    const arr = read();
+    let n = 0;
+    for (const it of a) {
+      if (it?.report?.id && !arr.some((x) => x.report && x.report.id === it.report.id)) { arr.push({ ...it, attempts: 0 }); n++; }
+    }
+    write(arr);
+    localStorage.removeItem(FAILED_KEY);
+    notify();
+    flushQueue();
+    return n;
+  } catch { return 0; }
+}
 function addFailed(item) {
   try {
     const a = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");

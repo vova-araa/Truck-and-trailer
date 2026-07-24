@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
-import { queuedCount, flushQueue, onQueueChange } from "./offlineQueue.js";
+import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
 import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, notifyUser, registerSW } from "./push.js";
 
@@ -2135,9 +2135,12 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
   const statusColor = (s) => s === "klaar" ? "#34D399" : s === "nieuw" ? "#B4BCC9" : "#3B82F6";
   // Offline-wachtrij: hoeveel meldingen wachten nog op verbinding.
   const [pending, setPending] = useState(queuedCount());
+  // Meldingen die na alle pogingen definitief niet verstuurd zijn: laten zien,
+  // niet stilletjes weggooien — de chauffeur denkt anders dat 't gelukt is.
+  const [failed, setFailed] = useState(failedCount());
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   useEffect(() => {
-    const off = onQueueChange(setPending);
+    const off = onQueueChange(() => { setPending(queuedCount()); setFailed(failedCount()); });
     const on = () => { setOnline(true); flushQueue(); };
     const offl = () => setOnline(false);
     window.addEventListener("online", on);
@@ -2159,6 +2162,14 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
             <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3" }}>
               {pending > 0 ? t("offlinePending", { n: pending }) : t("offlineNow")}
             </span>
+          </div>
+        )}
+        {failed > 0 && (
+          <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg flex-wrap" style={{ background: "#F0453F14", border: "1px solid #F0453F44" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: "#F0453F", flexShrink: 0 }} />
+            <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#E7ECF3", flex: "1 1 160px" }}>{t("failedReports", { n: failed })}</span>
+            <button onClick={retryFailed} className="text-xs px-2.5 py-1 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: "1px solid #3B82F655", background: "#3B82F614", color: "#8FB8FF", flexShrink: 0 }}>{t("failedRetry")}</button>
+            <button onClick={clearFailed} className="text-xs px-2.5 py-1 rounded-lg" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: "1px solid #2A3340", background: "#161C25", color: "#B4BCC9", flexShrink: 0 }}>{t("failedClear")}</button>
           </div>
         )}
         {myReports.length > 0 && (
