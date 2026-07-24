@@ -244,7 +244,7 @@ function mapError(e) {
   if (/ALREADY_HAS_PROFILE/i.test(m)) return "Dit account is al aan een bedrijf gekoppeld. Log in, of gebruik een ander e-mailadres.";
   if (/MISSING_ADMIN/i.test(m)) return "Er ontbreken gegevens (naam of e-mail) bij deze code. Vul ze aan en probeer opnieuw.";
   if (/INVALID_CODE/i.test(m)) return "Deze code is ongeldig of al gebruikt. Controleer je abonnementscode (of, als medewerker, je bedrijfscode).";
-  if (/EMAIL_CONFIRM_REQUIRED/i.test(m)) return "Je account is aangemaakt — bevestig eerst je e-mail (check je inbox) en log daarna in.";
+  if (/EMAIL_CONFIRM_REQUIRED/i.test(m)) return "Je account is aangemaakt — bevestig eerst je e-mail (check je inbox) en doorloop dit formulier daarna nog een keer met dezelfde gegevens om de koppeling af te ronden.";
   if (/already registered|already exists|duplicate/i.test(m)) return "Dit e-mailadres of bedrijf bestaat al.";
   if (/invalid login credentials/i.test(m)) return "Onjuist e-mailadres of wachtwoord.";
   if (/email not confirmed/i.test(m)) return "Bevestig eerst je e-mail (check je inbox), of schakel e-mailbevestiging uit in Supabase.";

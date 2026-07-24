@@ -234,6 +234,12 @@ begin
   if cid is null then raise exception 'NO_COMPANY'; end if;
   if v_rol not in ('admin','garage') then raise exception 'NOT_ALLOWED'; end if;
 
+  -- Een expliciet meegegeven NULL zou de merge-voorwaarden hieronder naar NULL
+  -- laten evalueren en daarmee álle server-only rijen wegvagen. Nooit toestaan.
+  p_base_report_ids := coalesce(p_base_report_ids, '{}');
+  p_base_cost_ids   := coalesce(p_base_cost_ids, '{}');
+  p_base_ride_ids   := coalesce(p_base_ride_ids, '{}');
+
   select data into existing from public.company_state where company_id = cid for update;
   existing := coalesce(existing, '{}'::jsonb);
   final := coalesce(p_data, '{}'::jsonb);
@@ -278,6 +284,25 @@ begin
         and not exists (select 1 from jsonb_array_elements(ex_costs) e where e ->> 'id' = c ->> 'id')
     ), '[]'::jsonb));
   end if;
+
+  -- Chauffeurs met een écht account (via de bedrijfscode gejoined) mogen nooit
+  -- door een stale client-snapshot uit de gebruikerslijst verdwijnen: hun
+  -- profiel is de bron van waarheid. Bewust verwijderen loopt via
+  -- delete_employee_account (profiel weg) — dan merge't dit niets terug.
+  final := final || jsonb_build_object('users',
+    (case when jsonb_typeof(final -> 'users') = 'array' then final -> 'users' else '[]'::jsonb end)
+    || coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', p.id::text, 'naam', p.naam, 'email', p.email,
+        'telefoon', coalesce(p.telefoon, ''), 'rol', p.rol))
+      from public.profiles p
+      where p.company_id = cid and p.rol = 'chauffeur' and p.id <> auth.uid()
+        and not exists (
+          select 1 from jsonb_array_elements(
+            case when jsonb_typeof(final -> 'users') = 'array' then final -> 'users' else '[]'::jsonb end
+          ) u where u ->> 'id' = p.id::text
+        )
+    ), '[]'::jsonb));
 
   -- Dagelijkse voertuigchecks zijn server-authoritatief: ze komen alleen via
   -- driver_add_check binnen en een client-snapshot mag ze nooit wegvagen.
@@ -343,6 +368,10 @@ begin
   if not public.is_superadmin() then raise exception 'NOT_ALLOWED'; end if;
   if p_company_id is null then raise exception 'NO_COMPANY'; end if;
 
+  p_base_report_ids := coalesce(p_base_report_ids, '{}');
+  p_base_cost_ids   := coalesce(p_base_cost_ids, '{}');
+  p_base_ride_ids   := coalesce(p_base_ride_ids, '{}');
+
   select data into existing from public.company_state where company_id = p_company_id for update;
   existing := coalesce(existing, '{}'::jsonb);
   final := coalesce(p_data, '{}'::jsonb);
@@ -368,6 +397,22 @@ begin
            and not (c ->> 'id' = any(cli_cost_ids))
            and not (c ->> 'id' = any(p_base_cost_ids))
        ), '[]'::jsonb));
+
+  -- Ook hier: chauffeurs met een echt account nooit uit users laten vallen.
+  final := final || jsonb_build_object('users',
+    (case when jsonb_typeof(final -> 'users') = 'array' then final -> 'users' else '[]'::jsonb end)
+    || coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', p.id::text, 'naam', p.naam, 'email', p.email,
+        'telefoon', coalesce(p.telefoon, ''), 'rol', p.rol))
+      from public.profiles p
+      where p.company_id = p_company_id and p.rol = 'chauffeur'
+        and not exists (
+          select 1 from jsonb_array_elements(
+            case when jsonb_typeof(final -> 'users') = 'array' then final -> 'users' else '[]'::jsonb end
+          ) u where u ->> 'id' = p.id::text
+        )
+    ), '[]'::jsonb));
 
   -- Checks en uren blijven ook hier server-authoritatief.
   final := final || jsonb_build_object('checks', coalesce(existing -> 'checks', '[]'::jsonb));
@@ -584,12 +629,25 @@ begin
   if eid is null or eid = '' then raise exception 'NO_ID'; end if;
   entry := entry || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'));
   insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  -- Botst het id met een registratie van een ándere chauffeur, dan hard falen
+  -- i.p.v. stil niets doen: een stille no-op zou de client laten denken dat de
+  -- rij gesynchroniseerd is, waarna de reconciliatie 'm ook lokaal opruimt —
+  -- definitief verlies van loonuren. Rij eerst vergrendelen tegen races.
+  perform 1 from public.company_state where company_id = cid for update;
+  if exists (
+    select 1 from public.company_state cs,
+      jsonb_array_elements(coalesce(cs.data -> 'uren', '[]'::jsonb)) x
+    where cs.company_id = cid
+      and x ->> 'id' = eid and x ->> 'chauffeurId' is distinct from auth.uid()::text
+  ) then
+    raise exception 'HOURS_ID_CONFLICT';
+  end if;
   update public.company_state
     set data = jsonb_set(coalesce(data, '{}'::jsonb), '{uren}', (
           select coalesce(jsonb_agg(u), '[]'::jsonb) from (
             -- Nieuwe/bijgewerkte registratie voorop; een bestaande rij met
-            -- hetzelfde id (van MIJZELF) valt weg. Andermans rij met dat id
-            -- blijft staan — dan voegen we niets dubbel toe (no-op filter).
+            -- hetzelfde id (van MIJZELF) valt weg. Botsing met andermans id is
+            -- hierboven al afgevangen met HOURS_ID_CONFLICT.
             select u from jsonb_array_elements(
               jsonb_build_array(entry)
               || coalesce((
@@ -601,11 +659,7 @@ begin
           ) sub
         )),
         updated_at = now()
-    where company_id = cid
-      and not exists (
-        select 1 from jsonb_array_elements(coalesce(data -> 'uren', '[]'::jsonb)) x
-        where x ->> 'id' = eid and x ->> 'chauffeurId' is distinct from auth.uid()::text
-      );
+    where company_id = cid;
 end $$;
 grant execute on function public.driver_save_hours(jsonb) to authenticated;
 
@@ -645,6 +699,10 @@ begin
     from unnest(array['naam','opmerking','handtekening','tijd','datum']) as k
     where pod ? k;
   podc := podc || jsonb_build_object('door', coalesce(v_naam, 'Onbekend'), 'ts', now());
+  -- Vergrendel de rij vóór de check: anders kan tussen de check en de UPDATE
+  -- een save_company_state de rit verwijderen en "slaagt" de UPDATE zonder dat
+  -- de handtekening ergens terechtkomt (TOCTOU).
+  perform 1 from public.company_state where company_id = cid for update;
   -- Bestaat de rit niet (meer) of is hij niet aan déze chauffeur toegewezen?
   -- Dan hard falen i.p.v. stil niets doen — anders denkt de chauffeur dat de
   -- aflevering is vastgelegd terwijl de handtekening nergens staat.
@@ -933,9 +991,49 @@ begin
   end if;
   insert into public.profiles (id, company_id, naam, email, telefoon, rol, status)
     values (auth.uid(), cid, p_naam, p_email, coalesce(p_telefoon, ''), p_rol, 'actief');
+  -- Maak de nieuwe chauffeur ook meteen zichtbaar in de gebruikerslijst van de
+  -- beheerder: de app leest medewerkers uit company_state.data.users, en zonder
+  -- deze regel verscheen een via-de-code gejoinde chauffeur daar nooit (dus ook
+  -- niet te kiezen bij Ritten).
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  update public.company_state
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{users}',
+          (case when jsonb_typeof(data -> 'users') = 'array' then data -> 'users' else '[]'::jsonb end)
+          || jsonb_build_array(jsonb_build_object(
+               'id', auth.uid()::text, 'naam', p_naam, 'email', p_email,
+               'telefoon', coalesce(p_telefoon, ''), 'rol', p_rol))),
+        updated_at = now()
+    where company_id = cid
+      and not exists (
+        select 1 from jsonb_array_elements(
+          case when jsonb_typeof(data -> 'users') = 'array' then data -> 'users' else '[]'::jsonb end
+        ) u where u ->> 'id' = auth.uid()::text
+      );
   return cid;
 end $$;
 grant execute on function public.join_company_with_code(text, text, text, text, text) to authenticated;
+
+-- Eenmalige reparatie: chauffeurs die eerder via de bedrijfscode joinden maar
+-- nooit in company_state.data.users terechtkwamen, alsnog toevoegen.
+update public.company_state cs
+set data = jsonb_set(coalesce(cs.data, '{}'::jsonb), '{users}',
+      (case when jsonb_typeof(cs.data -> 'users') = 'array' then cs.data -> 'users' else '[]'::jsonb end)
+      || (select coalesce(jsonb_agg(jsonb_build_object(
+              'id', p.id::text, 'naam', p.naam, 'email', p.email,
+              'telefoon', coalesce(p.telefoon, ''), 'rol', p.rol)), '[]'::jsonb)
+          from public.profiles p
+          where p.company_id = cs.company_id and p.rol = 'chauffeur'
+            and not exists (
+              select 1 from jsonb_array_elements(
+                case when jsonb_typeof(cs.data -> 'users') = 'array' then cs.data -> 'users' else '[]'::jsonb end
+              ) u where u ->> 'id' = p.id::text)))
+where exists (
+  select 1 from public.profiles p
+  where p.company_id = cs.company_id and p.rol = 'chauffeur'
+    and not exists (
+      select 1 from jsonb_array_elements(
+        case when jsonb_typeof(cs.data -> 'users') = 'array' then cs.data -> 'users' else '[]'::jsonb end
+      ) u where u ->> 'id' = p.id::text));
 
 -- ---------- PROBLEEMMELDINGEN: bedrijf -> platformbeheerder ----------
 -- Een bedrijf kan vanuit Instellingen een probleem/vraag melden. Alleen de
@@ -1017,6 +1115,10 @@ insert into storage.buckets (id, name, public)
   values ('meldingen', 'meldingen', false)
   on conflict (id) do nothing;
 
+-- Grens per bestand (50 MB — ruim genoeg voor een korte schadevideo), zodat
+-- één account de storage-kosten niet kan laten ontploffen.
+update storage.buckets set file_size_limit = 52428800 where id = 'meldingen';
+
 -- Uploaden mag alleen in de map van je eigen bedrijf.
 drop policy if exists "meldingen upload eigen bedrijf" on storage.objects;
 create policy "meldingen upload eigen bedrijf" on storage.objects
@@ -1053,6 +1155,9 @@ create policy "meldingen verwijderen beheerder" on storage.objects
 insert into storage.buckets (id, name, public)
   values ('documenten', 'documenten', false)
   on conflict (id) do nothing;
+
+-- Grens per bestand (25 MB — een gescand document of PDF-rapport past ruim).
+update storage.buckets set file_size_limit = 26214400 where id = 'documenten';
 
 drop policy if exists "documenten upload eigen bedrijf" on storage.objects;
 create policy "documenten upload eigen bedrijf" on storage.objects

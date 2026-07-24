@@ -307,12 +307,20 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
         .ln-h2 { font-family: Oswald, sans-serif; font-weight: 600; font-size: 34px; }
         .ln-hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 30px; align-items: center; }
         .ln-showcase { display: grid; grid-template-columns: 1.15fr .85fr; gap: 34px; align-items: center; }
+        .ln-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-top: 46px; }
+        .ln-form-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
         @media (max-width: 900px) {
           .ln-hero-grid, .ln-showcase { grid-template-columns: minmax(0,1fr); }
           .ln-h1 { font-size: 40px; }
           .ln-h2 { font-size: 27px; }
           .ln-hide-sm { display: none !important; }
           .ln-hero-mock { margin-top: 8px; }
+        }
+        @media (max-width: 560px) {
+          /* Op een smalle telefoon passen 4 stats-kolommen en 2 formulier-
+             kolommen niet: teksten braken per woord af. */
+          .ln-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+          .ln-form-grid { grid-template-columns: minmax(0,1fr); }
         }
         @media (prefers-reduced-motion: reduce) { .ln-float,.ln-float2,.ln-grad { animation: none !important; } }
       `}</style>
@@ -389,7 +397,7 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
 
         {/* Stats-strip */}
         <Reveal delay={120}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 12, marginTop: 46 }}>
+          <div className="ln-stats">
             {L.stats.map(([v, l]) => (
               <div key={l} style={{ textAlign: "center", padding: "16px 8px", borderRadius: 14, border: "1px solid #1A2230", background: "rgba(255,255,255,.015)" }}>
                 <div style={{ fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 26, color: "#E7ECF3" }}>{v}</div>
@@ -563,7 +571,7 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 14, color: "#B4BCC9", marginTop: 6 }}>{L.fSentText}</div>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+                <div className="ln-form-grid">
                   <div style={{ gridColumn: "1 / -1" }}><Field label={L.fNaam + " *"} value={form.naam} onChange={(v) => set("naam", v)} /></div>
                   <Field label={L.fBedrijf} value={form.bedrijf} onChange={(v) => set("bedrijf", v)} />
                   <Field label={L.fTel} value={form.telefoon} onChange={(v) => set("telefoon", v)} />

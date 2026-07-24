@@ -7,16 +7,43 @@
 import { supabase } from "./supabaseClient.js";
 
 const KEY = "tt_offline_reports_v1";
+// Zelfde principe voor de dagelijkse voertuigcheck en het afronden van een rit
+// (POD): precies de handelingen die een chauffeur vaak op plekken zónder
+// bereik doet (terrein, loods, kelder) en die dus nooit hard mogen falen.
+const CHECK_KEY = "tt_offline_checks_v1";
+const RIDE_KEY = "tt_offline_rides_v1";
 
-function read() {
-  try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; }
+function readKey(key) {
+  try { const a = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
 }
-function write(arr) {
-  try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch { /* opslag vol/geblokkeerd */ }
+function writeKey(key, arr) {
+  try { localStorage.setItem(key, JSON.stringify(arr)); } catch { /* opslag vol/geblokkeerd */ }
 }
+const read = () => readKey(KEY);
+const write = (arr) => writeKey(KEY, arr);
 
+// Totaal aantal wachtende items (meldingen + checks + afleveringen) — voor de
+// "wacht op verbinding"-banner bij de chauffeur.
 export function queuedCount() {
-  return read().length;
+  return read().length + readKey(CHECK_KEY).length + readKey(RIDE_KEY).length;
+}
+
+export function enqueueCheck(check, uid = null) {
+  const arr = readKey(CHECK_KEY);
+  if (check?.id && !arr.some((it) => it.check && it.check.id === check.id)) {
+    arr.push({ check, uid });
+    writeKey(CHECK_KEY, arr);
+  }
+  notify();
+}
+
+export function enqueueRideCompletion(rideId, pod, uid = null) {
+  const arr = readKey(RIDE_KEY);
+  if (rideId && !arr.some((it) => it.rideId === rideId)) {
+    arr.push({ rideId, pod, uid });
+    writeKey(RIDE_KEY, arr);
+  }
+  notify();
 }
 
 // Netwerkfout herkennen: dan queuen we. Echte (server)fouten gooien we door.
@@ -76,12 +103,39 @@ function addFailed(item) {
 }
 
 let flushing = false;
+// Generieke flush voor de check- en rit-wachtrijen: per item versturen, bij
+// netwerkfout stoppen (rest blijft staan), bij een blijvende serverfout een
+// paar keer proberen en daarna opgeven. Merge tegen een verse read.
+async function flushAux(key, uid, send, label) {
+  const arr = readKey(key);
+  if (!arr.length) return;
+  const outcome = new Map(); // index-key -> "sent" | "failed" | { attempts }
+  const idOf = (it) => it.check?.id || it.rideId;
+  for (const item of arr) {
+    const id = idOf(item);
+    if (item.uid !== uid || !id) continue; // andermans item: laten staan
+    try {
+      await send(item);
+      outcome.set(id, "sent");
+    } catch (e) {
+      if (isNetworkError(e)) break;
+      const attempts = (item.attempts || 0) + 1;
+      if (attempts < MAX_ATTEMPTS) outcome.set(id, { attempts });
+      else { outcome.set(id, "failed"); console.error(`${label} definitief niet verstuurd:`, id, e?.message || e); }
+    }
+  }
+  const merged = readKey(key)
+    .filter((it) => { const o = outcome.get(idOf(it)); return o !== "sent" && o !== "failed"; })
+    .map((it) => { const o = outcome.get(idOf(it)); return o && typeof o === "object" ? { ...it, attempts: o.attempts } : it; });
+  writeKey(key, merged);
+}
+
 // Probeer de wachtrij te legen. Geeft het aantal succesvol verstuurde meldingen terug.
 export async function flushQueue() {
   if (flushing) return 0;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
   const arr = read();
-  if (!arr.length) return 0;
+  if (!arr.length && !readKey(CHECK_KEY).length && !readKey(RIDE_KEY).length) return 0;
   // Zonder geldige sessie niets proberen (en zeker niets als "poging" tellen):
   // de meldingen blijven staan tot de juiste gebruiker weer ingelogd is.
   let uid = null;
@@ -117,6 +171,19 @@ export async function flushQueue() {
     .filter((it) => { const o = outcome.get(it.report?.id); return o !== "sent" && o !== "failed"; })
     .map((it) => { const o = outcome.get(it.report?.id); return o && typeof o === "object" ? { ...it, attempts: o.attempts } : it; });
   write(merged);
+  // Daarna de checks en afleveringen (zelfde sessie, zelfde spelregels).
+  try {
+    await flushAux(CHECK_KEY, uid, async (it) => {
+      const { error } = await supabase.rpc("driver_add_check", { p_check: it.check });
+      if (error) throw error;
+    }, "Voertuigcheck");
+    await flushAux(RIDE_KEY, uid, async (it) => {
+      const { error } = await supabase.rpc("driver_complete_ride", { p_ride_id: it.rideId, p_pod: it.pod });
+      // Rit inmiddels verwijderd door de beheerder? Dan valt er niets meer af
+      // te leveren — item opruimen i.p.v. eeuwig opnieuw proberen.
+      if (error && !/RIDE_NOT_FOUND/.test(error.message || "")) throw error;
+    }, "Aflevering");
+  } catch { /* volgende flush pakt de rest */ }
   flushing = false;
   notify();
   return sent;

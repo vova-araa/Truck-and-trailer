@@ -289,6 +289,11 @@ app.post("/api/ai", async (req, res) => {
   if (!supaAdmin) {
     return res.status(503).json({ error: "AI is niet volledig geconfigureerd (SUPABASE_SERVICE_ROLE_KEY ontbreekt op de server)." });
   }
+  // Per-IP-limiet VÓÓR de sessie-verificatie: anders kan een niet-ingelogde
+  // aanvaller met nep-tokens onbeperkt (dure) Supabase-Auth-calls uitlokken.
+  if (rateLimited("aiip:" + (req.ip || "?"))) {
+    return res.status(429).json({ error: "Te veel aanvragen, wacht even." });
+  }
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return res.status(401).json({ error: "Log in om de AI te gebruiken." });
   let userId;
@@ -311,6 +316,17 @@ app.post("/api/ai", async (req, res) => {
   const { messages, system, max_tokens: maxTokens } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages is verplicht." });
+  }
+  // Input begrenzen: de app stuurt korte prompts plus hooguit één foto
+  // (base64 ≤ ~7 MB, de AI-API accepteert toch niet meer). Zonder cap kan één
+  // account requests tot de 25MB-bodylimiet sturen en de AI-kosten opdrijven.
+  if (messages.length > 40) {
+    return res.status(400).json({ error: "Te veel berichten in één aanvraag." });
+  }
+  let inputSize = 0;
+  try { inputSize = JSON.stringify(messages).length + (system ? JSON.stringify(system).length : 0); } catch { inputSize = Infinity; }
+  if (inputSize > 8000000) {
+    return res.status(400).json({ error: "Aanvraag te groot." });
   }
   try {
     const response = await anthropic.messages.create({
@@ -472,12 +488,28 @@ app.all("/api/cron/reminders", async (req, res) => {
   if (!supaAdmin) return res.status(503).json({ error: "SUPABASE_SERVICE_ROLE_KEY ontbreekt." });
   if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: "RESEND_API_KEY ontbreekt." });
   try {
+    // Fouten in deze queries mogen NOOIT als "ok" doortellen: dan zou de
+    // cron-dienst succes zien terwijl er nul herinneringen zijn verstuurd.
+    // PostgREST capt bovendien op 1000 rijen — pagineer, anders vallen
+    // bedrijven boven die grens stilletjes buiten sync én herinneringen.
+    const pageAll = async (table, cols, filter) => {
+      const all = [];
+      for (let from = 0; ; from += 1000) {
+        let q = supaAdmin.from(table).select(cols).range(from, from + 999);
+        if (filter) q = filter(q);
+        const { data, error } = await q;
+        if (error) throw new Error(`${table}-query mislukt: ${error.message}`);
+        all.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return all;
+    };
     // Beheerder-e-mail per bedrijf (voorkeur: bedrijfsprofiel, anders admin-profiel).
-    const { data: admins } = await supaAdmin.from("profiles").select("company_id, email, naam, rol").eq("rol", "admin");
+    const admins = await pageAll("profiles", "company_id, email, naam, rol", (q) => q.eq("rol", "admin"));
     const adminByCompany = {};
     (admins || []).forEach((a) => { if (a.company_id && a.email && !adminByCompany[a.company_id]) adminByCompany[a.company_id] = a; });
 
-    const { data: states } = await supaAdmin.from("company_state").select("company_id, data");
+    const states = await pageAll("company_state", "company_id, data");
 
     // STAP 1 — RDW-autosync: APK-datums (en ontbrekend merk/bouwjaar) verversen
     // vanaf de officiële open data, per bedrijf. Fouten per bedrijf breken de
@@ -672,12 +704,27 @@ app.post("/api/push/notify", async (req, res) => {
   // Standaard gaat een push naar beheer/werkplaats van het eigen bedrijf.
   // Met toUserId gaat hij naar één specifieke collega (zelfde bedrijf) — bv.
   // de chauffeur die een nieuwe rit kreeg of wiens melding klaar is.
-  let q = supaAdmin.from("push_subscriptions")
-    .select("endpoint, keys, user_id, rol")
-    .eq("company_id", me.company_id);
-  if (toUserId && typeof toUserId === "string") q = q.eq("user_id", toUserId);
-  else q = q.in("rol", ["admin", "garage"]);
-  const { data: subs } = await q;
+  let subs = [];
+  if (toUserId && typeof toUserId === "string") {
+    const { data } = await supaAdmin.from("push_subscriptions")
+      .select("endpoint, keys, user_id")
+      .eq("company_id", me.company_id).eq("user_id", toUserId);
+    subs = data || [];
+  } else {
+    // De rol LIVE uit profiles halen: de rol op de subscription is een snapshot
+    // van het subscribe-moment. Zonder deze join zou een naar chauffeur
+    // gedegradeerde medewerker beheer-/werkplaatsnotificaties blijven ontvangen
+    // (en een gepromoveerde juist alles missen).
+    const { data: staff } = await supaAdmin.from("profiles")
+      .select("id").eq("company_id", me.company_id).in("rol", ["admin", "garage"]);
+    const ids = (staff || []).map((p) => p.id);
+    if (ids.length) {
+      const { data } = await supaAdmin.from("push_subscriptions")
+        .select("endpoint, keys, user_id")
+        .eq("company_id", me.company_id).in("user_id", ids);
+      subs = data || [];
+    }
+  }
   // URL moet een intern pad zijn: precies één leading slash (geen "//evil.com"
   // en geen "http…"), anders kan een push naar een phishingdomein leiden.
   const safeUrl = typeof url === "string" && /^\/(?!\/)/.test(url) ? url : "/";

@@ -138,6 +138,26 @@ export async function setSupportTicketStatus(id, status) {
   if (error) throw error;
 }
 
+// Auth-account aanmaken, met herstel-pad voor "wees-accounts": mislukte een
+// eerdere poging NA de signUp maar VÓÓR het inwisselen/koppelen (code al
+// gebruikt, netwerk weg, e-mailbevestiging tussendoor), dan bestaat er al een
+// auth-account zonder profiel en zou elke nieuwe poging stranden op "al
+// geregistreerd" — zonder enige uitweg. Daarom: lukt signUp niet omdat het
+// adres bezet is, probeer dan in te loggen met het opgegeven wachtwoord; is er
+// géén profiel, dan mag de flow gewoon verder met dit bestaande account.
+async function signUpOrRecover(email, wachtwoord, naam) {
+  const { data: signUp, error: signErr } = await supabase.auth.signUp({
+    email, password: wachtwoord, options: { data: { naam } },
+  });
+  if (!signErr) return signUp;
+  if (!/already|registered|exists/i.test(signErr.message || "")) throw signErr;
+  const { data: si, error: siErr } = await supabase.auth.signInWithPassword({ email, password: wachtwoord });
+  if (siErr || !si?.user) throw signErr; // echt bezet (of verkeerd wachtwoord)
+  const { data: prof } = await supabase.from("profiles").select("id").eq("id", si.user.id).maybeSingle();
+  if (prof) { try { await supabase.auth.signOut(); } catch { /* noop */ } throw signErr; } // volwaardig account: echt bezet
+  return { user: si.user, session: si.session };
+}
+
 // Bedrijf aanmelden kan alleen met een geldige abonnementscode. De code wordt
 // server-side (SECURITY DEFINER) ingewisseld: die maakt het bedrijf aan en
 // markeert de code als gebruikt. Zo kan niemand zonder code een bedrijf starten.
@@ -149,13 +169,8 @@ export async function signUpCompany({ code, bedrijfsnaam, naam, email, telefoon,
   const ok = await activationCodeValid(clean);
   if (!ok) throw new Error("INVALID_CODE");
 
-  // 1. Auth-account aanmaken (echt e-mail + wachtwoord)
-  const { data: signUp, error: signErr } = await supabase.auth.signUp({
-    email,
-    password: wachtwoord,
-    options: { data: { naam } },
-  });
-  if (signErr) throw signErr;
+  // 1. Auth-account aanmaken (of een wees-account van een eerdere poging hergebruiken)
+  const signUp = await signUpOrRecover(email, wachtwoord, naam);
   const userId = signUp.user?.id;
   if (!userId) throw new Error("Kon geen account aanmaken.");
   if (!signUp.session) throw new Error("EMAIL_CONFIRM_REQUIRED");
@@ -187,12 +202,7 @@ export async function signUpWithCode({ naam, email, telefoon, wachtwoord, code }
   const preview = await previewCompanyByCode(code);
   if (!preview) throw new Error("INVALID_CODE");
 
-  const { data: signUp, error: signErr } = await supabase.auth.signUp({
-    email,
-    password: wachtwoord,
-    options: { data: { naam } },
-  });
-  if (signErr) throw signErr;
+  const signUp = await signUpOrRecover(email, wachtwoord, naam);
   if (!signUp.user?.id) throw new Error("Kon geen account aanmaken.");
 
   // Zonder actieve sessie (e-mailbevestiging aan) kan de koppeling niet — meld dat netjes.
@@ -444,6 +454,19 @@ async function currentUserId() {
 // Debounce-timer PER bedrijf, zodat een save voor bedrijf A niet wordt gewist
 // als (de superadmin) net bedrijf B bewerkt.
 const saveTimers = {};
+// Annuleer een nog niet afgevuurde debounce-save. Nodig bij een (realtime-)
+// refresh: de geplande save draagt de snapshot van vóór de refresh en zou
+// daarmee net-binnengekomen wijzigingen van collega's overschrijven voor alle
+// sleutels zonder server-side merge (planning, voertuigen, onderdelen, ...).
+// De lokale state is op dat moment toch al vervangen door de servercopie, dus
+// er gaat niets verloren dat de gebruiker nog op het scherm ziet.
+export function cancelPendingSave(companyId, onStatus) {
+  if (saveTimers[companyId] == null) return false;
+  clearTimeout(saveTimers[companyId]);
+  delete saveTimers[companyId];
+  onStatus?.("saved");
+  return true;
+}
 // Slaat de dataset op met een status-callback zodat de UI kan tonen of het echt
 // bewaard is: onStatus("pending" | "saving" | "saved" | "error"). Voor de
 // werkplaats (role="garage") loopt het via save_company_state, die de kosten
@@ -453,6 +476,7 @@ export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
   clearTimeout(saveTimers[companyId]);
   onStatus?.("pending");
   saveTimers[companyId] = setTimeout(async () => {
+    delete saveTimers[companyId]; // vanaf hier is annuleren niet meer mogelijk
     onStatus?.("saving");
     try {
       // Wachtwoorden horen nooit in de bedrijfsdataset te belanden (plaintext in
@@ -492,7 +516,12 @@ export async function uploadReportMedia(companyId, reportId, items) {
     const ext = ((m.file.name || "").split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
     const path = `${companyId}/${reportId}/${i}-${Math.round(Math.random() * 1e9)}.${ext}`;
     const { error } = await supabase.storage.from("meldingen").upload(path, m.file, { contentType: m.file.type || undefined, upsert: false });
-    if (error) throw error;
+    if (error) {
+      // Ruim al gelukte uploads van deze batch op (best effort): de melding
+      // gaat er nooit naar verwijzen, dus anders blijven ze als wezen staan.
+      if (out.length) { try { await supabase.storage.from("meldingen").remove(out.map((x) => x.path)); } catch { /* noop */ } }
+      throw error;
+    }
     out.push({ path, type: m.type === "video" ? "video" : "foto" });
   }
   return out;

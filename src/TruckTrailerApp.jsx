@@ -6,9 +6,9 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin
 } from "lucide-react";
-import { saveStateDebounced, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, cancelPendingSave, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
-import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed } from "./offlineQueue.js";
+import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed, isNetworkError, enqueueCheck, enqueueRideCompletion } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
 import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, notifyUser, registerSW } from "./push.js";
 
@@ -452,6 +452,9 @@ const PRIO_META = new Proxy({
 }, { get: (t, k) => t[k] || { label: typeof k === "string" && k ? k : "—", color: "#98A1B0" } });
 const PRIO_RANK = { kritiek: 0, gemiddeld: 1, laag: 2 };
 
+// Vertaalsleutels per status, voor de chauffeursschermen (de werkvloer zelf is
+// Nederlands; de chauffeur ziet de status in zijn eigen taal).
+const STATUS_KEY = { nieuw: "stNieuw", in_behandeling: "stBehandeling", wacht_onderdeel: "stOnderdeel", klaar: "stKlaar" };
 const KANBAN_COLS = [
   { id: "nieuw", label: "Nieuw" },
   { id: "in_behandeling", label: "In behandeling" },
@@ -1004,9 +1007,9 @@ function MeldingMaken({ vehicles, onSubmit, currentUser, onUploadMedia }) {
     return hits >= 2 || (wb.length > 0 && hits / wb.length >= 0.5);
   };
   const similarExisting = omschrijving.trim() ? openReports.find((r) => looksSimilar(omschrijving, r.omschrijving)) : null;
-  // Labels afleiden uit KANBAN_COLS zodat de chauffeur nooit een ruwe statuscode
-  // (bv. "in_behandeling") ziet — altijd de nette tekst.
-  const STATUS_LABEL = Object.fromEntries(KANBAN_COLS.map((c) => [c.id, c.label]));
+  // Labels in de taal van de chauffeur, zodat hij nooit een ruwe statuscode
+  // (bv. "in_behandeling") of onvertaald Nederlands ziet.
+  const STATUS_LABEL = Object.fromEntries(KANBAN_COLS.map((c) => [c.id, t(STATUS_KEY[c.id]) || c.label]));
   // Banner met openstaande meldingen voor de gekozen wagen (render-helper, geen component).
   const openBanner = () => (
     openReports.length === 0 ? null : (
@@ -1746,7 +1749,10 @@ async function flushUrenRetry(u) {
       if (op.t === "add" && op.e) { await driverSaveHours(op.e); markUrenSynced(u, op.e.id); }
       else if (op.t === "del" && op.id) await driverDeleteHours(op.id);
       doneKeys.add(op.k || JSON.stringify(op));
-    } catch {
+    } catch (e) {
+      // Id-botsing met andermans registratie: deze op kan nóóit slagen — uit
+      // de wachtrij halen (de regel blijft lokaal staan, niet synced).
+      if (/HOURS_ID_CONFLICT/.test(String(e?.message || ""))) { doneKeys.add(op.k || JSON.stringify(op)); continue; }
       break; // nog steeds geen verbinding/fout: rest blijft staan voor later
     }
   }
@@ -2250,7 +2256,12 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
           melding niet verloren gaat als de chauffeur even naar check/uren kijkt. */}
       {tab === "uren" && <UrenRegistratie currentUser={currentUser} serverUren={myServerUren} onSyncAdd={onSyncUurAdd} onSyncDelete={onSyncUurDelete} />}
       {tab === "ritten" && <RittenTab myRides={myRides} onCompleteRide={onCompleteRide} />}
-      {tab === "check" && <VoertuigCheck vehicles={vehicles} currentUser={currentUser} myChecks={myChecks} onSaveCheck={onSaveCheck} onSubmitReport={onSubmit} />}
+      {/* Net als de melding-tab blijft de check gemount (display:none): een
+          half afgevinkte checklist mag niet verloren gaan als de chauffeur
+          even naar z'n ritten of uren kijkt. */}
+      <div style={{ display: tab !== "check" ? "none" : undefined }}>
+        <VoertuigCheck vehicles={vehicles} currentUser={currentUser} myChecks={myChecks} onSaveCheck={onSaveCheck} onSubmitReport={onSubmit} />
+      </div>
       <div className="space-y-6" style={{ display: tab !== "melding" ? "none" : undefined }}>
         <>
           <MeldingMaken vehicles={vehicles} onSubmit={onSubmit} currentUser={currentUser} onUploadMedia={onUploadMedia} />
@@ -2274,7 +2285,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
                         <div style={{ fontFamily: "Inter", color: "#E7ECF3", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.omschrijving}</div>
                         <div style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 11 }}>{r.datum}</div>
                       </div>
-                      <span className="text-xs px-2 py-1 rounded-full" style={{ color: statusColor(r.status), background: `${statusColor(r.status)}18`, fontFamily: "Inter", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{KANBAN_COLS.find((c) => c.id === r.status)?.label}</span>
+                      <span className="text-xs px-2 py-1 rounded-full" style={{ color: statusColor(r.status), background: `${statusColor(r.status)}18`, fontFamily: "Inter", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{t(STATUS_KEY[r.status]) || KANBAN_COLS.find((c) => c.id === r.status)?.label}</span>
                     </div>
                   </Card>
                 ))}
@@ -2636,7 +2647,9 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
     .sort((a, b) => Math.min(...a.items.map((i) => i.dagen ?? 9999)) - Math.min(...b.items.map((i) => i.dagen ?? 9999)));
   const sortedReports = [...reports].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
   const todayItems = planning.filter((p) => p.datum === TODAY).sort((a, b) => a.tijd.localeCompare(b.tijd));
-  const todayLabel = new Date(TODAY).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // "T00:00:00" erbij: anders parst JS de datum als UTC-middernacht en toont
+  // een toestel west van UTC de dag ervóór.
+  const todayLabel = new Date(TODAY + "T00:00:00").toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   return (
     <div className="space-y-5">
       <div>
@@ -4451,7 +4464,9 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
   const stopKlus = (p, linkedReport) => {
     const min = klusTimer ? Math.max(0, (Date.now() - klusTimer.startTs) / 60000) : 0;
     const urenVal = Math.max(0.25, Math.round(min / 15) * 0.25); // kwartieren, minimaal 15 min
-    saveKlusTimer(currentUser, null); setKlusTimer(null);
+    // De timer pas wissen als de werkbon écht is opgeslagen (in onComplete):
+    // sluit de monteur de modal per ongeluk (tik naast het venster), dan loopt
+    // de timer gewoon door en is de gemeten tijd niet weg.
     const naam = currentUser?.naam || "";
     setWerkbonInit({ uren: urenVal, monteur: mechanics.some((m) => m.naam === naam) ? naam : "" });
     // Geen gekoppelde melding (vrij ingeplande klus)? Dan een werkbon op basis
@@ -4499,7 +4514,7 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
     onSchedule({ id: "pl" + Date.now(), vehicle: r.vehicle, datum: schedForm.datum, tijd: schedForm.tijd, duur: Number(schedForm.duur) || 60, taak: r.omschrijving, monteur: schedForm.monteur || "—", reportId: r.id });
     onMove(r.id, "in_behandeling");
     setSchedFor(null);
-    const d = new Date(schedForm.datum).toLocaleDateString("nl-NL", { day: "numeric", month: "long" });
+    const d = new Date(schedForm.datum + "T00:00:00").toLocaleDateString("nl-NL", { day: "numeric", month: "long" });
     setToast(`${r.vehicle} ingepland op ${d} om ${schedForm.tijd}.`);
   };
 
@@ -4658,6 +4673,9 @@ function WorkfloorView({ reports, onMove, onDelete, onSchedule, mechanics = [], 
           onClose={() => { setWerkbonFor(null); setWerkbonInit(null); }}
           onComplete={(cost) => {
             onAddCost && onAddCost(cost);
+            // Kwam deze werkbon uit de klus-timer (werkbonInit gezet)? Dan is
+            // de tijd nu veilig vastgelegd en mag de timer weg.
+            if (werkbonInit) { saveKlusTimer(currentUser, null); setKlusTimer(null); }
             const v = werkbonFor.vehicle;
             if (String(werkbonFor.id).startsWith("pl-")) {
               // Vrije klus zonder melding: er valt niets op "Klaar" te zetten,
@@ -5948,7 +5966,7 @@ function PlanningView({ vehicles, planning, reports, onAdd, onDelete, onRefresh,
         {/* Day agenda — visual timeline */}
         <Card className="p-5">
           <div className="flex items-center justify-between mb-3">
-            <div style={{ fontFamily: "Oswald", fontSize: 16, fontWeight: 600, color: "#E7ECF3", textTransform: "capitalize" }}>{new Date(selectedDate).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" })}</div>
+            <div style={{ fontFamily: "Oswald", fontSize: 16, fontWeight: 600, color: "#E7ECF3", textTransform: "capitalize" }}>{new Date(selectedDate + "T00:00:00").toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" })}</div>
             <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>{dayItems.length} afspra{dayItems.length === 1 ? "ak" : "ken"}</span>
           </div>
 
@@ -7754,7 +7772,18 @@ export default function TruckGarageApp({ session, onLogout }) {
   // identiteit afgedwongen); demo: alleen lokaal. Push naar beheer/werkplaats
   // gebeurt via de melding die VoertuigCheck bij gebreken zelf indient.
   const addCheck = async (c) => {
-    if (live && role === "chauffeur") await driverAddCheck(c);
+    // Elke medewerker (ook een meerijdende beheerder) syncet z'n check via de
+    // RPC — de autosave-dataset bevat checks niet, dus zonder sync zou de
+    // check van een admin/werkplaats-gebruiker bij herladen verdwijnen.
+    // Zonder bereik: in de offline-wachtrij. De dagelijkse check gebeurt juist
+    // vaak op plekken zonder dekking en mag nooit hard falen.
+    if (live) {
+      try { await driverAddCheck(c); }
+      catch (e) {
+        if (isNetworkError(e)) enqueueCheck(c, session?.profile?.id || null);
+        else throw e;
+      }
+    }
     setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
   };
   // Uren van de chauffeur: naar de gedeelde kopie (loonoverzicht) + live sync.
@@ -7763,15 +7792,22 @@ export default function TruckGarageApp({ session, onLogout }) {
   const syncUurAdd = (e) => {
     const entry = { ...e, chauffeurId: currentUser?.id || null, chauffeur: currentUser?.naam || "Onbekend" };
     setUren((s) => ({ ...s, [companyId]: [entry, ...(s[companyId] || []).filter((x) => x.id !== entry.id)] }));
-    if (live && role === "chauffeur") {
+    // Ook voor admin/garage: de autosave-dataset bevat uren niet, dus zonder
+    // deze sync zouden hún registraties bij herladen verdwijnen.
+    if (live) {
       driverSaveHours(entry)
         .then(() => markUrenSynced(currentUser, entry.id))
-        .catch(() => queueUrenOp(currentUser, { t: "add", e: entry }));
+        .catch((err) => {
+          // Id-botsing met andermans registratie: nooit eindeloos opnieuw
+          // proberen; de regel blijft dan puur lokaal staan (niet synced, dus
+          // de reconciliatie ruimt hem ook nooit op).
+          if (!/HOURS_ID_CONFLICT/.test(String(err?.message || ""))) queueUrenOp(currentUser, { t: "add", e: entry });
+        });
     }
   };
   const syncUurDelete = (id) => {
     setUren((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
-    if (live && role === "chauffeur") {
+    if (live) {
       // Eventueel nog wachtende 'add' voor deze dag eerst schrappen, anders
       // zet een latere flush de verwijderde dag weer terug op de server.
       dropQueuedUrenAdd(currentUser, id);
@@ -7786,7 +7822,16 @@ export default function TruckGarageApp({ session, onLogout }) {
   };
   const deleteRide = (id) => setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).filter((x) => x.id !== id) }));
   const completeRide = async (rideId, pod) => {
-    if (live && role === "chauffeur") await driverCompleteRide(rideId, pod);
+    // Zonder bereik (bezorgadres in een loods/kelder) gaat de aflevering de
+    // offline-wachtrij in: de handtekening staat dan veilig op het toestel en
+    // wordt verstuurd zodra er weer verbinding is.
+    if (live) {
+      try { await driverCompleteRide(rideId, pod); }
+      catch (e) {
+        if (isNetworkError(e)) enqueueRideCompletion(rideId, pod, session?.profile?.id || null);
+        else throw e;
+      }
+    }
     setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === rideId ? { ...x, status: "afgeleverd", pod } : x)) }));
   };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
@@ -7812,7 +7857,14 @@ export default function TruckGarageApp({ session, onLogout }) {
         // Maar alleen dempen als er ook echt een autosave-relevante slice wordt
         // vervangen — anders blijft de demper gewapend staan en slikt hij de
         // eerstvolgende échte wijziging van de gebruiker in.
-        if ([fresh.reports, fresh.planning, fresh.vehicles, fresh.rides, fresh.costs].some(Array.isArray)) suppressSave.current = true;
+        if ([fresh.reports, fresh.planning, fresh.vehicles, fresh.rides, fresh.costs].some(Array.isArray)) {
+          suppressSave.current = true;
+          // Een nog geplande debounce-save draagt de snapshot van VÓÓR deze
+          // refresh en zou daarmee net-binnengekomen wijzigingen van collega's
+          // overschrijven (planning e.d. hebben geen server-side merge). De
+          // lokale state wordt zo meteen toch vervangen door de servercopie.
+          cancelPendingSave(companyId, setSaveStatus);
+        }
         if (Array.isArray(fresh.reports)) setReports((s) => ({ ...s, [companyId]: fresh.reports }));
         if (Array.isArray(fresh.planning)) setPlanning((s) => ({ ...s, [companyId]: fresh.planning }));
         if (Array.isArray(fresh.vehicles)) setVehicles((s) => ({ ...s, [companyId]: fresh.vehicles }));
