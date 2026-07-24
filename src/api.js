@@ -537,7 +537,13 @@ export async function uploadVehicleDocument(companyId, vehicleId, file, meta = {
   const path = `${companyId}/${vehicleId}/${Date.now()}-${Math.round(Math.random() * 1e9)}.${ext}`;
   const { error } = await supabase.storage.from("documenten").upload(path, file, { contentType: file.type || undefined, upsert: false });
   if (error) throw error;
-  return { path, name: file.name || `document.${ext}`, categorie: meta.categorie || "overig", size: file.size || 0, type: file.type || "", uploadedAt: new Date().toISOString() };
+  return {
+    path, name: file.name || `document.${ext}`, categorie: meta.categorie || "overig",
+    size: file.size || 0, type: file.type || "", uploadedAt: new Date().toISOString(),
+    // Optionele vervaldatum ("geldig tot"): de app waarschuwt dan op het
+    // dashboard en in de herinnerings-mail vóórdat het document verloopt.
+    ...(meta.geldigTot ? { geldigTot: meta.geldigTot } : {}),
+  };
 }
 
 // Tijdelijke (1 uur) link om een document te openen/downloaden.

@@ -556,22 +556,31 @@ app.all("/api/cron/reminders", async (req, res) => {
       } catch (e) { console.error("RDW-sync fout voor bedrijf:", row.company_id, e?.message || e); }
     }
 
-    // STAP 2 — herinneringen op basis van de (zojuist ververste) datums.
+    // STAP 2 — herinneringen op basis van de (zojuist ververste) datums:
+    // voertuigkeuringen, chauffeurspapieren én documenten met een vervaldatum.
     let companiesMailed = 0, itemsFound = 0;
     const CHECKS = [
       { veld: "apkTot", label: "APK" },
       { veld: "verzekeringTot", label: "Verzekering" },
       { veld: "tachoTot", label: "Tachograaf" },
     ];
+    const DRIVER_CHECKS = [
+      { veld: "rijbewijsTot", label: "Rijbewijs C/CE" },
+      { veld: "code95Tot", label: "Code 95" },
+      { veld: "medischTot", label: "Medische keuring", skip: (d) => d.medischNvt },
+      { veld: "adrTot", label: "ADR-certificaat", skip: (d) => d.adrNvt },
+    ];
+    const adminEmailFor = (row, profiel) => adminByCompany[row.company_id]?.email
+      || ((profiel.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profiel.email)) ? profiel.email : null);
     for (const row of (states || [])) {
       const data = row.data || {};
       const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+      const drivers = Array.isArray(data.drivers) ? data.drivers : [];
       const profiel = data.bedrijfsprofiel || {};
       // Voorkeur: het e-mailadres van het ADMIN-profiel (alleen door de beheerder
       // zelf te wijzigen). Het bedrijfsprofiel is door de werkplaats aanpasbaar
       // en dient alleen als vangnet als er geen admin-adres bekend is.
-      const to = adminByCompany[row.company_id]?.email
-        || ((profiel.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profiel.email)) ? profiel.email : null);
+      const to = adminEmailFor(row, profiel);
       if (!to) continue;
       let items = [];
       for (const v of vehicles) {
@@ -580,6 +589,24 @@ app.all("/api/cron/reminders", async (req, res) => {
           const dl = daysUntil(v[c.veld]);
           if (dl != null && REMINDER_MILESTONES.includes(dl)) {
             items.push({ kenteken: v.kenteken, merk: v.merk || "", type: c.label, datum: v[c.veld], dagen: dl, key: `${v.kenteken}|${c.veld}|${v[c.veld]}|${dl}` });
+          }
+        }
+        // Documenten met een "geldig tot"-datum (polis, vergunning, ...).
+        for (const doc of (Array.isArray(v.documenten) ? v.documenten : [])) {
+          if (!doc || !doc.geldigTot) continue;
+          const dl = daysUntil(doc.geldigTot);
+          if (dl != null && REMINDER_MILESTONES.includes(dl)) {
+            items.push({ kenteken: v.kenteken, type: `Document: ${String(doc.name || "document").slice(0, 40)}`, datum: doc.geldigTot, dagen: dl, key: `doc|${v.kenteken}|${doc.path || doc.name}|${doc.geldigTot}|${dl}` });
+          }
+        }
+      }
+      // Chauffeurspapieren: rijbewijs, Code 95, medische keuring, ADR.
+      for (const d of drivers) {
+        for (const c of DRIVER_CHECKS) {
+          if (c.skip && c.skip(d)) continue;
+          const dl = daysUntil(d[c.veld]);
+          if (dl != null && REMINDER_MILESTONES.includes(dl)) {
+            items.push({ kenteken: d.naam || "Chauffeur", type: c.label, datum: d[c.veld], dagen: dl, key: `drv|${d.id || d.naam}|${c.veld}|${d[c.veld]}|${dl}` });
           }
         }
       }
@@ -611,10 +638,10 @@ app.all("/api/cron/reminders", async (req, res) => {
       const html = `
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a2129">
   <h1 style="font-size:20px;margin:0 0 4px">TRUCK &amp; TRAILER</h1>
-  <p style="font-size:15px;line-height:1.5;margin:16px 0">Herinnering: bij <b>${bedrijf}</b> verlopen binnenkort keuringen of verzekeringen.</p>
+  <p style="font-size:15px;line-height:1.5;margin:16px 0">Herinnering: bij <b>${bedrijf}</b> verlopen binnenkort keuringen, verzekeringen of papieren.</p>
   <table style="width:100%;border-collapse:collapse;font-size:13px;margin:12px 0">
     <thead><tr>
-      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Voertuig</th>
+      <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Voertuig / chauffeur</th>
       <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Type</th>
       <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Verloopt</th>
       <th style="text-align:left;padding:8px 10px;border-bottom:2px solid #d7dee7;color:#667085">Nog</th>
@@ -624,7 +651,7 @@ app.all("/api/cron/reminders", async (req, res) => {
   <p style="margin:20px 0"><a href="${appUrl}/app/vrachtwagens" style="background:#3B82F6;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold;font-size:14px;display:inline-block">Bekijk je vloot</a></p>
   <p style="font-size:12px;color:#98a1b0;margin-top:20px">Je krijgt deze mail omdat je beheerder bent in Truck &amp; Trailer.</p>
 </div>`;
-      const ok = await sendResendEmail(to, `Herinnering: keuring/verzekering verloopt (${items.length})`, html);
+      const ok = await sendResendEmail(to, `Herinnering: keuring of papieren verlopen binnenkort (${items.length})`, html);
       if (ok) {
         companiesMailed++;
         // Vastleggen wat verstuurd is, zodat een herhaalde aanroep vandaag niets
@@ -637,7 +664,104 @@ app.all("/api/cron/reminders", async (req, res) => {
         } catch { /* geen dedupe-log beschikbaar */ }
       }
     }
-    res.json({ ok: true, companiesMailed, itemsFound, rdwCompaniesUpdated, rdwVehiclesUpdated });
+    // STAP 3 — weekoverzicht: elke maandag één samenvattingsmail per bedrijf
+    // (meldingen, ritten, kosten, uren en wat er de komende maand verloopt).
+    // Handmatig af te dwingen met ?weekly=1 (voor testen).
+    let weeklyMailed = 0;
+    const amsWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "Europe/Amsterdam" }).format(new Date());
+    if (amsWeekday === "Mon" || String(req.query.weekly || "") === "1") {
+      const todayIso2 = new Date().toISOString().slice(0, 10);
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      const weekKey = `weekly|${todayIso2}`;
+      // "HH:MM"-verschil in minuten (nachtdienst +24u, pauze 45 min eraf).
+      const workedMin = (start, eind, pauze) => {
+        const p = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+        const a = p(start), b = p(eind);
+        if (a == null || b == null || a === b) return 0;
+        let d = b - a; if (d < 0) d += 1440;
+        return Math.max(0, d - (pauze ? 45 : 0));
+      };
+      const fmtUren = (min) => `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+      for (const row of (states || [])) {
+        const data = row.data || {};
+        const profiel = data.bedrijfsprofiel || {};
+        const to = adminEmailFor(row, profiel);
+        if (!to) continue;
+        const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+        const reports = Array.isArray(data.reports) ? data.reports : [];
+        if (!vehicles.length && !reports.length) continue; // slapend/leeg bedrijf: geen mail
+        // Dedupe: deze week al verstuurd? (retry van de cron mag niet dubbel mailen)
+        try {
+          const { data: logged } = await supaAdmin.from("reminder_log").select("item_key")
+            .eq("company_id", row.company_id).eq("sent_on", todayIso2).eq("item_key", weekKey);
+          if (Array.isArray(logged) && logged.length) continue;
+        } catch { /* geen log-tabel: gewoon mailen */ }
+        const rides = Array.isArray(data.rides) ? data.rides : [];
+        const costs = Array.isArray(data.costs) ? data.costs : [];
+        const uren = Array.isArray(data.uren) ? data.uren : [];
+        const drivers = Array.isArray(data.drivers) ? data.drivers : [];
+        const openMeldingen = reports.filter((r) => r.status !== "klaar").length;
+        const kritiek = reports.filter((r) => r.status !== "klaar" && r.prioriteit === "kritiek").length;
+        const nieuwWeek = reports.filter((r) => (r.datum || "") >= weekAgo).length;
+        const afgeleverd = rides.filter((r) => r.status === "afgeleverd" && ((r.pod && r.pod.datum) || r.datum || "") >= weekAgo).length;
+        const kostenWeek = costs.filter((c) => (c.datum || "") >= weekAgo).reduce((a, c) => a + (Number(c.bedrag) || 0), 0);
+        const urenWeek = uren.filter((u) => (u.datum || "") >= weekAgo).reduce((a, u) => a + workedMin(u.start, u.eind, u.pauze), 0);
+        // Wat verloopt er de komende 30 dagen (keuringen, papieren, documenten)?
+        const expiring = [];
+        for (const v of vehicles) {
+          for (const c of CHECKS) {
+            if (c.veld === "tachoTot" && !v.tachoPlicht) continue;
+            const dl = daysUntil(v[c.veld]);
+            if (dl != null && dl >= 0 && dl <= 30) expiring.push({ wat: v.kenteken, type: c.label, dagen: dl });
+          }
+          for (const doc of (Array.isArray(v.documenten) ? v.documenten : [])) {
+            if (!doc || !doc.geldigTot) continue;
+            const dl = daysUntil(doc.geldigTot);
+            if (dl != null && dl >= 0 && dl <= 30) expiring.push({ wat: v.kenteken, type: `Document: ${String(doc.name || "document").slice(0, 30)}`, dagen: dl });
+          }
+        }
+        for (const d of drivers) {
+          for (const c of DRIVER_CHECKS) {
+            if (c.skip && c.skip(d)) continue;
+            const dl = daysUntil(d[c.veld]);
+            if (dl != null && dl >= 0 && dl <= 30) expiring.push({ wat: d.naam || "Chauffeur", type: c.label, dagen: dl });
+          }
+        }
+        expiring.sort((a, b) => a.dagen - b.dagen);
+        const bedrijf = esc(profiel.bedrijfsnaam || adminByCompany[row.company_id]?.naam || "je bedrijf");
+        const appUrl = (process.env.APP_URL || "https://truckandtrailer.nl").replace(/\/+$/, "");
+        const stat = (label, value) => `<td style="padding:10px 12px;border:1px solid #eef1f5;border-radius:8px"><div style="font-size:20px;font-weight:bold;color:#0A0E14">${value}</div><div style="font-size:12px;color:#667085">${label}</div></td>`;
+        const expRows = expiring.slice(0, 10).map((e) => `<tr><td style="padding:6px 10px;border-bottom:1px solid #eef1f5;font-weight:bold;color:#0A0E14">${esc(e.wat)}</td><td style="padding:6px 10px;border-bottom:1px solid #eef1f5;color:#475467">${esc(e.type)}</td><td style="padding:6px 10px;border-bottom:1px solid #eef1f5;color:${e.dagen <= 7 ? "#F0453F" : "#B54708"};font-weight:bold">${e.dagen === 0 ? "vandaag" : `over ${e.dagen} dagen`}</td></tr>`).join("");
+        const html = `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a2129">
+  <h1 style="font-size:20px;margin:0 0 4px">TRUCK &amp; TRAILER</h1>
+  <p style="font-size:15px;line-height:1.5;margin:16px 0">Je weekoverzicht voor <b>${bedrijf}</b>:</p>
+  <table style="width:100%;border-collapse:separate;border-spacing:6px;font-size:13px"><tr>
+    ${stat("Open meldingen", openMeldingen)}${stat("Waarvan kritiek", kritiek)}${stat("Nieuw deze week", nieuwWeek)}
+  </tr><tr>
+    ${stat("Ritten afgeleverd", afgeleverd)}${stat("Kosten deze week", "€ " + Math.round(kostenWeek).toLocaleString("nl-NL"))}${stat("Uren geregistreerd", fmtUren(urenWeek))}
+  </tr></table>
+  ${expiring.length ? `
+  <p style="font-size:14px;font-weight:bold;margin:18px 0 6px">Verloopt de komende 30 dagen:</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">${expRows}</table>
+  ${expiring.length > 10 ? `<p style="font-size:12px;color:#667085">+ nog ${expiring.length - 10} andere — zie de app.</p>` : ""}` : `
+  <p style="font-size:13px;color:#12B76A;margin:18px 0 6px">Er verloopt de komende 30 dagen niets — alles is op orde.</p>`}
+  <p style="margin:20px 0"><a href="${appUrl}/app" style="background:#3B82F6;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:bold;font-size:14px;display:inline-block">Open het dashboard</a></p>
+  <p style="font-size:12px;color:#98a1b0;margin-top:20px">Je krijgt dit weekoverzicht elke maandag omdat je beheerder bent in Truck &amp; Trailer.</p>
+</div>`;
+        const ok = await sendResendEmail(to, `Weekoverzicht ${profiel.bedrijfsnaam || ""}`.trim(), html);
+        if (ok) {
+          weeklyMailed++;
+          try {
+            await supaAdmin.from("reminder_log").upsert(
+              [{ company_id: row.company_id, item_key: weekKey, sent_on: todayIso2 }],
+              { onConflict: "company_id,item_key,sent_on", ignoreDuplicates: true }
+            );
+          } catch { /* geen dedupe-log */ }
+        }
+      }
+    }
+    res.json({ ok: true, companiesMailed, itemsFound, weeklyMailed, rdwCompaniesUpdated, rdwVehiclesUpdated });
   } catch (err) {
     console.error("reminders-cron fout:", err);
     res.status(500).json({ error: "Onverwachte serverfout bij herinneringen." });

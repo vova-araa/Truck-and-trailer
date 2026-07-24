@@ -376,6 +376,47 @@ function vehicleWorstCompliance(v, today = TODAY) {
   return vehicleComplianceItems(v, today).reduce((worst, it) => (order[it.status] > order[worst] ? it.status : worst), "ok");
 }
 
+// Documenten van een voertuig met een vervaldatum (verzekeringspolis,
+// keuringsrapport, vergunning, ...) tellen mee in de waarschuwingen, net als
+// APK/verzekering. Documenten zonder datum doen niet mee.
+function vehicleDocItems(v, today = TODAY) {
+  return (Array.isArray(v.documenten) ? v.documenten : [])
+    .filter((d) => d && d.geldigTot)
+    .map((d) => ({
+      key: "doc:" + (d.path || d.name || ""),
+      label: d.name || "Document",
+      datum: d.geldigTot,
+      status: complianceStatus(d.geldigTot, today),
+      dagen: daysUntil(d.geldigTot, today),
+    }));
+}
+
+// Werkbon-concept: een half ingevulde werkbon (onderdelen, uren, notities)
+// overleeft het sluiten van de modal en zelfs een herstart van de app — een
+// monteur raakt zo nooit zijn invoer kwijt door een misklik.
+const werkbonDraftKey = (rid) => `tt_werkbon_draft_${rid}`;
+function loadWerkbonDraft(rid) {
+  if (!rid) return null;
+  try { const d = JSON.parse(localStorage.getItem(werkbonDraftKey(rid)) || "null"); return d && typeof d === "object" ? d : null; } catch { return null; }
+}
+function saveWerkbonDraft(rid, d) {
+  if (!rid) return;
+  try { localStorage.setItem(werkbonDraftKey(rid), JSON.stringify(d)); } catch { /* opslag vol */ }
+}
+function clearWerkbonDraft(rid) {
+  if (!rid) return;
+  try { localStorage.removeItem(werkbonDraftKey(rid)); } catch { /* noop */ }
+}
+// Oude concepten (>30 dagen) opruimen zodat localStorage niet volloopt.
+function pruneWerkbonDrafts() {
+  try {
+    const cutoff = Date.now() - 30 * 86400000;
+    Object.keys(localStorage).filter((k) => k.startsWith("tt_werkbon_draft_")).forEach((k) => {
+      try { const d = JSON.parse(localStorage.getItem(k) || "null"); if (!d || !d.ts || d.ts < cutoff) localStorage.removeItem(k); } catch { localStorage.removeItem(k); }
+    });
+  } catch { /* noop */ }
+}
+
 // Regelgebaseerd voorspellend onderhoud — werkt altijd, ook zonder AI.
 // Kijkt naar APK/verzekering/tacho-datums, kilometerstand, leeftijd,
 // gezondheidsscore en terugkerende meldingen.
@@ -2622,7 +2663,7 @@ function ReportingView({ vehicles = [], reports = [], costs = [], planning = [],
   );
 }
 
-function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle, onLoadSample }) {
+function DashboardView({ vehicles, parts, reports, planning, costs = [], company, isAdmin, onNavigate, onSelectVehicle, onLoadSample, drivers = [] }) {
   const isMobile = useIsMobile();
   const openReports = reports.filter((r) => r.status !== "klaar").length;
   const critical = reports.filter((r) => r.prioriteit === "kritiek" && r.status !== "klaar").length;
@@ -2640,9 +2681,16 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
   const avgHealth = Math.round(vehicles.reduce((a, v) => a + v.health, 0) / (vehicles.length || 1));
   const inWorkshop = vehicles.filter((v) => v.status === "workshop").length;
   const go = (v) => onNavigate && onNavigate(v);
-  // Compliance alerts: vehicles with an expired or soon-expiring keuring
+  // Compliance alerts: voertuigen met een verlopen/bijna-verlopen keuring óf
+  // een document (polis, vergunning) waarvan de vervaldatum nadert.
   const complianceAlerts = vehicles
-    .map((v) => ({ vehicle: v, items: vehicleComplianceItems(v).filter((it) => it.status === "verlopen" || it.status === "binnenkort") }))
+    .map((v) => ({ vehicle: v, items: [...vehicleComplianceItems(v), ...vehicleDocItems(v)].filter((it) => it.status === "verlopen" || it.status === "binnenkort") }))
+    .filter((x) => x.items.length > 0)
+    .sort((a, b) => Math.min(...a.items.map((i) => i.dagen ?? 9999)) - Math.min(...b.items.map((i) => i.dagen ?? 9999)));
+  // Chauffeurspapieren (rijbewijs, Code 95, ADR, medische keuring) die aandacht
+  // nodig hebben — dezelfde behandeling als de voertuigkeuringen.
+  const driverAlerts = drivers
+    .map((d) => ({ driver: d, items: driverComplianceItems(d).filter((it) => it.status === "verlopen" || it.status === "binnenkort") }))
     .filter((x) => x.items.length > 0)
     .sort((a, b) => Math.min(...a.items.map((i) => i.dagen ?? 9999)) - Math.min(...b.items.map((i) => i.dagen ?? 9999)));
   const sortedReports = [...reports].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
@@ -2795,6 +2843,28 @@ function DashboardView({ vehicles, parts, reports, planning, costs = [], company
                       <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {items.map((it) => `${it.label}${it.status === "verlopen" ? " verlopen" : ` (${it.dagen}d)`}`).join(" · ")}
                       </div>
+                    </div>
+                  </div>
+                  {(() => { const worst = items.some((i) => i.status === "verlopen") ? "verlopen" : "binnenkort"; const meta = COMPLIANCE_META[worst]; return <span className="text-xs px-2 py-1 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{meta.label}</span>; })()}
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
+        {driverAlerts.length > 0 && (
+          <Card className="p-5" style={{ border: "1px solid #FF8A0055", background: "#FF8A000A" }}>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center justify-center rounded-full" style={{ width: 26, height: 26, background: "#FF8A0022" }}><Contact size={14} color="#FF8A00" /></div>
+              <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Chauffeurspapieren die aandacht nodig hebben</span>
+              <span className="rounded-full flex items-center justify-center" style={{ minWidth: 20, height: 20, padding: "0 6px", background: "#FF8A00", color: "#0A0E14", fontSize: 11, fontWeight: 700, fontFamily: "Inter" }}>{driverAlerts.length}</span>
+            </div>
+            <div className="space-y-2">
+              {driverAlerts.slice(0, 6).map(({ driver: d, items }) => (
+                <button key={d.id} onClick={() => go("drivers")} className="w-full text-left flex items-center justify-between gap-2 p-3 rounded-lg" style={{ background: "#12171F", border: "1px solid #232B38" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.naam}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {items.map((it) => `${it.label}${it.status === "verlopen" ? " verlopen" : ` (${it.dagen}d)`}`).join(" · ")}
                     </div>
                   </div>
                   {(() => { const worst = items.some((i) => i.status === "verlopen") ? "verlopen" : "binnenkort"; const meta = COMPLIANCE_META[worst]; return <span className="text-xs px-2 py-1 rounded" style={{ color: meta.color, border: `1px solid ${meta.color}55`, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>{meta.label}</span>; })()}
@@ -3269,6 +3339,7 @@ function VehicleDetailView({ vehicle, reports, planning, costs = [], checks = []
   const [note, setNote] = useState(vehicle.notitie || "");
   const docRef = useRef(null);
   const [docCat, setDocCat] = useState("kentekenbewijs");
+  const [docGeldig, setDocGeldig] = useState(""); // optionele vervaldatum van het document
   const [docBusy, setDocBusy] = useState(false);
   const [docErr, setDocErr] = useState("");
   const [confirmDoc, setConfirmDoc] = useState(null);
@@ -3328,8 +3399,9 @@ ${JSON.stringify(ctx)}`;
     if (file.size > 15 * 1024 * 1024) { setDocErr("Bestand is te groot (max 15 MB)."); return; }
     setDocBusy(true); setDocErr("");
     try {
-      const meta = await uploadVehicleDocument(companyId, vehicle.id, file, { categorie: docCat });
+      const meta = await uploadVehicleDocument(companyId, vehicle.id, file, { categorie: docCat, geldigTot: docGeldig });
       onUpdate({ ...vehicle, documenten: [meta, ...documenten] });
+      setDocGeldig("");
       setToast("Document toegevoegd.");
     } catch (e) {
       setDocErr("Uploaden mislukt: " + (e?.message || "onbekende fout"));
@@ -3460,6 +3532,9 @@ ${JSON.stringify(ctx)}`;
             <select className="tg-input" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={docCat} onChange={(e) => setDocCat(e.target.value)}>
               {DOC_CATS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
+            {/* Optionele vervaldatum: dan waarschuwt de app (dashboard + mail)
+                vóórdat bv. de polis of vergunning verloopt. */}
+            <input type="date" className="tg-input" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={docGeldig} onChange={(e) => setDocGeldig(e.target.value)} title="Geldig tot (optioneel)" aria-label="Geldig tot (optioneel)" />
             <input ref={docRef} type="file" accept=".pdf,image/*" hidden onChange={(e) => uploadDoc(e.target.files)} />
             <Button small icon={Plus} onClick={() => docRef.current?.click()} disabled={docBusy}>{docBusy ? "Uploaden…" : "Uploaden"}</Button>
           </div>
@@ -3475,7 +3550,10 @@ ${JSON.stringify(ctx)}`;
                   <FileText size={16} color="#A855F7" style={{ flexShrink: 0 }} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
-                    <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0" }}>{docCatLabel(d.categorie)}{d.uploadedAt ? ` · ${new Date(d.uploadedAt).toLocaleDateString("nl-NL")}` : ""}</div>
+                    <div style={{ fontFamily: "Inter", fontSize: 11, color: "#98A1B0" }}>
+                      {docCatLabel(d.categorie)}{d.uploadedAt ? ` · ${new Date(d.uploadedAt).toLocaleDateString("nl-NL")}` : ""}
+                      {d.geldigTot && (() => { const st = complianceStatus(d.geldigTot); const m = COMPLIANCE_META[st]; return <span style={{ color: st === "ok" ? "#98A1B0" : m.color, fontWeight: st === "ok" ? 400 : 700 }}>{" · geldig tot "}{new Date(d.geldigTot + "T00:00:00").toLocaleDateString("nl-NL")}{st === "verlopen" ? " (verlopen)" : st === "binnenkort" ? ` (nog ${daysUntil(d.geldigTot)}d)` : ""}</span>; })()}
+                    </div>
                   </div>
                 </button>
                 <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
@@ -4107,17 +4185,23 @@ function MaintenanceView({ maintenance, vehicles = [], onAdd, onUpdate, onDelete
 --------------------------------------------------------------------- */
 function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {}, onClose, onComplete, onUsePart, initUren = null, initMonteur = "" }) {
   const [monteur, setMonteur] = useState(initMonteur || mechanics[0]?.naam || "");
+  // Concept: eerdere invoer voor déze melding terughalen (overleeft sluiten van
+  // de modal én een herstart). initUren van de klus-timer wint van het concept
+  // (dat is de verse, zojuist gemeten tijd); de rest komt uit het concept.
+  const draft = useRef(loadWerkbonDraft(report?.id)).current;
+  const [draftRestored] = useState(!!draft);
+  useEffect(() => { pruneWerkbonDrafts(); }, []);
   // initUren: vooraf ingevuld door de klus-timer op de werkvloer.
-  const [uren, setUren] = useState(initUren != null ? String(initUren) : "1");
-  const [tarief, setTarief] = useState(() => (profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "65"));
-  const [lines, setLines] = useState([]);
+  const [uren, setUren] = useState(initUren != null ? String(initUren) : (draft?.uren ?? "1"));
+  const [tarief, setTarief] = useState(() => draft?.tarief ?? (profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "65"));
+  const [lines, setLines] = useState(Array.isArray(draft?.lines) ? draft.lines : []);
   const [pick, setPick] = useState("");
   const [customNaam, setCustomNaam] = useState("");
   const [customPrijs, setCustomPrijs] = useState("");
-  const [extraOms, setExtraOms] = useState("");
-  const [extraBedrag, setExtraBedrag] = useState("");
-  const [notities, setNotities] = useState(report?.omschrijving || "");
-  const [categorie, setCategorie] = useState("reparatie");
+  const [extraOms, setExtraOms] = useState(draft?.extraOms ?? "");
+  const [extraBedrag, setExtraBedrag] = useState(draft?.extraBedrag ?? "");
+  const [notities, setNotities] = useState(draft?.notities ?? (report?.omschrijving || ""));
+  const [categorie, setCategorie] = useState(draft?.categorie || "reparatie");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
@@ -4127,6 +4211,12 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
   const signedRef = useRef(false);
 
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+
+  // Elke wijziging als concept bewaren (tot de werkbon echt is opgeslagen).
+  useEffect(() => {
+    if (!report?.id || saved) return;
+    saveWerkbonDraft(report.id, { uren, tarief, lines, notities, categorie, extraOms, extraBedrag, ts: Date.now() });
+  }, [uren, tarief, lines, notities, categorie, extraOms, extraBedrag, saved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addLine = () => {
     const part = parts.find((p) => p.id === pick);
@@ -4247,6 +4337,7 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
       const blob = doc.output("blob");
       setPdfUrl(URL.createObjectURL(blob));
       setSaved(true);
+      clearWerkbonDraft(report?.id); // opgeslagen: concept is niet meer nodig
 
       // Gebruikte onderdelen van de voorraad afboeken.
       if (onUsePart) lines.forEach((l) => { if (l.partId) onUsePart(l.partId, l.aantal); });
@@ -4273,6 +4364,12 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
           <button onClick={onClose} aria-label="Sluiten"><X size={20} color="#B4BCC9" /></button>
         </div>
         <div className="p-5 space-y-4">
+          {draftRestored && !saved && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "#3B82F612", border: "1px solid #3B82F644" }}>
+              <FileText size={13} color="#8FB8FF" style={{ flexShrink: 0 }} />
+              <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>Concept hersteld — je eerdere invoer voor deze werkbon is bewaard gebleven.</span>
+            </div>
+          )}
           <div><FieldLabel>Uitgevoerd werk</FieldLabel><textarea className="tg-input w-full" rows={2} value={notities} onChange={(e) => setNotities(e.target.value)} /></div>
           <div><FieldLabel>Monteur</FieldLabel>{mechanics.length > 0 ? <select className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)}>{mechanics.map((m) => <option key={m.id}>{m.naam}</option>)}</select> : <input className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)} />}</div>
           <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
@@ -6815,7 +6912,7 @@ function SidebarContent({ view, setView, openCount, company, currentUser, role, 
 /* ---------------------------------------------------------------------
    CHAUFFEURS — certificatenbeheer (rijbewijs, Code 95, ADR, medische keuring)
 --------------------------------------------------------------------- */
-function ChauffeursView({ drivers, onAdd, onUpdate, onDelete, uren = [], isAdmin = false }) {
+function ChauffeursView({ drivers, onAdd, onUpdate, onDelete, uren = [], isAdmin = false, profiel = {}, company = null }) {
   const isMobile = useIsMobile();
   const blank = () => ({ naam: "", telefoon: "", rijbewijsTot: "", code95Tot: "", adrTot: "", medischTot: "", adrNvt: false, medischNvt: false });
   const [open, setOpen] = useState(false);
@@ -6941,6 +7038,57 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete, uren = [], isAdmin
             .map((u) => { const w = workedMinutes(u.start, u.eind, u.pauze); return [u.chauffeur || "", u.datum, u.start, u.eind, u.pauze ? "45" : "0", w == null ? "" : fmtDecUur(w), u.note || ""]; });
           downloadCSV(`loonexport-${urenMaand}.csv`, ["Chauffeur", "Datum", "Begin", "Einde", "Pauze (min)", "Uren", "Notitie"], data);
         };
+        // Maandstaat-PDF: één pagina per chauffeur, klaar om te ondertekenen en
+        // door te sturen naar het loonbureau.
+        const exportMaandstaat = async () => {
+          const { jsPDF } = await import("jspdf");
+          const doc = new jsPDF({ unit: "mm", format: "a4" });
+          const maandLabel = new Date(urenMaand + "-01T00:00:00").toLocaleDateString("nl-NL", { month: "long", year: "numeric" });
+          const perNaam = {};
+          [...maandUren]
+            .sort((a, b) => (a.datum || "").localeCompare(b.datum || "") || (a.start || "").localeCompare(b.start || ""))
+            .forEach((u) => { const k = u.chauffeur || "Onbekend"; (perNaam[k] = perNaam[k] || []).push(u); });
+          const namen = Object.keys(perNaam).sort((a, b) => a.localeCompare(b));
+          const M = 20, R = 190;
+          namen.forEach((naam, idx) => {
+            if (idx > 0) doc.addPage();
+            let y = 22;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+            doc.text("MAANDSTAAT URENREGISTRATIE", M, y); y += 7;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(90);
+            doc.text(`${profiel.bedrijfsnaam || company?.name || ""}`, M, y); y += 5;
+            doc.setTextColor(0);
+            doc.text(`Chauffeur: ${naam}`, M, y);
+            doc.text(`Maand: ${maandLabel}`, R, y, { align: "right" }); y += 8;
+            // Tabelkop
+            doc.setDrawColor(200); doc.line(M, y, R, y); y += 5;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+            doc.text("Datum", M, y); doc.text("Begin", M + 34, y); doc.text("Einde", M + 54, y); doc.text("Pauze", M + 74, y); doc.text("Uren", M + 94, y); doc.text("Notitie", M + 112, y);
+            y += 2; doc.line(M, y, R, y); y += 5;
+            doc.setFont("helvetica", "normal");
+            let totMin = 0; const dagen = new Set();
+            perNaam[naam].forEach((u) => {
+              if (y > 262) { doc.addPage(); y = 22; }
+              const w = workedMinutes(u.start, u.eind, u.pauze) || 0;
+              totMin += w; dagen.add(u.datum);
+              doc.text(u.datum || "", M, y); doc.text(u.start || "", M + 34, y); doc.text(u.eind || "", M + 54, y);
+              doc.text(u.pauze ? "45 min" : "—", M + 74, y); doc.text(fmtHM(w), M + 94, y);
+              doc.text(String(u.note || "").slice(0, 38), M + 112, y);
+              y += 6;
+            });
+            y += 2; doc.setDrawColor(120); doc.line(M, y, R, y); y += 6;
+            doc.setFont("helvetica", "bold");
+            doc.text(`Totaal: ${fmtHM(totMin)} uur (${fmtDecUur(totMin)} decimaal) over ${dagen.size} ${dagen.size === 1 ? "dag" : "dagen"}`, M, y);
+            // Handtekeningvakken onderaan de pagina
+            const sy = 275;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+            doc.setDrawColor(160);
+            doc.line(M, sy, M + 70, sy); doc.text("Handtekening chauffeur", M, sy + 5);
+            doc.line(R - 70, sy, R, sy); doc.text("Handtekening werkgever", R - 70, sy + 5);
+            doc.setTextColor(0); doc.setFontSize(10);
+          });
+          doc.save(`maandstaat-${urenMaand}.pdf`);
+        };
         return (
           <Card className="p-5">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -6951,6 +7099,7 @@ function ChauffeursView({ drivers, onAdd, onUpdate, onDelete, uren = [], isAdmin
               <div className="flex items-center gap-2">
                 <input type="month" className="tg-input" style={{ padding: "6px 8px", fontSize: 12.5, width: "auto" }} value={urenMaand} onChange={(e) => setUrenMaand(e.target.value)} aria-label="Maand kiezen" />
                 <Button small variant="ghost" icon={Download} onClick={exportLoon} disabled={maandUren.length === 0}>Loonexport CSV</Button>
+                <Button small variant="ghost" icon={FileText} onClick={exportMaandstaat} disabled={maandUren.length === 0}>Maandstaat PDF</Button>
               </div>
             </div>
             {rows.length === 0 ? (
@@ -8100,7 +8249,7 @@ export default function TruckGarageApp({ session, onLogout }) {
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
-                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
+                {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} drivers={cDrivers} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
                 {view === "driver" && <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "rides" && isAdmin && modOn(cModules, "rides") && <RidesView rides={cRides} vehicles={cVehicles} users={cUsers} profiel={cProfiel} company={company} onAdd={addRide} onDelete={deleteRide} />}
@@ -8121,7 +8270,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}
                 {view === "users" && isAdmin && <UsersView users={cUsers} onAdd={addUser} onResend={resendInvite} onDelete={deleteUser} currentUserId={currentUser.id} joinCode={live ? company.join_code : null} companyName={company.name} live={live} onCreateAccount={live && canCreateAccounts ? createEmployeeAccount : null} onInviteEmail={live && canCreateAccounts ? inviteEmployeeByEmail : null} />}
-                {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} uren={cUren} isAdmin={isAdmin} />}
+                {view === "drivers" && modOn(cModules, "drivers") && <ChauffeursView drivers={cDrivers} onAdd={addDriver} onUpdate={updateDriver} onDelete={deleteDriver} uren={cUren} isAdmin={isAdmin} profiel={cProfiel} company={company} />}
                 {view === "settings" && (role === "admin" || role === "garage") && <SettingsView mechanics={mechanics} availability={cAvailability} hours={cHours} onSetMechanicWeek={setMechanicWeek} onSetHours={setCompanyHours} onLoadSample={live && isAdmin ? loadSampleData : null} onClearData={live && isAdmin ? clearAllData : null} hasData={cVehicles.length + cReports.length + cPlanning.length > 0} modules={cModules} onSetModule={isAdmin ? setModule : null} live={live} onReplayTutorial={replayTutorial} subscription={live ? company : null} onCancelSub={isAdmin ? cancelSub : null} onReactivateSub={isAdmin ? reactivateSub : null} profiel={cProfiel} onSaveProfiel={isAdmin ? saveBedrijfsprofiel : null} companyName={company.name} />}
                 {view === "codes" && isSuperAdmin && <CodesView live={live} companies={companies} />}
                 {view === "support" && isSuperAdmin && <SupportInboxView live={live} />}
