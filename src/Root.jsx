@@ -11,7 +11,7 @@ import TruckTrailerApp from "./TruckTrailerApp.jsx";
 // /activeren). Een uitnodigings-/herstel-link opent het wachtwoord-scherm.
 // Privacy/Voorwaarden staan nog "offline" (worden aan het eind afgemaakt).
 // Zet op true zodra de teksten definitief zijn — dan werken de routes + links.
-const LEGAL_LIVE = false;
+const LEGAL_LIVE = true;
 
 function zoneOf(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
