@@ -3,6 +3,7 @@ import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import AuthScreen from "./AuthScreen.jsx";
 import Landing from "./Landing.jsx";
 import { PrivacyPage, TermsPage } from "./Legal.jsx";
+import VlootCheck from "./VlootCheck.jsx";
 import { getSessionUser, getProfile, getCompany, loadState, signOut, loadAllCompaniesWithState, loadCompanyStateScoped, driverBootstrap, setOwnPassword } from "./api.js";
 import TruckTrailerApp from "./TruckTrailerApp.jsx";
 
@@ -17,6 +18,7 @@ function zoneOf(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
   if (LEGAL_LIVE && p === "/privacy") return "privacy";
   if (LEGAL_LIVE && p === "/voorwaarden") return "terms";
+  if (p === "/vloot-check" || p === "/vlootcheck") return "vlootcheck";
   if (p === "/demo" || p.startsWith("/demo/")) return "demo";
   if (p === "/app" || p.startsWith("/app/")) return "app";
   if (p === "/inloggen" || p === "/activeren" || p === "/aanmelden") return "auth";
@@ -98,6 +100,8 @@ export default function Root() {
   // Publieke pagina's zijn altijd bereikbaar (ook zonder/ met login).
   if (zone === "privacy") return <PrivacyPage onBack={() => navigate("/")} />;
   if (zone === "terms") return <TermsPage onBack={() => navigate("/")} />;
+  // Gratis RDW vloot-check: publieke leadmagneet, geen login nodig.
+  if (zone === "vlootcheck") return <VlootCheck onBack={() => navigate("/")} onDemo={() => navigate("/demo")} onActivate={() => navigate("/activeren")} />;
   // Klikbare demo (seed-data, geen login) — voor de rondleiding vanaf de landing.
   // De 'key' zorgt dat demo- en live-app nooit React-state delen (verse mount).
   if (zone === "demo") return <TruckTrailerApp key="demo" session={null} onLogout={() => navigate("/")} />;
@@ -117,7 +121,7 @@ export default function Root() {
   if (zone === "app" || zone === "auth") {
     return <AuthScreen onAuthed={boot} onBack={() => navigate("/")} initialMode={zone === "auth" && /activeren|aanmelden/i.test(routePath) ? "register" : "login"} />;
   }
-  return <Landing onLogin={() => navigate("/inloggen")} onActivate={() => navigate("/activeren")} onDemo={() => navigate("/demo")} onLegal={LEGAL_LIVE ? (p) => navigate(p) : null} />;
+  return <Landing onLogin={() => navigate("/inloggen")} onActivate={() => navigate("/activeren")} onDemo={() => navigate("/demo")} onLegal={LEGAL_LIVE ? (p) => navigate(p) : null} onVlootCheck={() => navigate("/vloot-check")} />;
 }
 
 function SetPasswordScreen({ onDone, onCancel }) {

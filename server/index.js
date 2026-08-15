@@ -452,6 +452,41 @@ async function rdwFetchPlates(plates) {
   return map;
 }
 
+// ---------- PUBLIEKE RDW VLOOT-CHECK (leadmagneet) ----------
+// Zonder account: plak je kentekens en zie direct welke APK's (bijna) verlopen.
+// Gebruikt dezelfde gratis RDW open data als de nachtelijke sync. Publiek maar
+// begrensd: per-IP rate limit en maximaal 50 kentekens per aanvraag.
+app.post("/api/vloot-check", async (req, res) => {
+  if (rateLimited("vc:" + (req.ip || "?"))) {
+    return res.status(429).json({ error: "Te veel aanvragen — probeer het over een minuut opnieuw." });
+  }
+  const raw = req.body?.kentekens;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return res.status(400).json({ error: "Geef een lijst kentekens mee." });
+  }
+  const plates = [...new Set(raw.map((p) => rdwPlate(p)).filter((p) => p.length >= 4 && p.length <= 8))].slice(0, 50);
+  if (!plates.length) return res.status(400).json({ error: "Geen geldige kentekens gevonden." });
+  try {
+    const map = await rdwFetchPlates(plates);
+    const results = plates.map((p) => {
+      const rec = map[p];
+      if (!rec) return { kenteken: p, gevonden: false };
+      const apk = rdwYmd(rec.vervaldatum_apk || "");
+      return {
+        kenteken: p,
+        gevonden: true,
+        merk: [rec.merk, rec.handelsbenaming].filter(Boolean).join(" "),
+        apk,
+        dagen: apk ? daysUntil(apk) : null,
+      };
+    });
+    res.json({ results });
+  } catch (e) {
+    console.error("vloot-check fout:", e?.message || e);
+    res.status(502).json({ error: "RDW is even niet bereikbaar — probeer het later opnieuw." });
+  }
+});
+
 // Werk één lijst voertuigen/trailers bij met RDW-data. Muteert niets: geeft
 // een nieuwe lijst + het aantal wijzigingen terug. APK-datum is leidend
 // (de RDW wéét het); merk/bouwjaar alleen invullen als ze nog leeg zijn.

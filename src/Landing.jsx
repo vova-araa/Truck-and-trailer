@@ -40,7 +40,9 @@ const TOUR_SRC = ["/landing/rapportage.webp", "/landing/kosten.webp"];
 const LN = {
   nl: {
     navActivate: "Bedrijf activeren", navLogin: "Inloggen",
-    badge: "Voor transport, koeriers en bestelbus-vloten",
+    badge: "Software voor transport, koeriers en bestelbus-vloten",
+    notGarage: "Op zoek naar een werkplaats voor onderhoud? Dat zijn wij niet — wij maken de software waarmee je je éigen vloot en werkplaats beheert.",
+    vcLink: "Gratis APK-check",
     h1a: "Eén app voor je wagenpark,", h1b: "chauffeurs en werkplaats",
     heroSub: "Chauffeurs melden problemen met een foto, doen hun dagelijkse voertuigcheck, tekenen ritten digitaal af en houden hun uren bij — in hun eigen taal. Jij ziet op kantoor de planning, kosten, keuringen en werkbonnen. Alles in één app die overal werkt.",
     ctaRequest: "Toegang aanvragen", ctaDemo: "Bekijk de demo", ctaLogin: "Inloggen",
@@ -109,7 +111,9 @@ const LN = {
   },
   en: {
     navActivate: "Activate company", navLogin: "Sign in",
-    badge: "For transport, couriers and van fleets",
+    badge: "Software for transport, couriers and van fleets",
+    notGarage: "Looking for a repair shop? That's not us — we build the software you use to run your own fleet and workshop.",
+    vcLink: "Free MOT check",
     h1a: "One app for your fleet,", h1b: "drivers and workshop",
     heroSub: "Drivers report problems with a photo, do their daily vehicle check, sign off deliveries digitally and track their hours — in their own language. You see planning, costs, inspections and job sheets at the office. Everything in one app that works everywhere.",
     ctaRequest: "Request access", ctaDemo: "View the demo", ctaLogin: "Sign in",
@@ -250,7 +254,7 @@ function Phone({ src, alt, style }) {
   );
 }
 
-export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
+export default function Landing({ onLogin, onActivate, onDemo, onLegal, onVlootCheck }) {
   // Taal van de marketingpagina: NL of EN, onthouden in de browser. Eerste
   // bezoek volgt de browsertaal.
   const [lang, setLang] = useState(() => {
@@ -372,6 +376,7 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
               <div style={{ display: "flex", gap: 12, marginTop: 28, flexWrap: "wrap" }}>
                 <button className="ln-btn ln-primary" onClick={scrollToForm}>{L.ctaRequest} <ArrowRight size={16} /></button>
                 {onDemo && <button className="ln-btn ln-ghost" onClick={onDemo}>{L.ctaDemo}</button>}
+                {onVlootCheck && <button className="ln-btn ln-ghost" onClick={onVlootCheck} style={{ borderColor: "#22D3B055", color: "#22D3B0" }}>{L.vcLink}</button>}
                 <button className="ln-btn ln-ghost" onClick={onLogin}>{L.ctaLogin}</button>
               </div>
             </Reveal>
@@ -381,6 +386,10 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><WifiOff size={14} color={TEAL} /> {L.heroTag2}</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><BellRing size={14} color={TEAL} /> {L.heroTag3}</span>
               </div>
+              {/* Disambiguatie: dit domein wordt verward met fysieke werkplaatsen
+                  (truckentrailer.nl e.a.). Eén eerlijke regel voorkomt verdwaalde
+                  bezoekers én maakt zoekmachines duidelijk dat dit software is. */}
+              <div style={{ marginTop: 16, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7585", maxWidth: 520, lineHeight: 1.5 }}>{L.notGarage}</div>
             </Reveal>
           </div>
 
@@ -599,6 +608,7 @@ export default function Landing({ onLogin, onActivate, onDemo, onLegal }) {
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#6B7585" }}>© {new Date().getFullYear()} Truck &amp; Trailer — {L.footer}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            {onVlootCheck && <button onClick={onVlootCheck} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Gratis APK-check</button>}
             {onLegal && <button onClick={() => onLegal("/privacy")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Privacy</button>}
             {onLegal && <button onClick={() => onLegal("/voorwaarden")} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>Voorwaarden</button>}
             <button onClick={onLogin} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: "#8FB8FF", background: "none", border: "none", cursor: "pointer" }}>{L.navLogin} →</button>

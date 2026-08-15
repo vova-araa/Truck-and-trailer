@@ -12,6 +12,7 @@ const KEY = "tt_offline_reports_v1";
 // bereik doet (terrein, loods, kelder) en die dus nooit hard mogen falen.
 const CHECK_KEY = "tt_offline_checks_v1";
 const RIDE_KEY = "tt_offline_rides_v1";
+const FUEL_KEY = "tt_offline_fuel_v1";
 
 function readKey(key) {
   try { const a = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
@@ -25,7 +26,7 @@ const write = (arr) => writeKey(KEY, arr);
 // Totaal aantal wachtende items (meldingen + checks + afleveringen) — voor de
 // "wacht op verbinding"-banner bij de chauffeur.
 export function queuedCount() {
-  return read().length + readKey(CHECK_KEY).length + readKey(RIDE_KEY).length;
+  return read().length + readKey(CHECK_KEY).length + readKey(RIDE_KEY).length + readKey(FUEL_KEY).length;
 }
 
 export function enqueueCheck(check, uid = null) {
@@ -42,6 +43,15 @@ export function enqueueRideCompletion(rideId, pod, uid = null) {
   if (rideId && !arr.some((it) => it.rideId === rideId)) {
     arr.push({ rideId, pod, uid });
     writeKey(RIDE_KEY, arr);
+  }
+  notify();
+}
+
+export function enqueueFuel(entry, uid = null) {
+  const arr = readKey(FUEL_KEY);
+  if (entry?.id && !arr.some((it) => it.entry && it.entry.id === entry.id)) {
+    arr.push({ entry, uid });
+    writeKey(FUEL_KEY, arr);
   }
   notify();
 }
@@ -110,7 +120,7 @@ async function flushAux(key, uid, send, label) {
   const arr = readKey(key);
   if (!arr.length) return;
   const outcome = new Map(); // index-key -> "sent" | "failed" | { attempts }
-  const idOf = (it) => it.check?.id || it.rideId;
+  const idOf = (it) => it.check?.id || it.rideId || it.entry?.id;
   for (const item of arr) {
     const id = idOf(item);
     if (item.uid !== uid || !id) continue; // andermans item: laten staan
@@ -135,7 +145,7 @@ export async function flushQueue() {
   if (flushing) return 0;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
   const arr = read();
-  if (!arr.length && !readKey(CHECK_KEY).length && !readKey(RIDE_KEY).length) return 0;
+  if (!arr.length && !readKey(CHECK_KEY).length && !readKey(RIDE_KEY).length && !readKey(FUEL_KEY).length) return 0;
   // Zonder geldige sessie niets proberen (en zeker niets als "poging" tellen):
   // de meldingen blijven staan tot de juiste gebruiker weer ingelogd is.
   let uid = null;
@@ -183,6 +193,10 @@ export async function flushQueue() {
       // te leveren — item opruimen i.p.v. eeuwig opnieuw proberen.
       if (error && !/RIDE_NOT_FOUND/.test(error.message || "")) throw error;
     }, "Aflevering");
+    await flushAux(FUEL_KEY, uid, async (it) => {
+      const { error } = await supabase.rpc("driver_add_fuel", { p_entry: it.entry });
+      if (error) throw error;
+    }, "Tankbeurt");
   } catch { /* volgende flush pakt de rest */ }
   flushing = false;
   notify();

@@ -588,7 +588,7 @@ begin
   chk := coalesce(p_check, '{}'::jsonb);
   if length(chk::text) > 32768 then raise exception 'CHECK_TOO_LARGE'; end if;
   select coalesce(jsonb_object_agg(k, chk -> k), '{}'::jsonb) into newchk
-    from unnest(array['id','vehicle','datum','tijd','items','issues','opmerking']) as k
+    from unnest(array['id','vehicle','datum','tijd','items','issues','opmerking','km']) as k
     where chk ? k;
   newchk := newchk
     || jsonb_build_object('chauffeurId', auth.uid()::text, 'chauffeur', coalesce(v_naam, 'Onbekend'));
@@ -607,8 +607,82 @@ begin
         select 1 from jsonb_array_elements(coalesce(data -> 'checks', '[]'::jsonb)) c
         where c ->> 'id' = kid
       ));
+  -- Km-stand meegegeven bij de check? Werk het voertuig bij — alleen omhoog,
+  -- zodat een typfout de teller nooit terugdraait. Zo houdt de dagelijkse
+  -- check de hele vloot actueel zonder extra administratie.
+  if (newchk ->> 'km') ~ '^[0-9]{1,7}$' then
+    update public.company_state
+      set data = jsonb_set(data, '{vehicles}', (
+            select coalesce(jsonb_agg(
+              case when v ->> 'kenteken' = newchk ->> 'vehicle'
+                        and (case when (v ->> 'km') ~ '^[0-9]+$' then (v ->> 'km')::bigint else 0 end) < (newchk ->> 'km')::bigint
+                   then v || jsonb_build_object('km', (newchk ->> 'km')::bigint)
+                   else v end), '[]'::jsonb)
+            from jsonb_array_elements(coalesce(data -> 'vehicles', '[]'::jsonb)) v
+          ))
+      where company_id = cid and jsonb_typeof(data -> 'vehicles') = 'array';
+  end if;
 end $$;
 grant execute on function public.driver_add_check(jsonb) to authenticated;
+
+-- Chauffeur registreert een tankbeurt: wordt automatisch een kostenregel
+-- (categorie 'brandstof') voor de baas én werkt de km-stand van het voertuig
+-- bij. Idempotent op id; bedrag begrensd; alleen het eigen bedrijf.
+create or replace function public.driver_add_fuel(p_entry jsonb)
+returns void language plpgsql security definer as $$
+declare cid uuid; v_naam text; e jsonb; eid text; liters numeric; bedrag numeric; km bigint; cost jsonb;
+begin
+  if auth.uid() is null then raise exception 'NOT_AUTHENTICATED'; end if;
+  select company_id, naam into cid, v_naam from public.profiles where id = auth.uid();
+  if cid is null then raise exception 'NO_COMPANY'; end if;
+  e := coalesce(p_entry, '{}'::jsonb);
+  if length(e::text) > 4096 then raise exception 'ENTRY_TOO_LARGE'; end if;
+  eid := e ->> 'id';
+  if eid is null or eid = '' or length(eid) > 100 then raise exception 'NO_ID'; end if;
+  liters := case when (e ->> 'liters') ~ '^[0-9]+([.][0-9]+)?$' then (e ->> 'liters')::numeric else null end;
+  bedrag := case when (e ->> 'bedrag') ~ '^[0-9]+([.][0-9]+)?$' then (e ->> 'bedrag')::numeric else null end;
+  km     := case when (e ->> 'km') ~ '^[0-9]{1,7}$' then (e ->> 'km')::bigint else null end;
+  if bedrag is null or bedrag <= 0 or bedrag > 100000 then raise exception 'BAD_AMOUNT'; end if;
+  cost := jsonb_build_object(
+    'id', eid,
+    'vehicle', left(coalesce(e ->> 'vehicle', ''), 20),
+    'categorie', 'brandstof',
+    'bedrag', round(bedrag),
+    'datum', coalesce(nullif(e ->> 'datum', ''), to_char(now(), 'YYYY-MM-DD')),
+    'omschrijving', 'Tankbeurt'
+      || case when liters is not null then ' ' || liters || ' L' else '' end
+      || case when km is not null then ' · km ' || km else '' end
+      || ' — ' || coalesce(v_naam, 'chauffeur')
+  );
+  insert into public.company_state (company_id, data) values (cid, '{}'::jsonb) on conflict (company_id) do nothing;
+  perform 1 from public.company_state where company_id = cid for update;
+  update public.company_state
+    set data = jsonb_set(coalesce(data, '{}'::jsonb), '{costs}', (
+          select coalesce(jsonb_agg(c), '[]'::jsonb) from (
+            select c from jsonb_array_elements(jsonb_build_array(cost) || coalesce(data -> 'costs', '[]'::jsonb)) c
+            limit 5000
+          ) sub
+        )),
+        updated_at = now()
+    where company_id = cid
+      and not exists (
+        select 1 from jsonb_array_elements(coalesce(data -> 'costs', '[]'::jsonb)) c
+        where c ->> 'id' = eid
+      );
+  if km is not null then
+    update public.company_state
+      set data = jsonb_set(data, '{vehicles}', (
+            select coalesce(jsonb_agg(
+              case when v ->> 'kenteken' = e ->> 'vehicle'
+                        and (case when (v ->> 'km') ~ '^[0-9]+$' then (v ->> 'km')::bigint else 0 end) < km
+                   then v || jsonb_build_object('km', km)
+                   else v end), '[]'::jsonb)
+            from jsonb_array_elements(coalesce(data -> 'vehicles', '[]'::jsonb)) v
+          ))
+      where company_id = cid and jsonb_typeof(data -> 'vehicles') = 'array';
+  end if;
+end $$;
+grant execute on function public.driver_add_fuel(jsonb) to authenticated;
 
 -- Chauffeur synchroniseert een uren-registratie (werkdag). De uren blijven
 -- offline-first op het toestel staan; dit is de kopie voor de beheerder

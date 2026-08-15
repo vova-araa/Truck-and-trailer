@@ -425,6 +425,13 @@ export async function driverAddCheck(check) {
   if (error) throw error;
 }
 
+// Tankbeurt registreren: wordt server-side een kostenregel (brandstof) voor de
+// baas en werkt de km-stand van het voertuig bij. Idempotent op id.
+export async function driverAddFuel(entry) {
+  const { error } = await supabase.rpc("driver_add_fuel", { p_entry: entry });
+  if (error) throw error;
+}
+
 // Rit aftekenen (Proof of Delivery): naam ontvanger + handtekening. De server
 // controleert dat de rit aan déze chauffeur is toegewezen.
 export async function driverCompleteRide(rideId, pod) {

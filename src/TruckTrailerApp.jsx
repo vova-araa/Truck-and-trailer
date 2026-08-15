@@ -4,11 +4,11 @@ import {
   AlertTriangle, Bell, Plus, Calendar, Camera, Video, X,
   CheckCircle2, Building2, Mic, MicOff, ChevronDown,
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin
+  ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin, Fuel
 } from "lucide-react";
-import { saveStateDebounced, cancelPendingSave, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, cancelPendingSave, driverAddFuel, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
-import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed, isNetworkError, enqueueCheck, enqueueRideCompletion } from "./offlineQueue.js";
+import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed, isNetworkError, enqueueCheck, enqueueRideCompletion, enqueueFuel } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
 import { pushSupported, getPushConfig, isPushSubscribed, subscribeToPush, unsubscribeFromPush, notifyCompany, notifyUser, registerSW } from "./push.js";
 
@@ -415,6 +415,45 @@ function pruneWerkbonDrafts() {
       try { const d = JSON.parse(localStorage.getItem(k) || "null"); if (!d || !d.ts || d.ts < cutoff) localStorage.removeItem(k); } catch { localStorage.removeItem(k); }
     });
   } catch { /* noop */ }
+}
+
+// Herbruikbare spraakknop: dicteren in plaats van typen (handschoenen, kou,
+// onderweg). Gebruikt de spraakherkenning van de browser in de taal van de
+// gebruiker; verbergt zichzelf als de browser het niet ondersteunt.
+function VoiceButton({ onText, compact = false }) {
+  const { t } = useT();
+  const [listening, setListening] = useState(false);
+  const [err, setErr] = useState("");
+  const recRef = useRef(null);
+  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  if (!SR) return null;
+  const toggle = () => {
+    if (listening && recRef.current) { recRef.current.stop(); return; }
+    let rec;
+    try { rec = new SR(); } catch { setErr(t("voiceNoMic")); return; }
+    const SPEECH_LANG = { nl: "nl-NL", en: "en-GB", pl: "pl-PL", ro: "ro-RO", bg: "bg-BG", uk: "uk-UA", ru: "ru-RU", tr: "tr-TR", hy: "hy-AM", ka: "ka-GE", lt: "lt-LT" };
+    rec.lang = SPEECH_LANG[getLang()] || "nl-NL";
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.onresult = (e) => { const text = e.results?.[0]?.[0]?.transcript; if (text) onText(text); setErr(""); };
+    rec.onend = () => setListening(false);
+    rec.onerror = (e) => {
+      setListening(false);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") setErr(t("voiceBlocked"));
+      else if (e.error === "no-speech") setErr(t("voiceNothing"));
+      else setErr(t("voiceFail"));
+    };
+    recRef.current = rec;
+    try { rec.start(); setListening(true); setErr(""); } catch { setErr(t("voiceNoMic")); }
+  };
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button type="button" onClick={toggle} title={listening ? t("listening") : t("speak")} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", background: listening ? "#F0453F18" : "#1A2129", color: listening ? "#F0453F" : "#B4BCC9", border: `1px solid ${listening ? "#F0453F55" : "#232B38"}` }}>
+        {listening ? <MicOff size={13} /> : <Mic size={13} />}{compact ? "" : ` ${listening ? t("listening") : t("speak")}`}
+      </button>
+      {err && <span style={{ fontFamily: "Inter", fontSize: 11, color: "#FF8A00" }}>{err}</span>}
+    </span>
+  );
 }
 
 // Regelgebaseerd voorspellend onderhoud — werkt altijd, ook zonder AI.
@@ -1605,6 +1644,7 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
   const [vehicle, setVehicle] = useState("");
   const [answers, setAnswers] = useState({}); // { idx: "ok" | "fout" }
   const [notes, setNotes] = useState({});
+  const [km, setKm] = useState(""); // optionele km-stand — houdt de vloot actueel
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null); // null | { issues }
   const [err, setErr] = useState("");
@@ -1629,6 +1669,7 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
       tijd: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
       chauffeur: currentUser?.naam || "Onbekend", chauffeurId: currentUser?.id || null,
       items, issues: failed.length,
+      ...(Number(km) > 0 ? { km: Math.round(Number(km)) } : {}),
     };
     try {
       await onSaveCheck(check);
@@ -1647,7 +1688,7 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
         });
       }
       setDone({ issues: failed.length });
-      setAnswers({}); setNotes({}); setVehicle("");
+      setAnswers({}); setNotes({}); setVehicle(""); setKm("");
     } catch (e) {
       setErr((e && e.message) || "Opslaan mislukte — probeer opnieuw.");
     } finally {
@@ -1716,16 +1757,129 @@ function VoertuigCheck({ vehicles, currentUser, myChecks = [], onSaveCheck, onSu
                   </div>
                 </div>
                 {answers[i] === "fout" && (
-                  <input className="tg-input w-full" style={{ marginTop: 8 }} placeholder={t("chkNotePh")} value={notes[i] || ""} onChange={(e) => setNotes((n) => ({ ...n, [i]: e.target.value }))} />
+                  <div className="flex items-center gap-2" style={{ marginTop: 8 }}>
+                    <input className="tg-input" style={{ flex: "1 1 0%", minWidth: 0 }} placeholder={t("chkNotePh")} value={notes[i] || ""} onChange={(e) => setNotes((n) => ({ ...n, [i]: e.target.value }))} />
+                    <VoiceButton compact onText={(txt) => setNotes((n) => ({ ...n, [i]: (n[i] ? n[i] + " " : "") + txt }))} />
+                  </div>
                 )}
               </div>
             ))}
+          </div>
+          {/* Km-stand (optioneel): één veldje bij de dagelijkse check houdt de
+              hele vloot actueel en voedt het onderhoudsadvies van de baas. */}
+          <div className="mt-3">
+            <FieldLabel>{t("kmOptional")}</FieldLabel>
+            <input type="number" inputMode="numeric" min="0" className="tg-input w-full" placeholder={t("kmPh")} value={km} onChange={(e) => setKm(e.target.value)} />
           </div>
           {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F", marginTop: 10 }}>{err}</div>}
           <div className="mt-4">
             <Button onClick={submit} disabled={busy || !allAnswered} style={{ width: "100%", justifyContent: "center" }}>
               {busy ? t("chkSending") : t("chkSend")}
             </Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   TANKREGISTRATIE (chauffeur)
+   Liters + bedrag + km-stand bij het tanken. Live gaat dit via driver_add_fuel
+   automatisch als kostenregel (brandstof) naar de baas en wordt de km-stand
+   van het voertuig bijgewerkt; offline in de wachtrij. Chauffeurs zien de
+   bedrijfskosten niet, dus een eigen lokaal lijstje toont hun laatste beurten.
+--------------------------------------------------------------------- */
+const tankKey = (u) => `tt_tank_${u?.id || u?.email || "anon"}`;
+function loadTank(u) {
+  try { const a = JSON.parse(localStorage.getItem(tankKey(u)) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function saveTank(u, list) {
+  try { localStorage.setItem(tankKey(u), JSON.stringify(list.slice(0, 20))); } catch { /* vol */ }
+}
+
+function TankenTab({ vehicles = [], currentUser, onAddFuel }) {
+  const { t } = useT();
+  const today = isoDay(new Date());
+  const [form, setForm] = useState({ vehicle: vehicles[0]?.kenteken || "", liters: "", bedrag: "", km: "", datum: today });
+  const [hist, setHist] = useState(() => loadTank(currentUser));
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const canSave = form.vehicle && Number(String(form.bedrag).replace(",", ".")) > 0;
+  const submit = async () => {
+    if (!canSave || busy) return;
+    const entry = {
+      id: uid("f"),
+      vehicle: form.vehicle,
+      liters: String(form.liters).replace(",", ".").trim(),
+      bedrag: String(form.bedrag).replace(",", ".").trim(),
+      km: String(form.km).replace(/\D/g, ""),
+      datum: form.datum || today,
+    };
+    setBusy(true); setErr("");
+    try { await onAddFuel(entry); }
+    catch (e) { setErr((e && e.message) || "!"); setBusy(false); return; }
+    const next = [{ ...entry, ts: Date.now() }, ...hist];
+    setHist(next); saveTank(currentUser, next);
+    setForm((f) => ({ ...f, liters: "", bedrag: "", km: "" }));
+    setSaved(true); setTimeout(() => setSaved(false), 2200);
+    setBusy(false);
+  };
+  return (
+    <div className="max-w-xl mx-auto space-y-4">
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "#FF8A0018" }}><Fuel size={16} color="#FF8A00" /></div>
+          <div style={{ fontFamily: "Oswald", fontSize: 19, fontWeight: 600, color: "#E7ECF3" }}>{t("tankTitle")}</div>
+        </div>
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 14 }}>{t("tankSub")}</div>
+        <div className="space-y-2 mb-3">
+          {vehicles.map((v) => (
+            <button key={v.id} onClick={() => setForm((f) => ({ ...f, vehicle: v.kenteken }))} className="w-full flex items-center gap-3 p-2.5 rounded-lg text-left"
+              style={{ border: `1px solid ${form.vehicle === v.kenteken ? "#3B82F6" : "#2A3340"}`, background: form.vehicle === v.kenteken ? "#3B82F614" : "#161C25", transition: "all .15s ease" }}>
+              <Kenteken value={v.kenteken} size="sm" />
+              <span style={{ fontFamily: "Inter", fontSize: 13, fontWeight: 600, color: "#E7ECF3", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.merk}</span>
+              {form.vehicle === v.kenteken && <Check size={15} color="#3B82F6" style={{ marginLeft: "auto", flexShrink: 0 }} />}
+            </button>
+          ))}
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div style={{ minWidth: 0 }}>
+            <FieldLabel>{t("tankLiters")}</FieldLabel>
+            <input type="text" inputMode="decimal" className="tg-input w-full" placeholder="65,4" value={form.liters} onChange={(e) => setForm({ ...form, liters: e.target.value })} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <FieldLabel>{t("tankBedrag")}</FieldLabel>
+            <input type="text" inputMode="decimal" className="tg-input w-full" placeholder="112,50" value={form.bedrag} onChange={(e) => setForm({ ...form, bedrag: e.target.value })} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <FieldLabel>{t("kmOptional")}</FieldLabel>
+            <input type="number" inputMode="numeric" min="0" className="tg-input w-full" placeholder={t("kmPh")} value={form.km} onChange={(e) => setForm({ ...form, km: e.target.value })} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <FieldLabel>{t("urenDatum")}</FieldLabel>
+            <input type="date" className="tg-input w-full" max={today} value={form.datum} onChange={(e) => setForm({ ...form, datum: e.target.value })} />
+          </div>
+        </div>
+        {err && <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#F0453F", marginTop: 10 }}>{err}</div>}
+        <div className="mt-4">
+          <Button onClick={submit} disabled={!canSave || busy} style={{ width: "100%", justifyContent: "center" }}>{saved ? `✓ ${t("tankSaved")}` : t("tankSave")}</Button>
+        </div>
+      </Card>
+      {hist.length > 0 && (
+        <Card className="p-4">
+          <Eyebrow>{t("tankHist")}</Eyebrow>
+          <div className="space-y-1.5 mt-2">
+            {hist.slice(0, 8).map((h) => (
+              <div key={h.id} className="flex items-center gap-2.5 p-2.5 rounded-lg flex-wrap" style={{ background: "#161C25", border: "1px solid #232B38" }}>
+                <span style={{ fontFamily: "JetBrains Mono", fontSize: 12, color: "#8FB8FF", flexShrink: 0 }}>{h.datum}</span>
+                <Kenteken value={h.vehicle} size="sm" />
+                <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", marginLeft: "auto", flexShrink: 0 }}>
+                  {h.liters ? `${h.liters} L · ` : ""}€ {h.bedrag}{h.km ? ` · ${Number(h.km).toLocaleString("nl-NL")} km` : ""}
+                </span>
+              </div>
+            ))}
           </div>
         </Card>
       )}
@@ -2144,7 +2298,7 @@ function UrenRegistratie({ currentUser, serverUren = [], onSyncAdd, onSyncDelete
   );
 }
 
-function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete, live = false }) {
+function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia, onSaveCheck, myChecks = [], myRides = [], onCompleteRide, myServerUren = [], onSyncUurAdd, onSyncUurDelete, onAddFuel, live = false }) {
   const { t } = useT();
   const [tab, setTab] = useState("melding");
   // Push voor de chauffeur zelf: chip om meldingen aan te zetten (nieuwe rit,
@@ -2283,6 +2437,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
           { id: "melding", label: t("segMelding"), icon: AlertTriangle },
           { id: "check", label: t("segCheck"), icon: ShieldCheck },
           ...(myRides.length > 0 ? [{ id: "ritten", label: t("segRitten"), icon: MapPin, badge: myRides.filter((r) => r.status !== "afgeleverd").length }] : []),
+          { id: "tank", label: t("segTank"), icon: Fuel },
           { id: "uren", label: t("segUren"), icon: Clock },
         ].map((s) => (
           <button key={s.id} onClick={() => setTab(s.id)} aria-pressed={tab === s.id} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg"
@@ -2296,6 +2451,7 @@ function DriverHome({ vehicles, onSubmit, currentUser, myReports, onUploadMedia,
       {/* De melding-tab blijft gemount (display:none) zodat een half ingevulde
           melding niet verloren gaat als de chauffeur even naar check/uren kijkt. */}
       {tab === "uren" && <UrenRegistratie currentUser={currentUser} serverUren={myServerUren} onSyncAdd={onSyncUurAdd} onSyncDelete={onSyncUurDelete} />}
+      {tab === "tank" && <TankenTab vehicles={vehicles} currentUser={currentUser} onAddFuel={onAddFuel} />}
       {tab === "ritten" && <RittenTab myRides={myRides} onCompleteRide={onCompleteRide} />}
       {/* Net als de melding-tab blijft de check gemount (display:none): een
           half afgevinkte checklist mag niet verloren gaan als de chauffeur
@@ -4370,7 +4526,10 @@ function WerkbonModal({ report, parts = [], mechanics = [], company, profiel = {
               <span style={{ fontFamily: "Inter", fontSize: 12, color: "#B4BCC9" }}>Concept hersteld — je eerdere invoer voor deze werkbon is bewaard gebleven.</span>
             </div>
           )}
-          <div><FieldLabel>Uitgevoerd werk</FieldLabel><textarea className="tg-input w-full" rows={2} value={notities} onChange={(e) => setNotities(e.target.value)} /></div>
+          <div>
+            <div className="flex items-center justify-between gap-2"><FieldLabel>Uitgevoerd werk</FieldLabel><VoiceButton onText={(txt) => setNotities((p) => (p ? p + " " + txt : txt))} /></div>
+            <textarea className="tg-input w-full" rows={2} value={notities} onChange={(e) => setNotities(e.target.value)} />
+          </div>
           <div><FieldLabel>Monteur</FieldLabel>{mechanics.length > 0 ? <select className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)}>{mechanics.map((m) => <option key={m.id}>{m.naam}</option>)}</select> : <input className="tg-input w-full" value={monteur} onChange={(e) => setMonteur(e.target.value)} />}</div>
           <div className="grid gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
             <div style={{ minWidth: 0 }}><FieldLabel>Arbeid (uren)</FieldLabel><input type="number" step="0.5" className="tg-input w-full" value={uren} onChange={(e) => setUren(e.target.value)} /></div>
@@ -7934,6 +8093,34 @@ export default function TruckGarageApp({ session, onLogout }) {
       }
     }
     setChecks((s) => ({ ...s, [companyId]: [c, ...(s[companyId] || [])] }));
+    // Km-stand meegegeven en hoger dan bekend? Voertuig meteen bijwerken —
+    // de server doet hetzelfde in driver_add_check, dit houdt de UI direct
+    // consistent (en in de demo is dit de enige update).
+    if (Number(c.km) > 0) {
+      setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).map((v) => (v.kenteken === c.vehicle && (Number(v.km) || 0) < Number(c.km) ? { ...v, km: Number(c.km) } : v)) }));
+    }
+  };
+  // Tankbeurt: live via driver_add_fuel (kostenregel brandstof + km-stand);
+  // zonder bereik in de offline-wachtrij. Lokaal voegen we de kostenregel en
+  // de km-stand ook direct toe zodat de UI (en de demo) meteen klopt.
+  const addFuel = async (entry) => {
+    if (live) {
+      try { await driverAddFuel(entry); }
+      catch (e) {
+        if (isNetworkError(e)) enqueueFuel(entry, session?.profile?.id || null);
+        else throw e;
+      }
+    }
+    const bedrag = Math.round(Number(String(entry.bedrag).replace(",", ".")) || 0);
+    const cost = {
+      id: entry.id, vehicle: entry.vehicle, categorie: "brandstof", bedrag,
+      datum: entry.datum,
+      omschrijving: `Tankbeurt${entry.liters ? ` ${entry.liters} L` : ""}${entry.km ? ` · km ${entry.km}` : ""} — ${currentUser?.naam || "chauffeur"}`,
+    };
+    setCosts((s) => ({ ...s, [companyId]: [cost, ...(s[companyId] || []).filter((c) => c.id !== cost.id)] }));
+    if (Number(entry.km) > 0) {
+      setVehicles((s) => ({ ...s, [companyId]: (s[companyId] || []).map((v) => (v.kenteken === entry.vehicle && (Number(v.km) || 0) < Number(entry.km) ? { ...v, km: Number(entry.km) } : v)) }));
+    }
   };
   // Uren van de chauffeur: naar de gedeelde kopie (loonoverzicht) + live sync.
   // Mislukt de sync (offline, serverfout), dan komt de operatie in een
@@ -8245,13 +8432,13 @@ export default function TruckGarageApp({ session, onLogout }) {
           <main id="tt-main" style={{ padding: isMobile ? 20 : 32, paddingBottom: isMobile ? 28 : 32, overflowX: "hidden", overflowY: "auto", flex: 1, minHeight: 0, width: "100%", maxWidth: "100%", minWidth: 0, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
             <div key={view + (selectedVehicleId || "")} className="tg-page">
             {isChauffeurOnly ? (
-              <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
+              <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} onAddFuel={addFuel} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />
             ) : (
               <>
                 {view === "dashboard" && role === "garage" && <GarageDashboard vehicles={cVehicles} reports={cReports} planning={cPlanning} parts={cParts} company={company} currentUser={currentUser} onNavigate={setView} onMove={moveReport} />}
                 {view === "dashboard" && role !== "garage" && <DashboardView vehicles={cVehicles} parts={cParts} reports={cReports} planning={cPlanning} costs={cCosts} company={company} isAdmin={isAdmin} drivers={cDrivers} onNavigate={setView} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} onLoadSample={live ? loadSampleData : null} />}
                 {view === "rapportage" && isAdmin && <ReportingView vehicles={cVehicles} reports={cReports} costs={cCosts} planning={cPlanning} onSelectVehicle={(id) => { setSelectedVehicleId(id); setViewRaw("vehicles"); }} />}
-                {view === "driver" && <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
+                {view === "driver" && <DriverHome live={live} vehicles={cVehicles} onSubmit={addReport} currentUser={currentUser} onUploadMedia={uploadMedia} onSaveCheck={addCheck} onAddFuel={addFuel} myChecks={cChecks.filter((c) => c.chauffeurId === currentUser.id)} myRides={cRides.filter((r) => r.chauffeurId === currentUser.id)} onCompleteRide={completeRide} myServerUren={cUren.filter((u) => u.chauffeurId === currentUser.id)} onSyncUurAdd={syncUurAdd} onSyncUurDelete={syncUurDelete} myReports={cReports.filter((r) => (r.chauffeurId ? r.chauffeurId === currentUser.id : r.chauffeur === currentUser.naam))} />}
                 {view === "rides" && isAdmin && modOn(cModules, "rides") && <RidesView rides={cRides} vehicles={cVehicles} users={cUsers} profiel={cProfiel} company={company} onAdd={addRide} onDelete={deleteRide} />}
                 {view === "vehicles" && !selectedVehicleId && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => setSelectedVehicleId(id)} />}
                 {view === "bakwagens" && modOn(cModules, "bakwagens") && <VehiclesView vehicles={cVehicles} onAdd={addVehicle} onSelect={(id) => { setView("vehicles"); setSelectedVehicleId(id); }} filterType="Bakwagen" title="Bakwagens" />}
