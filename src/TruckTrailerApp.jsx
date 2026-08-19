@@ -3330,6 +3330,134 @@ function ComplianceBadge({ vehicle, showOk = true }) {
   );
 }
 
+// Foto -> geschaalde JPEG-base64 voor de AI (grote telefoonfoto's verkleinen:
+// sneller, goedkoper, en de kentekenplaat blijft prima leesbaar).
+async function fileToScaledB64(file, maxDim = 1400) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.85).split(",")[1];
+}
+
+/* Kenteken-scanner: maak (of kies) foto's van kentekenplaten; de AI leest de
+   kentekens en de RDW vult merk, type, bouwjaar en APK-datum automatisch in.
+   Zo zet je een heel wagenpark er in minuten in, zonder één veld te typen. */
+function KentekenScanModal({ vehicles = [], onClose, onAddMany, defaultType = null }) {
+  const fileRef = useRef(null);
+  const [items, setItems] = useState([]); // { key, plate, status: 'rdw'|'klaar'|'nietgevonden', merk, type, bouwjaar, apkTot, checked }
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const stripped = (p) => String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const bestaand = new Set(vehicles.map((v) => stripped(v.kenteken)));
+
+  const handleFiles = async (files) => {
+    const list = Array.from(files || []).slice(0, 20);
+    if (!list.length) return;
+    setBusy(true); setMsg("");
+    let gelezen = 0, overgeslagen = 0, mislukt = 0;
+    for (const file of list) {
+      try {
+        const b64 = await fileToScaledB64(file);
+        const out = await callAI({
+          text: `Lees het Nederlandse kenteken (of meerdere kentekens) op deze foto. Antwoord UITSLUITEND met JSON, geen uitleg: {"kentekens":["XX-99-XX"]} — schrijf elk kenteken precies zoals het op de plaat staat, met streepjes. Neem alleen kentekens op die je duidelijk kunt lezen; twijfel je, laat het weg. Geen kenteken zichtbaar? Antwoord {"kentekens":[]}.`,
+          images: [{ media_type: "image/jpeg", data: b64 }],
+          maxTokens: 200,
+        });
+        const parsed = parseAIJson(out);
+        const plates = Array.isArray(parsed.kentekens) ? parsed.kentekens : [];
+        if (!plates.length) { mislukt++; continue; }
+        for (const raw of plates) {
+          const plate = String(raw || "").toUpperCase().trim();
+          const key = stripped(plate);
+          if (!key || key.length < 4 || key.length > 8) continue;
+          if (bestaand.has(key)) { overgeslagen++; continue; }
+          let dup = false;
+          setItems((cur) => {
+            if (cur.some((it) => stripped(it.plate) === key)) { dup = true; return cur; }
+            return [...cur, { key, plate, status: "rdw", merk: "", type: defaultType || "Truck", bouwjaar: null, apkTot: "", checked: true }];
+          });
+          if (dup) { overgeslagen++; continue; }
+          gelezen++;
+          // RDW erbij (best effort): merk/type/bouwjaar/APK automatisch.
+          try {
+            const d = await lookupRDW(plate);
+            setItems((cur) => cur.map((it) => (it.key === key ? { ...it, status: "klaar", merk: d.merk || "", type: d.type || it.type, bouwjaar: d.bouwjaar || null, apkTot: d.apkTot || "" } : it)));
+          } catch {
+            setItems((cur) => cur.map((it) => (it.key === key ? { ...it, status: "nietgevonden" } : it)));
+          }
+        }
+      } catch (e) {
+        mislukt++;
+        setMsg(`Foto lezen mislukte: ${e?.message || "onbekende fout"}`);
+      }
+    }
+    const delen = [];
+    if (gelezen) delen.push(`${gelezen} kenteken(s) gelezen`);
+    if (overgeslagen) delen.push(`${overgeslagen} al bekend/dubbel`);
+    if (mislukt) delen.push(`${mislukt} foto('s) niet leesbaar`);
+    if (delen.length) setMsg(delen.join(" · "));
+    setBusy(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const toggle = (key) => setItems((cur) => cur.map((it) => (it.key === key ? { ...it, checked: !it.checked } : it)));
+  const gekozen = items.filter((it) => it.checked);
+  const voegToe = () => {
+    const jaar = new Date().getFullYear();
+    onAddMany(gekozen.map((it) => ({
+      id: uid("v"), kenteken: it.plate, merk: it.merk || "Onbekend",
+      type: it.type === "Bestelwagen" ? "Bestelwagen" : it.type || "Truck",
+      bouwjaar: it.bouwjaar || jaar, km: 0, status: "operational", health: 100, driver: "—",
+      apkTot: it.apkTot || "", tachoTot: "", tachoPlicht: (it.type || "Truck") === "Truck", verzekeringTot: "",
+    })));
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ background: "rgba(6,9,14,.78)", zIndex: 60 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#12171F", border: "1px solid #232B38", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div className="flex items-center justify-between p-4" style={{ borderBottom: "1px solid #1A2129" }}>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "#3B82F618" }}><Camera size={16} color="#3B82F6" /></div>
+            <span style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600, color: "#E7ECF3" }}>Kentekens scannen</span>
+          </div>
+          <button onClick={onClose} aria-label="Sluiten"><X size={20} color="#B4BCC9" /></button>
+        </div>
+        <div className="p-4 space-y-3" style={{ overflowY: "auto" }}>
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", lineHeight: 1.5 }}>
+            Maak of kies foto's van de kentekenplaten (meerdere tegelijk mag). De AI leest de kentekens en de RDW vult merk, type, bouwjaar en APK-datum automatisch in — je hele wagenpark erin zonder typen.
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => handleFiles(e.target.files)} />
+          <Button icon={Camera} onClick={() => fileRef.current?.click()} disabled={busy} style={{ width: "100%", justifyContent: "center" }}>
+            {busy ? "Foto's lezen…" : items.length ? "Meer foto's toevoegen" : "Foto's maken of kiezen"}
+          </Button>
+          {msg && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#8FB8FF" }}>{msg}</div>}
+          {items.length > 0 && (
+            <div className="space-y-1.5">
+              {items.map((it) => (
+                <button key={it.key} onClick={() => toggle(it.key)} className="w-full flex items-center gap-2.5 p-2.5 rounded-lg text-left" style={{ background: "#161C25", border: `1px solid ${it.checked ? "#3B82F655" : "#232B38"}`, opacity: it.checked ? 1 : 0.55 }}>
+                  <span className="flex items-center justify-center rounded" style={{ width: 18, height: 18, flexShrink: 0, border: `2px solid ${it.checked ? "#3B82F6" : "#4A5568"}`, background: it.checked ? "#3B82F6" : "transparent" }}>{it.checked && <Check size={12} color="#fff" />}</span>
+                  <Kenteken value={it.plate} size="sm" />
+                  <span style={{ fontFamily: "Inter", fontSize: 12.5, color: "#B4BCC9", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 0%" }}>
+                    {it.status === "rdw" ? "RDW opzoeken…" : it.status === "nietgevonden" ? "Niet gevonden bij de RDW — later aan te vullen" : `${it.merk || "—"}${it.bouwjaar ? ` · ${it.bouwjaar}` : ""}${it.apkTot ? ` · APK ${it.apkTot}` : ""}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="p-4" style={{ borderTop: "1px solid #1A2129" }}>
+          <Button onClick={voegToe} disabled={gekozen.length === 0 || busy} style={{ width: "100%", justifyContent: "center" }}>
+            {gekozen.length ? `Voeg ${gekozen.length} voertuig${gekozen.length === 1 ? "" : "en"} toe` : "Selecteer kentekens om toe te voegen"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VehiclesView({ vehicles, onAdd, onSelect, filterType = null, title = "Vrachtwagens" }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
@@ -3374,6 +3502,8 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [scanOpen, setScanOpen] = useState(false);
+  const [toast, setToast] = useState("");
 
   const submit = () => {
     if (!form.kenteken || !form.merk) return;
@@ -3404,9 +3534,23 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
         <div><h1 style={{ fontFamily: "Oswald", fontSize: 28, fontWeight: 600, color: "#E7ECF3" }} className="flex items-center gap-2">{filterType === "Bakwagen" ? <IconBoxTruck size={24} color="#3B82F6" /> : filterType === "Bestelwagen" ? <IconVan size={24} color="#3B82F6" /> : filterType === "Trailer" ? <IconTrailer size={24} color="#3B82F6" /> : <IconTruckTrailer size={24} color="#3B82F6" />} {title}</h1><p style={{ fontFamily: "Inter", color: "#B4BCC9", fontSize: 14 }}>{totalForType} {noun}{shown.length !== totalForType ? ` · ${shown.length} getoond` : ""}. Tik voor details.</p></div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" icon={Download} onClick={exportCsv} disabled={shown.length === 0}>CSV</Button>
+          <Button variant="ghost" icon={Camera} onClick={() => setScanOpen(true)}>Kentekens scannen</Button>
           <Button icon={Plus} onClick={() => setOpen(true)}>Voertuig toevoegen</Button>
         </div>
       </div>
+      {toast && <Toast message={toast} onDone={() => setToast("")} />}
+      {scanOpen && (
+        <KentekenScanModal
+          vehicles={vehicles}
+          defaultType={filterType}
+          onClose={() => setScanOpen(false)}
+          onAddMany={(list) => {
+            list.forEach((v) => onAdd(v));
+            setScanOpen(false);
+            setToast(`${list.length} voertuig${list.length === 1 ? "" : "en"} toegevoegd.`);
+          }}
+        />
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative" style={{ flex: 1, minWidth: 180 }}>
@@ -3443,7 +3587,19 @@ Als je het niet zeker weet, geef dan een plausibele inschatting op basis van het
           <div className="flex gap-2 mt-4"><Button onClick={submit}>Opslaan</Button><Button variant="ghost" onClick={() => { setOpen(false); setAiMsg(""); }}>Annuleren</Button></div>
         </Card>
       )}
-      {vehicles.length === 0 ? <EmptyState icon={Truck} text='Nog geen voertuigen.' /> : shown.length === 0 ? <EmptyState icon={Search} text='Geen voertuigen gevonden voor deze zoekopdracht.' /> : isMobile ? (
+      {vehicles.length === 0 ? (
+        <Card className="p-6 text-center">
+          <div className="flex items-center justify-center rounded-full mx-auto mb-3" style={{ width: 52, height: 52, background: "#3B82F618" }}><Camera size={24} color="#3B82F6" /></div>
+          <div style={{ fontFamily: "Oswald", fontSize: 19, fontWeight: 600, color: "#E7ECF3" }}>Zet je wagenpark er in minuten in</div>
+          <p style={{ fontFamily: "Inter", fontSize: 13.5, color: "#B4BCC9", marginTop: 6, lineHeight: 1.55, maxWidth: 420, marginLeft: "auto", marginRight: "auto" }}>
+            Loop langs je voertuigen en fotografeer de kentekenplaten. De AI leest de kentekens en de RDW vult merk, type, bouwjaar en APK-datum automatisch in — je hoeft niets te typen.
+          </p>
+          <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+            <Button icon={Camera} onClick={() => setScanOpen(true)}>Kentekens scannen</Button>
+            <Button variant="ghost" icon={Plus} onClick={() => setOpen(true)}>Handmatig toevoegen</Button>
+          </div>
+        </Card>
+      ) : shown.length === 0 ? <EmptyState icon={Search} text='Geen voertuigen gevonden voor deze zoekopdracht.' /> : isMobile ? (
         <div className="space-y-3">
           {shown.map((v) => (
             <button key={v.id} onClick={() => onSelect(v.id)} className="text-left" style={{ width: "100%" }}>
