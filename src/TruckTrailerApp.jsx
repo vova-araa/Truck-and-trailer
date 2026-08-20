@@ -6,7 +6,7 @@ import {
   Users, Sparkles, ScanEye, Send, LogOut, Mail, Phone, ShieldCheck, SlidersHorizontal,
   ChevronLeft, ChevronRight, Menu, Trash2, Euro, Search, Download, FileText, KeyRound, Contact, ClipboardList, PenLine, Boxes, Check, Ticket, Copy, LifeBuoy, Inbox, Crown, BellRing, RefreshCw, BarChart3, TrendingUp, Clock, Coffee, MapPin, Fuel
 } from "lucide-react";
-import { saveStateDebounced, cancelPendingSave, driverAddFuel, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
+import { saveStateDebounced, cancelPendingSave, driverAddFuel, emitWebhook, lookupRDW, createEmployeeAccount, authHeader, createActivationCode, listActivationCodes, createSupportTicket, mySupportTickets, listSupportTickets, setSupportTicketStatus, uploadReportMedia, signedMediaUrls, driverAddReport, driverAddCheck, driverCompleteRide, driverSaveHours, driverDeleteHours, cancelSubscription, reactivateSubscription, adminListProfiles, adminDeleteUser, adminDeleteCompany, setUserSuperadmin, loadCompanyStateScoped, loadState, driverBootstrap, inviteEmployeeByEmail, sendActivationEmail, uploadVehicleDocument, signedDocUrl, deleteVehicleDocument, driverVehicleOpenReports, deleteEmployeeAccount } from "./api.js";
 import { supabase } from "./supabaseClient.js";
 import { queuedCount, flushQueue, onQueueChange, failedCount, clearFailed, retryFailed, isNetworkError, enqueueCheck, enqueueRideCompletion, enqueueFuel } from "./offlineQueue.js";
 import { LANGS, getLang, setLang, t as translate, ISSUE_KEYS, ZONE_KEYS, CHECK_KEYS } from "./i18n.js";
@@ -1806,6 +1806,38 @@ function TankenTab({ vehicles = [], currentUser, onAddFuel }) {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Bonnetje scannen: foto van de tankbon -> liters, bedrag en datum eruit.
+  const bonRef = useRef(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState("");
+  const scanBon = async (files) => {
+    const file = files && files[0];
+    if (!file) return;
+    setScanBusy(true); setScanMsg(""); setErr("");
+    try {
+      const b64 = await fileToScaledB64(file);
+      const out = await callAI({
+        text: `Dit is een foto van een tankbon. Haal eruit: het aantal getankte liters, het totaalbedrag in euro's en de datum. Antwoord UITSLUITEND met JSON, geen uitleg: {"liters":<getal of null>,"bedrag":<getal of null>,"datum":"JJJJ-MM-DD of null"}. Gebruik een punt als decimaalteken. Weet je iets niet zeker, zet dan null.`,
+        images: [{ media_type: "image/jpeg", data: b64 }],
+        maxTokens: 200,
+      });
+      const p = parseAIJson(out);
+      const num = (v) => (v == null || v === "" ? "" : String(v).replace(".", ","));
+      const geldig = /^\d{4}-\d{2}-\d{2}$/.test(String(p.datum || ""));
+      setForm((f) => ({
+        ...f,
+        liters: p.liters != null ? num(p.liters) : f.liters,
+        bedrag: p.bedrag != null ? num(p.bedrag) : f.bedrag,
+        datum: geldig && p.datum <= today ? p.datum : f.datum,
+      }));
+      setScanMsg(p.liters != null || p.bedrag != null ? t("tankScanOk") : t("tankScanNone"));
+    } catch (e) {
+      setScanMsg(t("tankScanFail"));
+    } finally {
+      setScanBusy(false);
+      if (bonRef.current) bonRef.current.value = "";
+    }
+  };
   const canSave = form.vehicle && Number(String(form.bedrag).replace(",", ".")) > 0;
   const submit = async () => {
     if (!canSave || busy) return;
@@ -1844,6 +1876,13 @@ function TankenTab({ vehicles = [], currentUser, onAddFuel }) {
             </button>
           ))}
         </div>
+        {/* Bonnetje scannen: scheelt alle handmatige invoer */}
+        <input ref={bonRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => scanBon(e.target.files)} />
+        <button onClick={() => bonRef.current?.click()} disabled={scanBusy} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl mb-3"
+          style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, cursor: "pointer", border: "1px solid #3B82F655", background: "#3B82F614", color: "#8FB8FF" }}>
+          <Camera size={16} /> {scanBusy ? t("tankScanBusy") : t("tankScanBtn")}
+        </button>
+        {scanMsg && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#8FB8FF", marginBottom: 10 }}>{scanMsg}</div>}
         <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
           <div style={{ minWidth: 0 }}>
             <FieldLabel>{t("tankLiters")}</FieldLabel>
@@ -2704,6 +2743,46 @@ function ReportingView({ vehicles = [], reports = [], costs = [], planning = [],
   const topExpensive = [...perVehicle].sort((a, b) => b.kostenJaar - a.kostenJaar).filter((v) => v.kostenJaar > 0).slice(0, 5);
   const maxTop = Math.max(1, ...topExpensive.map((v) => v.kostenJaar));
 
+  // Brandstofverbruik per voertuig. De tankregistraties van chauffeurs komen
+  // binnen als kostenregel 'brandstof' met liters en km-stand in de
+  // omschrijving ("Tankbeurt 65.4 L · km 184300 — naam"). Uit twee opeenvolgende
+  // beurten met km-stand volgt het echte verbruik: liters van de tweede beurt
+  // gedeeld door de gereden afstand ertussen.
+  const parseTank = (c) => {
+    const oms = String(c.omschrijving || "");
+    const l = oms.match(/([\d.,]+)\s*L\b/i);
+    const km = oms.match(/km\s*([\d]+)/i);
+    return {
+      liters: l ? Number(l[1].replace(",", ".")) : null,
+      km: km ? Number(km[1]) : null,
+      datum: c.datum || "",
+      bedrag: Number(c.bedrag) || 0,
+    };
+  };
+  const verbruik = vehicles.map((v) => {
+    const beurten = costs
+      .filter((c) => c.vehicle === v.kenteken && c.categorie === "brandstof")
+      .map(parseTank)
+      .filter((b) => b.liters > 0)
+      .sort((a, b) => (a.km || 0) - (b.km || 0));
+    const metKm = beurten.filter((b) => b.km > 0);
+    let l100 = null, afstand = 0, liters = 0;
+    for (let i = 1; i < metKm.length; i++) {
+      const d = metKm[i].km - metKm[i - 1].km;
+      if (d > 0 && d < 5000) { afstand += d; liters += metKm[i].liters; } // >5000 km tussen beurten: gemiste registratie, overslaan
+    }
+    if (afstand > 0 && liters > 0) l100 = (liters / afstand) * 100;
+    const totLiters = beurten.reduce((a, b) => a + b.liters, 0);
+    const totBedrag = beurten.reduce((a, b) => a + b.bedrag, 0);
+    return { kenteken: v.kenteken, id: v.id, l100, beurten: beurten.length, totLiters, totBedrag, prijsPerLiter: totLiters > 0 ? totBedrag / totLiters : null };
+  }).filter((x) => x.beurten > 0);
+  const verbruikSorted = [...verbruik].sort((a, b) => (b.l100 ?? -1) - (a.l100 ?? -1));
+  const maxL100 = Math.max(1, ...verbruik.map((x) => x.l100 || 0));
+  const vlootL100 = (() => {
+    const met = verbruik.filter((x) => x.l100 != null);
+    return met.length ? met.reduce((a, x) => a + x.l100, 0) / met.length : null;
+  })();
+
   // Meldingen per maand (laatste 12 maanden).
   const trend = (() => {
     const acc = {};
@@ -2774,6 +2853,40 @@ function ReportingView({ vehicles = [], reports = [], costs = [], planning = [],
                     <span style={{ fontFamily: "JetBrains Mono", fontSize: 12.5, color: "#E7ECF3", fontWeight: 700 }}>{fmt(v.kostenJaar)}</span>
                     <span style={{ display: "block", fontFamily: "Inter", fontSize: 10.5, color: "#98A1B0" }}>{v.perKm > 0 ? `€ ${(Math.round(v.perKm * 100) / 100).toFixed(2)}/km` : "—"}</span>
                   </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Brandstofverbruik — gevoed door de tankregistraties van chauffeurs */}
+        <Card className="p-5">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <Eyebrow>Brandstofverbruik per voertuig</Eyebrow>
+            {vlootL100 != null && <span style={{ fontFamily: "Inter", fontSize: 12, color: "#98A1B0" }}>vloot gemiddeld <b style={{ color: "#E7ECF3" }}>{vlootL100.toFixed(1)} l/100 km</b></span>}
+          </div>
+          {verbruik.length === 0 ? (
+            <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", lineHeight: 1.5, marginTop: 6 }}>
+              Nog geen tankbeurten geregistreerd. Chauffeurs leggen ze vast op het tabblad "Tanken" (bonnetje scannen kan ook) — daarna zie je hier het verbruik per voertuig.
+            </div>
+          ) : (
+            <div className="space-y-2 mt-2">
+              {verbruikSorted.map((x) => (
+                <button key={x.kenteken} onClick={() => onSelectVehicle && onSelectVehicle(x.id)} className="w-full text-left">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <Kenteken value={x.kenteken} size="sm" />
+                    <div style={{ flex: "1 1 120px", minWidth: 90, height: 8, borderRadius: 999, background: "#161C25", overflow: "hidden" }}>
+                      <div style={{ width: `${x.l100 ? Math.max(4, (x.l100 / maxL100) * 100) : 0}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#F59E0B,#FF8A00)" }} />
+                    </div>
+                    <span style={{ fontFamily: "JetBrains Mono", fontSize: 12.5, fontWeight: 700, color: x.l100 ? "#FFB861" : "#6B7585", flexShrink: 0, minWidth: 74, textAlign: "right" }}>
+                      {x.l100 ? `${x.l100.toFixed(1)} l/100km` : "—"}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: "Inter", fontSize: 11, color: "#6B7585", marginTop: 3, marginLeft: 2 }}>
+                    {x.beurten} tankbeurt{x.beurten === 1 ? "" : "en"} · {Math.round(x.totLiters).toLocaleString("nl-NL")} L · {fmt(x.totBedrag)}
+                    {x.prijsPerLiter ? ` · € ${x.prijsPerLiter.toFixed(2)}/L` : ""}
+                    {!x.l100 ? " · km-stand nog nodig voor verbruik" : ""}
+                  </div>
                 </button>
               ))}
             </div>
@@ -5568,11 +5681,37 @@ function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast })
     btwPercentage: profiel.btwPercentage != null ? String(profiel.btwPercentage) : "21",
     uurtarief: profiel.uurtarief != null && profiel.uurtarief !== "" ? String(profiel.uurtarief) : "",
     logo: profiel.logo || "",
+    // Koppelingen met andere apps
+    webhookUrl: profiel.webhookUrl || "",
+    webhookEvents: Array.isArray(profiel.webhookEvents) ? profiel.webhookEvents : ["melding", "werkbon", "rit"],
+    agendaKey: profiel.agendaKey || "",
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [whMsg, setWhMsg] = useState("");
   const fileRef = useRef(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  // Geheime, niet te raden sleutel voor de agendafeed.
+  const nieuweAgendaKey = () => {
+    const a = new Uint8Array(24);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.from(a).map((b) => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[b % 62]).join("");
+  };
+  const agendaUrl = form.agendaKey ? `${typeof window !== "undefined" ? window.location.origin : ""}/api/agenda/${form.agendaKey}.ics` : "";
+  const testWebhook = async () => {
+    setWhMsg("Bezig…");
+    try {
+      const res = await fetch("/api/webhook/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ url: form.webhookUrl }),
+      });
+      const d = await res.json().catch(() => ({}));
+      setWhMsg(res.ok ? "✓ Testbericht afgeleverd." : d.error || "Versturen mislukte.");
+    } catch {
+      setWhMsg("Kon de server niet bereiken.");
+    }
+  };
 
   // Logo inlezen en verkleinen (max 320px breed) tot een lichte PNG data-URI.
   const pickLogo = (files) => {
@@ -5655,6 +5794,54 @@ function CompanyProfileCard({ profiel = {}, onSave, companyName = "", onToast })
       </div>
       {err && <div style={{ fontFamily: "Inter", fontSize: 12, color: "#F0453F", marginTop: 8 }}>{err}</div>}
       <div className="mt-4"><Button icon={Check} onClick={save} disabled={busy}>Opslaan</Button></div>
+
+      {/* Koppelingen: webhook naar andere apps + agendafeed */}
+      <div style={{ borderTop: "1px solid #232B38", marginTop: 22, paddingTop: 18 }}>
+        <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 26, height: 26, background: "#22D3B018" }}><Boxes size={14} color="#22D3B0" /></div>
+          <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Koppelen met andere apps</span>
+        </div>
+        <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 12, lineHeight: 1.5 }}>
+          Laat de app een bericht sturen zodra er iets gebeurt. Plak hier het webhook-adres van bijvoorbeeld Zapier, Make, Slack of Teams — dan kun je alles automatiseren wat die diensten kunnen.
+        </div>
+        <FieldLabel>Webhook-adres (https)</FieldLabel>
+        <input className="tg-input w-full" placeholder="https://hooks.zapier.com/…" value={form.webhookUrl} onChange={(e) => set("webhookUrl", e.target.value)} />
+        <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+          {[["melding", "Nieuwe melding"], ["werkbon", "Werkbon klaar"], ["rit", "Rit afgeleverd"]].map(([key, label]) => {
+            const on = form.webhookEvents.includes(key);
+            return (
+              <button key={key} onClick={() => set("webhookEvents", on ? form.webhookEvents.filter((x) => x !== key) : [...form.webhookEvents, key])}
+                className="text-xs px-2.5 py-1 rounded-full" style={{ fontFamily: "Inter", fontWeight: 600, cursor: "pointer", border: `1px solid ${on ? "#22D3B0" : "#2A3340"}`, background: on ? "#22D3B018" : "transparent", color: on ? "#22D3B0" : "#98A1B0" }}>
+                {on ? "✓ " : ""}{label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 mt-3 flex-wrap">
+          <Button small variant="ghost" onClick={testWebhook} disabled={busy || !form.webhookUrl}>Testbericht sturen</Button>
+          {whMsg && <span style={{ fontFamily: "Inter", fontSize: 12, color: whMsg.startsWith("✓") ? "#34D399" : "#FF8A00" }}>{whMsg}</span>}
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center justify-center rounded-lg" style={{ width: 26, height: 26, background: "#3B82F618" }}><Calendar size={14} color="#3B82F6" /></div>
+            <span style={{ fontFamily: "Inter", fontSize: 14, fontWeight: 600, color: "#E7ECF3" }}>Werkplaatsagenda in je eigen agenda</span>
+          </div>
+          <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", marginBottom: 10, lineHeight: 1.5 }}>
+            Abonneer je in Google Agenda of Outlook op deze link; ingeplande klussen verschijnen dan automatisch in je agenda.
+          </div>
+          {form.agendaKey ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <input readOnly className="tg-input" style={{ flex: "1 1 260px", minWidth: 0, fontFamily: "JetBrains Mono", fontSize: 11.5 }} value={agendaUrl} onFocus={(e) => e.target.select()} />
+              <Button small variant="ghost" icon={Copy} onClick={() => { try { navigator.clipboard.writeText(agendaUrl); onToast && onToast("Agenda-link gekopieerd."); } catch { /* noop */ } }}>Kopiëren</Button>
+              <Button small variant="ghost" onClick={() => { set("agendaKey", nieuweAgendaKey()); onToast && onToast("Nieuwe link — de oude werkt niet meer. Vergeet niet op te slaan."); }}>Vernieuwen</Button>
+            </div>
+          ) : (
+            <Button small variant="ghost" icon={Calendar} onClick={() => set("agendaKey", nieuweAgendaKey())}>Agenda-link aanmaken</Button>
+          )}
+          <div style={{ fontFamily: "Inter", fontSize: 11.5, color: "#6B7585", marginTop: 8 }}>Deel deze link alleen intern: wie hem heeft, ziet je planning. Klik op "Opslaan" om wijzigingen te bewaren.</div>
+        </div>
+      </div>
     </Card>
   );
 }
@@ -7532,10 +7719,53 @@ const NAV_GROUPS = [
 /* ---------------------------------------------------------------------
    ONBOARDING — bij de eerste keer kiest het bedrijf welke onderdelen het gebruikt
 --------------------------------------------------------------------- */
-function OnboardingWizard({ company, onDone }) {
+function OnboardingWizard({ company, onDone, onAddVehicles }) {
   const isMobile = useIsMobile();
   const [sel, setSel] = useState({ ...DEFAULT_MODULES });
+  const [stap, setStap] = useState(1); // 1 = modules, 2 = vloot vullen
+  const [scanOpen, setScanOpen] = useState(false);
+  const [toegevoegd, setToegevoegd] = useState(0);
   const toggle = (k) => setSel((s) => ({ ...s, [k]: !s[k] }));
+
+  // Stap 2: je wagenpark er meteen in, zonder typen.
+  if (stap === 2) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "#0A0E14", overflowY: "auto", padding: 16 }}>
+        <div style={{ maxWidth: 520, margin: "0 auto", paddingTop: 32, paddingBottom: 40 }}>
+          <div style={{ textAlign: "center", marginBottom: 6 }}>
+            <span style={{ fontFamily: "Oswald", fontSize: 24, fontWeight: 700, color: "#E7ECF3", letterSpacing: 0.5 }}>TRUCK <span style={{ color: "#3B82F6" }}>&amp;</span> TRAILER</span>
+          </div>
+          <h1 style={{ fontFamily: "Oswald", fontSize: 26, fontWeight: 600, color: "#E7ECF3", textAlign: "center", marginTop: 8 }}>Zet je wagenpark erin</h1>
+          <p style={{ fontFamily: "Inter", fontSize: 14, color: "#B4BCC9", textAlign: "center", lineHeight: 1.55, margin: "8px auto 22px", maxWidth: 430 }}>
+            Loop langs je voertuigen en fotografeer de kentekenplaten. De AI leest de kentekens en de RDW vult merk, type, bouwjaar en APK-datum automatisch in — je hoeft niets te typen.
+          </p>
+          {toegevoegd > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-3" style={{ background: "#34D39914", border: "1px solid #34D39944" }}>
+              <CheckCircle2 size={16} color="#34D399" style={{ flexShrink: 0 }} />
+              <span style={{ fontFamily: "Inter", fontSize: 13, color: "#E7ECF3" }}>{toegevoegd} voertuig{toegevoegd === 1 ? "" : "en"} toegevoegd.</span>
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <Button icon={Camera} onClick={() => setScanOpen(true)} style={{ justifyContent: "center" }}>Kentekens scannen</Button>
+            <Button onClick={() => onDone(sel)} variant={toegevoegd > 0 ? "primary" : "ghost"} style={{ justifyContent: "center" }}>
+              {toegevoegd > 0 ? "Klaar — naar het dashboard →" : "Later doen, ga naar het dashboard →"}
+            </Button>
+          </div>
+          <p style={{ fontFamily: "Inter", fontSize: 11.5, color: "#6B7585", textAlign: "center", marginTop: 14, lineHeight: 1.5 }}>
+            Je kunt voertuigen later altijd scannen of handmatig toevoegen bij Vrachtwagens.
+          </p>
+        </div>
+        {scanOpen && (
+          <KentekenScanModal
+            vehicles={[]}
+            onClose={() => setScanOpen(false)}
+            onAddMany={(list) => { onAddVehicles && onAddVehicles(list); setToegevoegd((n) => n + list.length); setScanOpen(false); }}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "#0A0E14", overflowY: "auto", padding: 16 }}>
       <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 22, paddingBottom: 40 }}>
@@ -7564,8 +7794,8 @@ function OnboardingWizard({ company, onDone }) {
           })}
         </div>
         <div className="mt-6 flex flex-col gap-2">
-          <Button onClick={() => onDone(sel)}>Aan de slag →</Button>
-          <button onClick={() => onDone({ ...DEFAULT_MODULES })} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6 }}>Alles gebruiken</button>
+          <Button onClick={() => setStap(2)}>Volgende: je wagenpark →</Button>
+          <button onClick={() => { setSel({ ...DEFAULT_MODULES }); setStap(2); }} style={{ fontFamily: "Inter", fontSize: 12.5, color: "#98A1B0", padding: 6 }}>Alles gebruiken</button>
         </div>
       </div>
     </div>
@@ -8189,7 +8419,8 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Eerste keer voor een bedrijf (alleen de eigen beheerder, niet de
   // platform-superadmin die tussen bedrijven kijkt): kies je onderdelen.
   if (live && currentUser.rol === "admin" && !(currentUser.superadmin || currentUser.is_superadmin) && !cOnboarded) {
-    return <OnboardingWizard company={company} onDone={finishOnboarding} />;
+    // addVehicle staat verderop (na deze vroege return), dus hier direct de setter.
+    return <OnboardingWizard company={company} onDone={finishOnboarding} onAddVehicles={(list) => setVehicles((s) => ({ ...s, [companyId]: [...(s[companyId] || []), ...list] }))} />;
   }
 
   // Korte rondleiding per rol, de eerste keer (chauffeur/werkplaats/beheerder).
@@ -8230,6 +8461,8 @@ export default function TruckGarageApp({ session, onLogout }) {
       // Push naar beheer/werkplaats (best effort): "Nieuwe melding".
       const prio = r.prioriteit === "kritiek" ? "KRITIEK — " : "";
       notifyCompany({ title: "Nieuwe melding", body: `${prio}${r.vehicle}: ${(r.omschrijving || "").slice(0, 120)}`, url: "/app/werkvloer" });
+      // Koppeling met andere apps (Zapier/Make/Slack/…): best effort.
+      emitWebhook("melding.nieuw", { kenteken: r.vehicle, omschrijving: r.omschrijving, prioriteit: r.prioriteit, datum: r.datum });
     }
   };
   // Dagelijkse voertuigcheck opslaan. Live: via de veilige RPC (idempotent,
@@ -8259,6 +8492,10 @@ export default function TruckGarageApp({ session, onLogout }) {
   // Tankbeurt: live via driver_add_fuel (kostenregel brandstof + km-stand);
   // zonder bereik in de offline-wachtrij. Lokaal voegen we de kostenregel en
   // de km-stand ook direct toe zodat de UI (en de demo) meteen klopt.
+  // Werkbon afgerond (kosten uit de werkbonmodal) -> koppeling informeren.
+  const onWerkbonKlaar = (cost) => {
+    if (live) emitWebhook("werkbon.klaar", { kenteken: cost?.vehicle || "", bedrag: cost?.bedrag || 0, omschrijving: cost?.omschrijving || "", datum: cost?.datum || "" });
+  };
   const addFuel = async (entry) => {
     if (live) {
       try { await driverAddFuel(entry); }
@@ -8325,6 +8562,8 @@ export default function TruckGarageApp({ session, onLogout }) {
       }
     }
     setRides((s) => ({ ...s, [companyId]: (s[companyId] || []).map((x) => (x.id === rideId ? { ...x, status: "afgeleverd", pod } : x)) }));
+    const rit = (rides[companyId] || []).find((x) => x.id === rideId);
+    if (live) emitWebhook("rit.afgeleverd", { klant: rit?.klant || "", adres: rit?.adres || "", kenteken: rit?.vehicle || "", ontvanger: pod?.naam || "", datum: pod?.datum || "" });
   };
   // Foto's/video's van een melding opslaan: live -> Supabase Storage (privé),
   // demo -> tijdelijke objectURLs zodat het in de sessie zichtbaar blijft.
@@ -8608,7 +8847,7 @@ export default function TruckGarageApp({ session, onLogout }) {
                 {view === "trailers" && modOn(cModules, "trailers") && <TrailersView trailers={cTrailers} onAdd={addTrailer} onUpdate={updateTrailer} onDelete={deleteTrailer} />}
                 {view === "parts" && modOn(cModules, "parts") && <PartsView parts={cParts} onAdd={addPart} onUpdate={updatePart} onDelete={deletePart} />}
                 {view === "maintenance" && modOn(cModules, "maintenance") && <MaintenanceView maintenance={cMaintenance} vehicles={cVehicles} onAdd={addMaintenance} onUpdate={updateMaintenance} onDelete={deleteMaintenance} />}
-                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={addCost} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} vehicles={cVehicles} planning={cPlanning} currentUser={currentUser} />}
+                {view === "workfloor" && <WorkfloorView reports={cReports} onMove={moveReport} onDelete={deleteReport} onSchedule={addPlanning} mechanics={mechanics} availability={cAvailability} hours={cHours} parts={cParts} company={company} profiel={cProfiel} onAddCost={(c) => { addCost(c); onWerkbonKlaar(c); }} onUsePart={usePart} onRefresh={live ? refreshData : null} refreshing={refreshing} vehicles={cVehicles} planning={cPlanning} currentUser={currentUser} />}
                 {view === "planning" && modOn(cModules, "planning") && <PlanningView vehicles={cVehicles} planning={cPlanning} reports={cReports} onAdd={addPlanning} onDelete={deletePlanning} onRefresh={live ? refreshData : null} refreshing={refreshing} />}
                 {view === "inspection" && modOn(cModules, "inspection") && <InspectionView vehicles={cVehicles} reports={cReports} onUpdate={updateVehicle} aiReady={aiReady} />}
                 {view === "ai" && modOn(cModules, "ai") && <AiAssistantView reports={cReports} vehicles={cVehicles} company={company} aiReady={aiReady} onAddVehicle={addVehicle} onAddPlanning={addPlanning} onNavigate={setView} />}

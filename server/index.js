@@ -903,6 +903,132 @@ app.post("/api/push/notify", async (req, res) => {
   res.json({ ok: true, sent });
 });
 
+// ---------- KOPPELINGEN: webhooks + agendafeed ----------
+// Webhook: bij een gebeurtenis (nieuwe melding, werkbon klaar, rit afgeleverd)
+// stuurt de server een JSON-bericht naar een URL die het bedrijf zelf instelt.
+// Daarmee is de app te koppelen aan Zapier, Make, Slack, Teams, Sheets en zo'n
+// beetje alles, zonder dat wij per pakket een integratie hoeven te bouwen.
+
+// Alleen echte, publieke https-adressen: geen interne netwerken (SSRF).
+function webhookUrlOk(raw) {
+  let u;
+  try { u = new URL(String(raw || "")); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal") || h.endsWith(".local")) return false;
+  // IP-adressen (v4/v6) weren we volledig: publieke diensten hebben een naam.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":") || h.startsWith("[")) return false;
+  return true;
+}
+
+app.post("/api/webhook/test", async (req, res) => {
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Log in om dit te testen." });
+  if (me.rol !== "admin") return res.status(403).json({ error: "Alleen de beheerder kan koppelingen instellen." });
+  if (rateLimited("wh:" + me.userId)) return res.status(429).json({ error: "Te veel testberichten — wacht even." });
+  const url = req.body?.url;
+  if (!webhookUrlOk(url)) return res.status(400).json({ error: "Geef een geldig https-adres op (geen intern netwerk)." });
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": "TruckAndTrailer-Webhook/1" },
+      body: JSON.stringify({ event: "test", bericht: "Testbericht vanuit Truck & Trailer", bedrijf: me.company_id, ts: new Date().toISOString() }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return res.status(502).json({ error: `De ontvanger antwoordde met ${r.status}.` });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: "Kon het adres niet bereiken — controleer de URL." });
+  }
+});
+
+// Doorsturen van een echte gebeurtenis. De client roept dit aan na een melding,
+// werkbon of aflevering; de server leest het ingestelde adres uit het
+// bedrijfsprofiel, zodat een gebruiker nooit een willekeurige URL kan laten
+// aanroepen door de server.
+app.post("/api/webhook/emit", async (req, res) => {
+  const me = await verifyUser(bearer(req));
+  if (!me) return res.status(401).json({ error: "Sessie ongeldig." });
+  if (rateLimited("whe:" + me.company_id)) return res.json({ ok: false, skipped: "rate" });
+  const event = String(req.body?.event || "").slice(0, 40);
+  if (!/^[a-z_.]+$/.test(event)) return res.status(400).json({ error: "Ongeldige gebeurtenis." });
+  if (!supaAdmin) return res.json({ ok: false, skipped: "no-admin" });
+  try {
+    const { data: row } = await supaAdmin.from("company_state").select("data").eq("company_id", me.company_id).single();
+    const cfg = row?.data?.bedrijfsprofiel || {};
+    const url = cfg.webhookUrl;
+    if (!url || !webhookUrlOk(url)) return res.json({ ok: false, skipped: "geen-url" });
+    const events = Array.isArray(cfg.webhookEvents) ? cfg.webhookEvents : ["melding", "werkbon", "rit"];
+    if (!events.includes(event.split(".")[0])) return res.json({ ok: false, skipped: "uit" });
+    // Payload komt van de client maar wordt begrensd en van server-feiten voorzien.
+    const payload = {
+      event,
+      bedrijf: cfg.bedrijfsnaam || "",
+      door: me.naam || "",
+      ts: new Date().toISOString(),
+      data: JSON.parse(JSON.stringify(req.body?.data || {})),
+    };
+    const body = JSON.stringify(payload).slice(0, 20000);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": "TruckAndTrailer-Webhook/1" },
+      body,
+      signal: AbortSignal.timeout(8000),
+    });
+    res.json({ ok: r.ok, status: r.status });
+  } catch {
+    res.json({ ok: false, skipped: "fout" });
+  }
+});
+
+// Agendafeed (iCal): de werkplaatsplanning live in Google/Outlook Agenda.
+// Werkt met een geheime sleutel in de URL, want agenda-apps kunnen niet
+// inloggen. De sleutel staat in het bedrijfsprofiel en is te vernieuwen.
+app.get("/api/agenda/:key.ics", async (req, res) => {
+  if (!supaAdmin) return res.status(503).send("Agenda niet beschikbaar.");
+  const key = String(req.params.key || "");
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(key)) return res.status(404).send("Niet gevonden.");
+  if (rateLimited("ics:" + key)) return res.status(429).send("Te veel verzoeken.");
+  try {
+    const { data: rows } = await supaAdmin.from("company_state").select("company_id, data");
+    const row = (rows || []).find((r) => r.data?.bedrijfsprofiel?.agendaKey === key);
+    if (!row) return res.status(404).send("Niet gevonden.");
+    const planning = Array.isArray(row.data?.planning) ? row.data.planning : [];
+    const naam = row.data?.bedrijfsprofiel?.bedrijfsnaam || "Truck & Trailer";
+    const esc2 = (v) => String(v || "").replace(/[\\;,]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    const lines = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Truck & Trailer//Planning//NL",
+      "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+      `X-WR-CALNAME:${esc2(naam)} — werkplaats`,
+      "X-PUBLISHED-TTL:PT1H",
+    ];
+    for (const p of planning.slice(0, 2000)) {
+      if (!p?.datum || !/^\d{4}-\d{2}-\d{2}$/.test(p.datum)) continue;
+      const [hh, mm] = String(p.tijd || "09:00").split(":");
+      const start = new Date(`${p.datum}T${(hh || "09").padStart(2, "0")}:${(mm || "00").padStart(2, "0")}:00Z`);
+      if (isNaN(start.getTime())) continue;
+      const eind = new Date(start.getTime() + (Number(p.duur) || 60) * 60000);
+      const f = (d) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:${esc2(p.id || Math.random().toString(36).slice(2))}@truckandtrailer.nl`,
+        `DTSTAMP:${stamp}`, `DTSTART:${f(start)}`, `DTEND:${f(eind)}`,
+        `SUMMARY:${esc2(`${p.vehicle || ""} — ${p.taak || "Klus"}`)}`,
+        `DESCRIPTION:${esc2(`Monteur: ${p.monteur || "—"}`)}`,
+        "END:VEVENT"
+      );
+    }
+    lines.push("END:VCALENDAR");
+    res.set("Content-Type", "text/calendar; charset=utf-8");
+    res.set("Cache-Control", "public, max-age=900");
+    res.send(lines.join("\r\n"));
+  } catch (e) {
+    console.error("agenda-feed fout:", e?.message || e);
+    res.status(500).send("Fout bij het maken van de agenda.");
+  }
+});
+
 // Frontend: statische bestanden + SPA-fallback naar index.html
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));

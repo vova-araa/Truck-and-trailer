@@ -509,6 +509,18 @@ export function saveStateDebounced(companyId, dataset, onStatus, opts = {}) {
   }, 600);
 }
 
+// ---------- KOPPELINGEN: gebeurtenis naar de webhook van het bedrijf ----------
+// De server leest het ingestelde adres uit het bedrijfsprofiel; wij sturen
+// alleen wát er gebeurde. Faalt het (geen adres, dienst plat), dan merkt de
+// gebruiker daar niets van — een koppeling mag nooit het werk blokkeren.
+export async function emitWebhook(event, data = {}) {
+  try {
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    if (!headers.Authorization) return;
+    await fetch("/api/webhook/emit", { method: "POST", headers, body: JSON.stringify({ event, data }) });
+  } catch { /* koppeling is best effort */ }
+}
+
 // ---------- MELDINGSFOTO'S (Supabase Storage, privé-bucket 'meldingen') ----------
 
 // Upload de bijlagen van een melding naar de privé-bucket, in een map per
